@@ -1,0 +1,31 @@
+name: Feature request
+description: Suggest a change to UFO's CLI, MCP tools, measurement, or safety rules.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        To propose support for a new stack, use the "Domain pack proposal" template instead.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do, and what gets in the way today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What should UFO do? Include example commands, tool calls, or `ufo.yaml` snippets.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: textarea
+    id: measurement
+    attributes:
+      label: Effect on measurement or safety
+      description: Does this change how UFO decides keep or drop, what it runs, or what it writes?

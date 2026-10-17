@@ -1,0 +1,72 @@
+name: Bug report
+description: Something in UFO does not work as documented.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Report security vulnerabilities privately instead: see SECURITY.md.
+        Remove secrets, tokens, usernames, and home-directory paths from anything you paste.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: Include the command or MCP tool you ran and what UFO printed.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: The smallest setup that shows the problem. Include the relevant part of `ufo.yaml`.
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: UFO version
+      description: Output of `ufo --version`, or a commit SHA.
+    validations:
+      required: true
+  - type: dropdown
+    id: host
+    attributes:
+      label: Host agent
+      options:
+        - Claude Code
+        - Codex
+        - Cursor
+        - None (CLI only)
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Operating system, CPU, and Node.js version.
+      placeholder: macOS 26, Apple M4, Node 22.11.0
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant output from the failing command, ideally with `--json`.
+      render: shell
+  - type: checkboxes
+    id: redaction
+    attributes:
+      label: Redaction
+      options:
+        - label: I removed secrets, tokens, usernames, and home-directory paths from this report.
+          required: true

@@ -1,0 +1,68 @@
+name: Domain pack proposal
+description: Propose support for a new stack or optimization target.
+labels: ["domain-pack"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A domain pack teaches UFO one stack: a detector, a workload, a profiler, oracles, a reset hook,
+        and technique cards. Check the open issues first; many targets are already tracked.
+  - type: input
+    id: stack
+    attributes:
+      label: Domain and stack
+      placeholder: Server / Rust with axum
+    validations:
+      required: true
+  - type: input
+    id: metric
+    attributes:
+      label: Primary metric
+      description: Exactly one metric that decides keep or drop, with its unit and direction.
+      placeholder: p95 latency in ms at a fixed arrival rate, lower is better
+    validations:
+      required: true
+  - type: dropdown
+    id: replication-unit
+    attributes:
+      label: Replication unit
+      description: What one independent sample is.
+      options:
+        - process launch
+        - load run
+        - build
+        - page load
+        - eval pass
+        - training pass
+        - other (explain below)
+    validations:
+      required: true
+  - type: textarea
+    id: workload
+    attributes:
+      label: Workload
+      description: How to start the target, check it is healthy, warm it up, measure, and reset it between samples.
+    validations:
+      required: true
+  - type: textarea
+    id: oracles
+    attributes:
+      label: Correctness oracles
+      description: How to tell that a faster version still behaves the same (tests, golden responses, result-set equality, quality eval).
+    validations:
+      required: true
+  - type: textarea
+    id: techniques
+    attributes:
+      label: Candidate techniques
+      description: Optimizations a pack could offer, with the risk class of each (lossless, numeric, lossy, upgrade).
+  - type: textarea
+    id: tools
+    attributes:
+      label: Required tools
+      description: Profilers, load generators, or runtimes the pack needs, with versions.
+  - type: input
+    id: target
+    attributes:
+      label: Example open-source target
+      description: A real project that could serve as a showcase.
