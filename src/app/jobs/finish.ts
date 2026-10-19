@@ -216,6 +216,9 @@ export async function handleFinish(
       noHeadline = `the final check failed: ${error.message}`;
     } finally {
       await session.teardown("final_check");
+      // Defensive: B is not measured again in this run either way. Every later job resets both
+      // arms before it uses them (`resetArms` in decide, `applyToB`), and resume does the same,
+      // so a B left at the base SHA by a failure here is never compared against.
       await revertB(open.git);
       await updateRun(context.runDir, (run) => ({ ...run, shas: { ...run.shas, b: finalSha } }));
     }

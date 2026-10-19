@@ -131,8 +131,8 @@ describe("decisions on one run", { timeout: TIMEOUT_MS }, () => {
   it("AC 2: drops a patch that adds a second 20 ms sleep, resets B, and commits nothing", async () => {
     const diff = diffOf(toy, "server.mjs", (s) => s.replace(SLEEP, `${SLEEP}${SLEEP}`));
     const decision = await decide("toy.fast-path", diff, "A second sleep (control).");
-    expect(decision).toMatchObject({ outcome: "drop" });
-    expect(["regressed", "no_effect"]).toContain(decision.reason);
+    // A second 20 ms sleep on a ~31 ms request: a regression well past any noise threshold.
+    expect(decision).toMatchObject({ outcome: "drop", reason: "regressed" });
     expectBAtA();
     const open = await openRun(toy.home, toy.runDir(run.runId));
     expect(await listChangeIds(open.git)).toEqual([]);

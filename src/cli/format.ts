@@ -86,7 +86,11 @@ export function formatStatus(result: StatusView): string {
 
 export function formatReport(result: RunReport | (RunView & { finished: false })): string {
   if ("finished" in result) {
-    return `${["Run not finished yet.", ...formatView(result)].join("\n")}\n`;
+    const first =
+      result.status === "running"
+        ? "Run not finished yet."
+        : `Run ${result.runId} is ${result.status}; it has no report.`;
+    return `${[first, ...formatView(result)].join("\n")}\n`;
   }
   const lines = [
     `Run ${result.runId}: ${short(result.baselineSha)} -> ${short(result.finalSha)} on ${result.branch}`,

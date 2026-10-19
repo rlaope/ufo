@@ -883,7 +883,7 @@ export async function measure(
   options: StartRunOptions & { readonly onProgress?: (job: JobRecord) => void } = {},
 ): Promise<MeasureResult> {
   const started = await startRunFor(context, options, "measure");
-  let job: JobRecord;
+  let job: JobRecord | undefined;
   try {
     job = await waitForJobDone(context, started.runId, started.baselineJobId, options.onProgress);
   } catch (error) {
@@ -903,17 +903,81 @@ export async function measure(
     await removeRun(open.git, { deleteBranch: true }).catch(() => undefined);
     const run = await readRun(started.runDir);
     if (run.status === "running") {
-      await updateRun(started.runDir, (r) => ({ ...r, status: "finished" }));
+      const status = job?.status === "succeeded" ? "finished" : "failed";
+      await updateRun(started.runDir, (r) => ({ ...r, status }));
     }
     await releaseMachineLock({ runId: started.runId, home });
   }
-  if (job.status !== "succeeded") {
+  if (job?.status !== "succeeded") {
     throw new AppError(
       "measurement_failed",
-      `the baseline ${job.status}: ${job.error?.message ?? "no detail"}`,
+      `the baseline ${job?.status ?? "did not finish"}: ${job?.error?.message ?? "no detail"}`,
     );
   }
   return { runId: started.runId, baseline: job.result as unknown as BaselineResult };
+}
+
+export interface RunToEndResult {
+  report: RunReport;
+  decisions: { cardId: string; outcome: string; reason?: string | undefined }[];
+  /** Recipe cards not tried because the technique cap was reached. */
+  skipped: string[];
+}
+
+/**
+ * `ufo run` without an agent: start, baseline, every enabled recipe once, finish. A run never
+ * stays `running` behind it: when a job fails the run is cancelled, and a baseline refused for
+ * noise finishes the run at once (every change would be refused the same way), with a report.
+ */
+export async function runToEnd(
+  context: AppContext,
+  options: { readonly onProgress?: (line: string) => void } = {},
+): Promise<RunToEndResult> {
+  const say = options.onProgress ?? (() => undefined);
+  const started = await startRun(context, { hostAgent: "none" });
+  say(`run ${started.runId} on ${started.branch}`);
+  for (const warning of started.warnings) say(`warning: ${warning}`);
+  const scoped = { runId: started.runId };
+  const wait = async (jobId: string, what: string): Promise<JobRecord> => {
+    const job = await waitForJobDone(context, started.runId, jobId, (j) =>
+      say(`${what}: ${j.progress?.message ?? j.status}`),
+    );
+    if (job.status === "succeeded") return job;
+    await cancelRun(context, scoped).catch(() => undefined);
+    throw new AppError(
+      "measurement_failed",
+      `${what} ${job.status}: ${job.error?.message ?? "no detail"}; run ${started.runId} was cancelled`,
+    );
+  };
+  const baseline = (await wait(started.baselineJobId, "baseline")).result as unknown as
+    | BaselineResult
+    | undefined;
+  const decisions: RunToEndResult["decisions"] = [];
+  let skipped: string[] = [];
+  if (baseline?.refusal === undefined) {
+    const recipes = await runRecipes(context, scoped);
+    for (const queued of recipes.jobs) {
+      const job = await wait(queued.jobId, queued.cardId);
+      const { decision } = job.result as { decision: { outcome: string; reason?: string } };
+      say(`${queued.cardId}: ${decision.outcome}${decision.reason ? ` (${decision.reason})` : ""}`);
+      decisions.push({ cardId: queued.cardId, outcome: decision.outcome, reason: decision.reason });
+    }
+    skipped = recipes.skipped;
+    for (const cardId of skipped) say(`${cardId}: skipped, budget exhausted`);
+  }
+  const finish = await finishRun(context, scoped);
+  await wait(finish.jobId, "finish");
+  const finished = await report(context, scoped);
+  if (!("headline" in finished || "noHeadline" in finished)) {
+    throw new AppError("measurement_failed", `run ${started.runId} finished without a report`);
+  }
+  if (baseline?.refusal !== undefined) {
+    throw new AppError(
+      "measurement_failed",
+      `the baseline was refused (${baseline.refusal.reason}: ${baseline.refusal.detail}); no recipe was tried. The report of run ${started.runId} is kept.`,
+    );
+  }
+  return { report: finished as RunReport, decisions, skipped };
 }
 
 /** `ufo report`: the finished run's report, or what is known so far for an unfinished run. */

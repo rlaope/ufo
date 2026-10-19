@@ -68,6 +68,15 @@ export function parseConfigText(text: string, source = CONFIG_FILE): UfoConfig {
       );
     }
   }
+  // The test-set guardrail compares the pass sets a test_pass_set oracle produces; without one
+  // it would be shown at approval and enforce nothing.
+  const testSetGuardrail = config.objective.guardrails.some((g) => g.kind === "test_pass_set");
+  if (testSetGuardrail && !config.oracles.some((o) => o.kind === "test_pass_set")) {
+    throw new AppError(
+      "config_invalid",
+      `${source}: guardrail test_pass_set needs an oracle of kind test_pass_set`,
+    );
+  }
   const reserved = [ERROR_RATE_KEY, RSS_KEY];
   for (const metric of [config.objective.primary, ...config.objective.reportedOnly]) {
     if (reserved.includes(metric.name)) {

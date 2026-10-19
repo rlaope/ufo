@@ -9,16 +9,13 @@ import {
   EXIT_OK,
   EXIT_USAGE,
   extendBudget,
-  finishRun,
   init,
   measure,
   report,
   resumeRun,
   runAppWorker,
-  runRecipes,
-  startRun,
+  runToEnd,
   status,
-  waitForJobDone,
 } from "../app/index.js";
 import { WORKER_COMMAND } from "../worker/index.js";
 import {
@@ -148,32 +145,8 @@ async function execute(
       return { result, text: formatMeasure(result) };
     }
     case "run": {
-      const started = await startRun(context, { hostAgent: "none" });
-      progress(`run ${started.runId} on ${started.branch}`);
-      for (const warning of started.warnings) progress(`warning: ${warning}`);
-      const wait = async (jobId: string, what: string) => {
-        const job = await waitForJobDone(context, started.runId, jobId, (j) =>
-          progress(`${what}: ${j.progress?.message ?? j.status}`),
-        );
-        if (job.status !== "succeeded") {
-          throw new Error(`${what} ${job.status}: ${job.error?.message ?? "no detail"}`);
-        }
-        return job;
-      };
-      await wait(started.baselineJobId, "baseline");
-      const recipes = await runRecipes(context, { runId: started.runId });
-      for (const queued of recipes.jobs) {
-        const job = await wait(queued.jobId, queued.cardId);
-        const { decision } = job.result as { decision: { outcome: string; reason?: string } };
-        progress(
-          `${queued.cardId}: ${decision.outcome}${decision.reason ? ` (${decision.reason})` : ""}`,
-        );
-      }
-      for (const cardId of recipes.skipped) progress(`${cardId}: skipped, budget exhausted`);
-      const finish = await finishRun(context, { runId: started.runId });
-      await wait(finish.jobId, "finish");
-      const result = await report(context, { runId: started.runId });
-      return { result, text: formatReport(result) };
+      const result = await runToEnd(context, { onProgress: progress });
+      return { result: result.report, text: formatReport(result.report) };
     }
     case "status": {
       const result = await status(context, scoped);
