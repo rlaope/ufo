@@ -382,7 +382,8 @@ recursion into submodules (`submodule.recurse`, `submodule.propagateBranches`), 
 (`include.*`, `includeIf.*`), `extensions.worktreeConfig`, a URL rewrite (`url.*`), a promisor
 remote (`extensions.partialClone`, `remote.<name>.promisor`, `.partialCloneFilter`; a partial
 clone is refused), or any `lfs.*` key besides `lfs.repositoryformatversion` and
-`lfs.<url>.access`/`.locksverify`, and `remote.<name>.lfsurl` (git-lfs programs and endpoints);
+`lfs.<url>.access`/`.locksverify`, and `remote.<name>.lfsurl`/`.lfspushurl` (git-lfs programs and
+endpoints);
 or when `.gitattributes` or `.git/info/attributes` names a driver that config defines. git runs
 with only `PATH` (its absolute entries), `HOME`, `USER`, `LOGNAME`, `LANG`, `LC_*`, `TMPDIR`,
 `TZ`, `XDG_CONFIG_HOME`, and the `GIT_CONFIG_GLOBAL`/`SYSTEM`/`NOSYSTEM` variables from the

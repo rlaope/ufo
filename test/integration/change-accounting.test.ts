@@ -98,6 +98,11 @@ describe("change accounting", { timeout: TIMEOUT_MS }, () => {
     expect(decision).toMatchObject({ outcome: "drop", reason: "policy:stale_base" });
     expect(decision.detail).toContain(aHead.slice(0, 12));
     expect(await tried()).toBe(0);
+    // Nothing ran in B, so nothing is to be cleaned up after a crash either.
+    const recorded = (await readLedger(toy.runDir(run.runId))).find(
+      (e) => e.type === "decision" && e.changeId === queued.changeId,
+    );
+    expect(recorded?.data).toMatchObject({ attempted: false, cleanupDue: false });
   });
 
   it("records a measured drop before a failing reset hook, and counts it", async () => {
@@ -115,7 +120,10 @@ describe("change accounting", { timeout: TIMEOUT_MS }, () => {
       (e) => e.type === "decision" && e.changeId === queued.changeId,
     );
     expect(decided).toBeGreaterThanOrEqual(0);
-    expect(events[decided]?.data).toMatchObject({ decision: { outcome: "drop" } });
+    expect(events[decided]?.data).toMatchObject({
+      decision: { outcome: "drop" },
+      cleanupDue: true,
+    });
     const failed = events.findIndex(
       (e) => e.type === "reset_failed" && e.changeId === queued.changeId,
     );

@@ -4,9 +4,9 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { measure } from "../../src/app/index.js";
+import { listRunIds, measure } from "../../src/app/index.js";
 import { main } from "../../src/cli/main.js";
-import { readMachineLock, readRun } from "../../src/core/jobs/index.js";
+import { listJobs, readMachineLock, readRun } from "../../src/core/jobs/index.js";
 import {
   approveToy,
   git,
@@ -192,14 +192,28 @@ describe("ufo CLI", { timeout: TIMEOUT_MS }, () => {
   });
 });
 
-/** Signals as a Ctrl-C delivers them, right after `ufo` starts listening for one. */
-function ctrlC(): EventEmitter {
+/** Signals as a Ctrl-C delivers them, once `ufo` listens for one and `ready` holds. */
+function ctrlC(ready: () => Promise<boolean> = async () => true): EventEmitter {
   const signals = new EventEmitter();
   signals.on("newListener", (event) => {
-    if (event === "SIGINT") setImmediate(() => signals.emit("SIGINT"));
+    if (event !== "SIGINT") return;
+    const poll = async () => {
+      if (await ready().catch(() => false)) signals.emit("SIGINT");
+      else setTimeout(poll, 20);
+    };
+    setImmediate(poll);
   });
   return signals;
 }
+
+/** Whether a baseline of `target` is being measured right now. */
+const measuring = (target: Toy) => async () => {
+  for (const id of await listRunIds(target.home, { repoId: target.repoId })) {
+    const jobs = await listJobs(target.runDir(id));
+    if (jobs.some((job) => job.kind === "baseline" && job.status === "running")) return true;
+  }
+  return false;
+};
 
 // Code review (round 3) #2: Ctrl-C on `ufo run` or `ufo measure` cancels the run instead of
 // leaving it running behind the command with the machine lock held.
@@ -222,6 +236,23 @@ describe("Ctrl-C", { timeout: TIMEOUT_MS }, () => {
         expect(await readMachineLock({ home: own.home })).toBeUndefined();
         if (command === "measure") noRunLeftover(own);
       }
+    } finally {
+      await own.cleanup();
+    }
+  });
+
+  it("cancels ufo measure interrupted while its baseline is measured", async () => {
+    // The toy's own workload: the baseline takes seconds, long enough to be interrupted.
+    const own = makeToy();
+    try {
+      await approveToy(own);
+      const result = await ufo(["measure"], own, ctrlC(measuring(own)));
+      expect(result.code, result.stderr).toBe(1);
+      expect(result.stderr).toMatch(
+        /^ufo measure: interrupted: interrupted; measure run \S+ was cancelled$/m,
+      );
+      expect(await readMachineLock({ home: own.home })).toBeUndefined();
+      noRunLeftover(own);
     } finally {
       await own.cleanup();
     }

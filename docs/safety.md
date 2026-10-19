@@ -115,6 +115,11 @@ collaborators.
   their config files, are protected at any depth. A command that runs a repository script
   directly, or through a runner UFO does not recognize, is not protected that way; the review
   shows the command, so check what it runs.
+- **R3b. The PATH that finds git.** Commands get only `PATH` entries outside your repository and
+  UFO's home, but the `ufo` process finds git through its own `PATH`, keeping every absolute
+  entry. Run through `npx` or an npm script from the project, that `PATH` starts with the
+  project's `node_modules/.bin`, so a program planted there as `git` runs when UFO calls git. Run
+  `ufo` from a global install, with a `PATH` that names no directory inside the project.
 - **R4. Redaction is a list of patterns.** The redactor removes known secret formats, your
   home path, user name, and host name from bundles and views. A secret in an unknown format can pass through. The
   ledger and logs under `$UFO_HOME/private` are not redacted.
