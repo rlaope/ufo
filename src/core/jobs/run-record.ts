@@ -115,6 +115,23 @@ export async function createRunState(
 }
 
 /**
+ * Moves a run out of `running` to `status`, and only out of `running`: a cancel and a finish that
+ * race cannot overwrite each other's result. Returns whether this call ended the run.
+ */
+export async function endRun(
+  runDir: string,
+  status: Exclude<RunStatus, "running">,
+): Promise<boolean> {
+  let ended = false;
+  await updateRun(runDir, (run) => {
+    if (run.status !== "running") return run;
+    ended = true;
+    return { ...run, status };
+  });
+  return ended;
+}
+
+/**
  * A start that was cut short (the process died between creating the run state and finishing
  * the start): still `running`, never `started`, and its starter is gone. Nothing will finish it.
  */

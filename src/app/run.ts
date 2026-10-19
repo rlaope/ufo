@@ -1,5 +1,7 @@
 // A run's lifecycle: start, finish, resume, cancel, `ufo measure`, and `ufo run` to the end.
+
 import { lstat, rm } from "node:fs/promises";
+import { redact } from "../core/evidence/index.js";
 import {
   type CreatedRun,
   createRunArms,
@@ -16,6 +18,7 @@ import {
   appendLedger,
   cancelJob,
   createRunState,
+  endRun,
   enqueueJob,
   type JobRecord,
   JobRecordSchema,
@@ -133,7 +136,7 @@ async function endAbandonedStart(home: string, repo: Repo, runId: string): Promi
     { runId, repoId: repo.repoId, repoRoot: repo.root, baseSha: branchSha ?? "", ...layout },
     { deleteBranch: branchSha !== undefined },
   );
-  await updateRun(runDir, (run) => ({ ...run, status: "failed" }));
+  await endRun(runDir, "failed");
   await appendLedger(runDir, { type: EVENTS.startAbandoned, data: { runId } });
   await releaseMachineLock({ runId, home });
 }
@@ -292,7 +295,9 @@ export async function startRun(
   options: StartRunOptions = {},
 ): Promise<StartRunResult> {
   const { runDir: _runDir, home: _home, ...result } = await startRunFor(context, options, "run");
-  return result;
+  // Like every view (security F13): paths name your home as `~`, so the result is the same
+  // whether a person or an agent's model provider reads it.
+  return redact(result);
 }
 
 /**
@@ -525,7 +530,10 @@ async function cancelLocked(context: AppContext, active: ActiveRun): Promise<Can
   const cancelledJobs = (await listJobs(runDir))
     .filter((job) => unfinished.has(job.jobId) && job.status === "cancelled")
     .map((job) => job.jobId);
-  await updateRun(runDir, (run) => ({ ...run, status: "cancelled" }));
+  if (!(await endRun(runDir, "cancelled"))) {
+    // A finish that ran meanwhile ended the run first; its result stands.
+    throw new AppError("run_not_active", `run ${active.runId} ended before the cancel took effect`);
+  }
   await appendLedger(runDir, {
     type: EVENTS.runCancelled,
     data: jsonData({ cancelledJobs, processes: killSummary(kill) }),
@@ -579,14 +587,17 @@ export async function measure(
     throw error;
   } finally {
     const { home } = started;
-    const open = await openRun(home, started.runDir);
     await killRunProcesses(started.runDir, killOptions(context));
-    await removeRun(open.git, { deleteBranch: true }).catch(() => undefined);
-    const run = await readRun(started.runDir);
-    if (run.status === "running") {
-      const status = job?.status === "succeeded" ? "finished" : "failed";
-      await updateRun(started.runDir, (r) => ({ ...r, status }));
-    }
+    // The status first, as everywhere: a crash in the cleanup below leaves an ended run whose
+    // arms and branch the next start removes.
+    await endRun(started.runDir, job?.status === "succeeded" ? "finished" : "failed");
+    const open = await openRun(home, started.runDir);
+    await removeRun(open.git, { deleteBranch: true }).catch(async (error: unknown) => {
+      await appendLedger(started.runDir, {
+        type: EVENTS.cleanupFailed,
+        data: { message: (error instanceof Error ? error.message : String(error)).slice(0, 4000) },
+      });
+    });
     await releaseMachineLock({ runId: started.runId, home });
   }
   if (job?.status !== "succeeded") {
@@ -618,17 +629,53 @@ export async function runToEnd(
   const started = await startRun(context, { hostAgent: "none" });
   say(`run ${started.runId} on ${started.branch}`);
   for (const warning of started.warnings) say(`warning: ${warning}`);
-  const scoped = { runId: started.runId };
+  let ended: Awaited<ReturnType<typeof recipesToEnd>>;
+  try {
+    ended = await recipesToEnd(context, started, say);
+  } catch (error) {
+    // A worker that stopped can be resumed. Anything else ends the run, so it never stays
+    // `running` behind `ufo run`.
+    if (error instanceof AppError && error.code === "worker_not_running") throw error;
+    const how = await cancelRun(context, { runId: started.runId }).then(
+      () => `run ${started.runId} was cancelled`,
+      (cancelError: unknown) =>
+        cancelError instanceof AppError && cancelError.code === "run_not_active"
+          ? `run ${started.runId} had already ended`
+          : `run ${started.runId} could not be cancelled (${cancelError instanceof Error ? cancelError.message : String(cancelError)})`,
+    );
+    if (error instanceof JobFailed) {
+      throw new AppError("measurement_failed", `${error.message}; ${how}`, { cause: error });
+    }
+    say(how);
+    throw error;
+  }
+  if (ended.refusal !== undefined) {
+    throw new AppError(
+      "measurement_failed",
+      `the baseline was refused (${ended.refusal.reason}: ${ended.refusal.detail}); no recipe was tried. The report of run ${started.runId} is kept.`,
+    );
+  }
+  return { report: ended.report, decisions: ended.decisions, skipped: ended.skipped };
+}
+
+/** A job of `ufo run` that did not succeed. */
+class JobFailed extends Error {
+  override name = "JobFailed";
+}
+
+async function recipesToEnd(
+  context: AppContext,
+  started: StartRunResult,
+  say: (line: string) => void,
+): Promise<RunToEndResult & { refusal?: BaselineResult["refusal"] }> {
+  const { runId } = started;
+  const scoped = { runId };
   const wait = async (jobId: string, what: string): Promise<JobRecord> => {
-    const job = await waitForJobDone(context, started.runId, jobId, (j) =>
+    const job = await waitForJobDone(context, runId, jobId, (j) =>
       say(`${what}: ${j.progress?.message ?? j.status}`),
     );
     if (job.status === "succeeded") return job;
-    await cancelRun(context, scoped).catch(() => undefined);
-    throw new AppError(
-      "measurement_failed",
-      `${what} ${job.status}: ${job.error?.message ?? "no detail"}; run ${started.runId} was cancelled`,
-    );
+    throw new JobFailed(`${what} ${job.status}: ${job.error?.message ?? "no detail"}`);
   };
   const baseline = (await wait(started.baselineJobId, "baseline")).result as unknown as
     | BaselineResult
@@ -650,13 +697,12 @@ export async function runToEnd(
   await wait(finish.jobId, "finish");
   const finished = await report(context, scoped);
   if (!("headline" in finished || "noHeadline" in finished)) {
-    throw new AppError("measurement_failed", `run ${started.runId} finished without a report`);
+    throw new JobFailed(`run ${runId} finished without a report`);
   }
-  if (baseline?.refusal !== undefined) {
-    throw new AppError(
-      "measurement_failed",
-      `the baseline was refused (${baseline.refusal.reason}: ${baseline.refusal.detail}); no recipe was tried. The report of run ${started.runId} is kept.`,
-    );
-  }
-  return { report: finished as RunReport, decisions, skipped };
+  return {
+    report: finished as RunReport,
+    decisions,
+    skipped,
+    ...(baseline?.refusal === undefined ? {} : { refusal: baseline.refusal }),
+  };
 }

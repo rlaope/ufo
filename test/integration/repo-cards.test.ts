@@ -14,6 +14,7 @@ import {
 import {
   decisionOf,
   diffOf,
+  expectKeep,
   FIXTURE_CARDS,
   git,
   lightWorkload,
@@ -70,7 +71,8 @@ describe("cards declared in ufo.yaml", { timeout: TIMEOUT_MS }, () => {
       "toy.no-delay: set items.extra_delay_ms={{delay_ms}} in toy.properties",
     );
     const result = await runToEnd(made.context);
-    expect(result.decisions).toEqual([{ cardId: "toy.no-delay", outcome: "keep" }]);
+    expect(result.decisions.map((d) => d.cardId)).toEqual(["toy.no-delay"]);
+    expectKeep(result.decisions[0] ?? { outcome: "missing" });
   });
 
   it("shows a recipe's whole replacement in the review", async () => {

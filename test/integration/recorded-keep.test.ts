@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { cancelRun, JOB_KINDS, resumeRun, startRun } from "../../src/app/index.js";
@@ -6,6 +8,8 @@ import {
   appendLedger,
   enqueueJob,
   isPidAlive,
+  LOGS_DIR,
+  readLedger,
   readRun,
   writeJob,
 } from "../../src/core/jobs/index.js";
@@ -165,6 +169,49 @@ describe("a change job interrupted twice", { timeout: TIMEOUT_MS }, () => {
     const done = await waitDone(toy, run.runId, job.jobId);
     expect(done.status).toBe("succeeded");
     expect((done.result as { commit?: string }).commit).toMatch(/^[0-9a-f]{40}$/);
+    await cancelRun(toy.context, { runId: run.runId });
+  });
+});
+
+// Code review (round 2) #4: a drop recorded right before a crash has its cleanup (the card's reset
+// hook) run when the job runs again.
+describe("a drop recorded right before a crash", { timeout: TIMEOUT_MS }, () => {
+  it("runs the card's reset hook when the job runs again", async () => {
+    await approveToy(toy);
+    const run = await startRun(toy.context);
+    const runDir = toy.runDir(run.runId);
+    expect((await waitDone(toy, run.runId, run.baselineJobId)).status).toBe("succeeded");
+    await stopWorker(runDir);
+
+    const changeId = randomUUID();
+    await appendLedger(runDir, {
+      type: "decision",
+      changeId,
+      data: {
+        decision: { changeId, outcome: "drop", reason: "no_effect" },
+        cardId: "toy.no-delay",
+        attempted: true,
+        samples: [],
+        oracleResults: [],
+        commands: [],
+      },
+    });
+    const job = await enqueueJob(runDir, {
+      kind: JOB_KINDS.change,
+      input: {
+        changeId,
+        cardId: "toy.no-delay",
+        hypothesis: "Recipe toy.no-delay",
+        evidenceRefs: [],
+        source: "recipe",
+      },
+    });
+    await resumeRun(toy.context, { runId: run.runId });
+    expect((await waitDone(toy, run.runId, job.jobId)).status).toBe("succeeded");
+    const events = await readLedger(runDir);
+    expect(events.some((e) => e.type === "reset_done" && e.changeId === changeId)).toBe(true);
+    const log = readFileSync(path.join(runDir, LOGS_DIR, "commands.log"), "utf8");
+    expect(log).toContain("card toy.no-delay reset");
     await cancelRun(toy.context, { runId: run.runId });
   });
 });

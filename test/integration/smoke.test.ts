@@ -33,7 +33,7 @@ describe("smoke", { timeout: TIMEOUT_MS }, () => {
       runId: started.runId,
       cardId: "toy.fast-path",
       diff,
-      hypothesis: "The handler sleeps 5 ms on every request; removing it cuts latency.",
+      hypothesis: "The handler sleeps 20 ms on every request; removing it cuts latency.",
     });
     const done = await waitDone(toy, started.runId, queued.jobId);
     console.log(JSON.stringify(done, null, 2));

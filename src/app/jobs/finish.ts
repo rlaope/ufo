@@ -7,6 +7,7 @@ import { publishBranch, removeRun, resetArms, resetBTo, revertB } from "../../co
 import {
   appendLedger,
   cancelJob,
+  endRun,
   type JobRecord,
   type LedgerEvent,
   listJobs,
@@ -272,9 +273,12 @@ export async function handleFinish(
   // comes before the arms are removed, so a crash in between leaves a finished run with arms on
   // disk (a later start removes them), never a `running` run without arms.
   if (finalSha !== baselineSha) await publishBranch(open.git);
+  // Only out of `running`: a cancel that ended the run meanwhile wins, and nothing more is done.
+  if (!(await endRun(context.runDir, "finished"))) {
+    throw new Error("the run was cancelled while it was finishing");
+  }
   await updateRun(context.runDir, (run) => ({
     ...run,
-    status: "finished",
     shas: { ...run.shas, a: finalSha, b: finalSha },
   }));
   // The run is finished; arms that cannot be removed now are left for the next start's cleanup.

@@ -81,7 +81,7 @@ describe("a dead worker", { timeout: TIMEOUT_MS }, () => {
       input: {
         changeId: randomUUID(),
         cardId: "toy.fast-path",
-        hypothesis: "The handler sleeps 5 ms per request; removing it cuts latency.",
+        hypothesis: "The handler sleeps 20 ms per request; removing it cuts latency.",
         source: "agent",
         diff: diffOf(toy, "server.mjs", (s) => s.replace("      await sleep(20);\n", "")),
       },

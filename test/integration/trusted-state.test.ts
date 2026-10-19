@@ -115,7 +115,7 @@ describe("trusted run state", { timeout: TIMEOUT_MS }, () => {
       runId: run.runId,
       cardId: "toy.fast-path",
       diff: diffOf(toy, "server.mjs", (s) => s.replace("      await sleep(20);\n", "")),
-      hypothesis: "The handler sleeps 5 ms per request; removing it cuts latency.",
+      hypothesis: "The handler sleeps 20 ms per request; removing it cuts latency.",
     });
     const keptJob = await waitDone(toy, run.runId, queued.jobId);
     expectKeep(decisionOf(keptJob), keptJob);

@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -230,5 +230,40 @@ describe("tracking", () => {
     );
     await expect(trackContainerLabel(runDir, `${runContainerLabel(RUN_ID)}x`)).rejects.toThrow();
     await expect(trackContainerLabel(runDir, "com.example=1")).rejects.toThrow();
+  });
+});
+
+// Code review (round 2) #13: the default runner, `docker` found on PATH, not an injected Exec.
+describe("container cleanup through docker on PATH", () => {
+  it("lists by the run's label and removes what it lists", async () => {
+    const bin = path.join(root, "bin");
+    const log = path.join(root, "docker.log");
+    await mkdir(bin);
+    await writeFile(
+      path.join(bin, "docker"),
+      [
+        "#!/bin/sh",
+        `echo "$*" >> '${log}'`,
+        'case "$1" in',
+        "  version) echo 27.0.0 ;;",
+        `  ps) [ "$4" = "label=ufo.run=${RUN_ID}" ] && echo ${ID_1} ;;`,
+        "  rm) ;;",
+        "  *) exit 2 ;;",
+        "esac",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    const previous = process.env.PATH;
+    process.env.PATH = `${bin}${path.delimiter}${previous ?? ""}`;
+    try {
+      const report = await killRunProcesses(runDir);
+      expect(report.containers).toEqual({ dockerAvailable: true, removed: [ID_1] });
+    } finally {
+      process.env.PATH = previous;
+    }
+    const calls = (await readFile(log, "utf8")).trim().split("\n");
+    expect(calls).toContain(`ps -aq --filter label=ufo.run=${RUN_ID}`);
+    expect(calls).toContain(`rm -f ${ID_1}`);
   });
 });

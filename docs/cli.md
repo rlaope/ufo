@@ -52,6 +52,9 @@ stderr.
 
 Without `--json`, a failure is one line on stderr: `ufo <command>: <code>: <message>`.
 
+Paths in command output and in `--json` results name your home directory as `~`, like the
+evidence bundle does; expand it before you open a path from a script.
+
 ### Exit codes
 
 | Code | Meaning | `error.code` values |

@@ -69,14 +69,11 @@ export async function appendNoFollow(file: string, text: string): Promise<void> 
 
 /**
  * Replaces `file` with `text` so that a reader sees the old content or the new content, never a
- * mix: the text goes to a new temp file next to it (exclusive create, never through a symlink),
- * is fsynced, and is renamed over `file`. A crash before the rename leaves the old file intact
- * plus a stray temp file.
- */
-/**
- * Replaces `file` by writing a temp file and renaming it over. `durable: false` skips the fsyncs,
- * for advisory records (heartbeat, child process groups) written while samples are timed: they
- * guard processes, which an OS crash or power loss ends anyway.
+ * mix: the text goes to a new temp file next to it (exclusive create, never through a symlink)
+ * and is renamed over `file`. By default the temp file and the directory are fsynced, so the new
+ * content survives an OS crash; `durable: false` skips both, for advisory records (heartbeat,
+ * child process groups) written while samples are timed. A crash before the rename leaves the
+ * old file intact plus a stray temp file.
  */
 export async function writeFileAtomic(
   file: string,

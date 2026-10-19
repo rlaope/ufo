@@ -6,10 +6,12 @@ import {
   enqueueJob,
   type JobRecord,
   listJobs,
+  readJob,
   readLedger,
   readRun,
   TERMINAL_JOB_STATUSES,
   withControlLock,
+  withRunLock,
 } from "../core/jobs/index.js";
 import { PolicyError } from "../core/policy/index.js";
 import { type ActiveRun, activeRun, refuseIfFinishing, rethrowAsUsage } from "./active.js";
@@ -34,9 +36,15 @@ export async function ensureWorkerFor(
     await ensureWorker(context, active.runDir, active.home, active.open.state);
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
-    for (const job of jobs) {
-      await cancelJob(active.runDir, job, `no worker could start: ${reason}`.slice(0, 4000));
-    }
+    // Only jobs still queued, read again under the run lock: a worker that did start may have
+    // claimed one already.
+    await withRunLock(active.runDir, async () => {
+      for (const job of jobs) {
+        const current = await readJob(active.runDir, job.jobId);
+        if (current.status !== "queued") continue;
+        await cancelJob(active.runDir, current, `no worker could start: ${reason}`.slice(0, 4000));
+      }
+    });
     throw error;
   }
 }

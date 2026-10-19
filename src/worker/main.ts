@@ -24,7 +24,8 @@ export interface JobContext {
   setProgress: (progress: JobProgress) => void;
   /**
    * Makes the worker exit once this job is finished, without waiting `idleExitMs`, e.g. after the
-   * job that finishes the run. Queued jobs stay queued for the next worker.
+   * job that finishes the run. The worker does not touch queued jobs; the finish handler cancels
+   * the ones left, since no worker will run them for a finished run.
    */
   exitAfterJob: () => void;
 }

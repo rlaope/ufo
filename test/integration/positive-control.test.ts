@@ -32,7 +32,7 @@ import {
 } from "./helpers.js";
 
 // The positive control (AC 16) on a dirty user tree (AC 6), exported with planted secrets
-// (AC 10): removing the injected 5 ms sleep is kept as one commit, and finish_run publishes a
+// (AC 10): removing the injected 20 ms sleep is kept as one commit, and finish_run publishes a
 // headline from a fresh final check, after which the run is finished with B at the final SHA
 // and takes no more changes (condition b).
 

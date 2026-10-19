@@ -179,6 +179,11 @@ async function execute(
 }
 
 /** Runs one `ufo` invocation and returns its exit code (docs/cli.md). */
+/** What to do next, for refusals whose message leaves it to the caller. */
+const HINTS: Readonly<Record<string, string>> = {
+  "policy:budget_exceeded": "run ufo extend-budget in a terminal to continue",
+};
+
 export async function main(argv: readonly string[], io: CliIo): Promise<number> {
   const [first, ...rest] = argv;
   if (first === undefined || ((first === "-h" || first === "--help") && rest.length === 0)) {
@@ -230,7 +235,8 @@ export async function main(argv: readonly string[], io: CliIo): Promise<number> 
         `${JSON.stringify({ ok: false, command: first, error: { code: failure.code, message: failure.message } }, null, 2)}\n`,
       );
     } else {
-      io.stderr(`ufo ${first}: ${failure.code}: ${failure.message}\n`);
+      const hint = HINTS[failure.code];
+      io.stderr(`ufo ${first}: ${failure.code}: ${failure.message}${hint ? `; ${hint}` : ""}\n`);
     }
     return failure.exitCode === EXIT_OK ? EXIT_INTERNAL : failure.exitCode;
   }

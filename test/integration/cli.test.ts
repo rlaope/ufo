@@ -54,10 +54,10 @@ function built(target: Toy, args: string[], input = "") {
 }
 
 /** `ufo <args>` in-process, with the toy's app context. */
-async function ufo(args: string[]) {
+async function ufo(args: string[], target: Toy = toy) {
   let stdout = "";
   let stderr = "";
-  const { cwd, ...context } = toy.context;
+  const { cwd, ...context } = target.context;
   const code = await main(args, {
     stdout: (text) => {
       stdout += text;
@@ -112,9 +112,27 @@ describe("ufo CLI", { timeout: TIMEOUT_MS }, () => {
   });
 
   it("ufo measure prints the baseline samples and stats, and leaves no run behind", async () => {
+    // The CLI's output is under test, not the machine's noise: a workload with a constant value
+    // keeps the baseline decidable however busy the machine is, with the toy's real oracles.
+    const steady = makeToy({
+      config: (yaml) =>
+        yaml.replace(
+          "  command: node bench/latency.mjs",
+          `  command: 'node -e "console.log(JSON.stringify({ latency_ms: 1, error_rate: 0 }))"'`,
+        ),
+    });
+    try {
+      await measuresSteadily(steady);
+    } finally {
+      await steady.cleanup();
+    }
     await approveToy(toy);
-    const before = userState(toy.repo);
-    const result = await ufo(["measure"]);
+  });
+
+  async function measuresSteadily(target: Toy) {
+    await approveToy(target);
+    const before = userState(target.repo);
+    const result = await ufo(["measure"], target);
     expect(result.code, result.stderr).toBe(0);
     expect(result.stdout).toMatch(
       /^Baseline at [0-9a-f]{7}: median [\d.]+ over 5 samples \([\d.]+(?:, [\d.]+){4}\)$/m,
@@ -124,15 +142,15 @@ describe("ufo CLI", { timeout: TIMEOUT_MS }, () => {
     expect(result.stdout).toContain("Oracle smoke: passed");
     expect(result.stdout).not.toContain("Refusal:");
 
-    const status = await ufo(["status", "--json"]);
+    const status = await ufo(["status", "--json"], target);
     expect(status.code).toBe(0);
     const view = JSON.parse(status.stdout).result;
     expect(view.runs).toMatchObject([{ status: "finished" }]);
     expect(view.current).toMatchObject({ purpose: "measure", status: "finished" });
     expect(view.lock).toBeUndefined();
-    noRunLeftover(toy);
-    expect(userState(toy.repo)).toEqual(before);
-  });
+    noRunLeftover(target);
+    expect(userState(target.repo)).toEqual(before);
+  }
 
   it("ufo run applies the recipe card, keeps it, and prints the report", async () => {
     const before = userState(toy.repo);

@@ -44,6 +44,9 @@ export async function ensureWorker(
   state: AppState,
 ): Promise<WorkerRecord> {
   const run = await readRun(runDir);
+  if (run.status !== "running") {
+    throw new AppError("run_not_active", `run ${state.runId} is ${run.status}`);
+  }
   if (run.worker !== undefined && (await isWorkerAlive(run))) return run.worker;
   const lock = await readMachineLock({ home });
   if (lock === undefined) {

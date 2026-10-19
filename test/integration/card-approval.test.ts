@@ -155,7 +155,7 @@ describe("approval of technique cards", { timeout: TIMEOUT_MS }, () => {
       runId: run.runId,
       cardId: "toy.fast-path",
       diff: diffOf(toy, "server.mjs", (s) => s.replace(SLEEP, "")),
-      hypothesis: "The handler sleeps 5 ms per request; removing it cuts latency.",
+      hypothesis: "The handler sleeps 20 ms per request; removing it cuts latency.",
     });
     const refused = decisionOf(await waitDone(toy, run.runId, after.jobId));
     expect(refused).toMatchObject({ outcome: "drop", reason: "policy:config_changed" });

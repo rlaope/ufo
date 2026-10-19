@@ -30,6 +30,8 @@ export const EVENTS = {
   budgetExtended: "budget_extended",
   /** The card's reset hook failed after a recorded drop. */
   resetFailed: "reset_failed",
+  /** B was reset and the card's reset hook ran after a recorded drop. */
+  resetDone: "reset_done",
   /** Removing an ended run's arms failed; the next start tries again. */
   cleanupFailed: "cleanup_failed",
   /** A start cut short was found and ended by a later start or a cancel. */
@@ -179,9 +181,8 @@ export function budgetStatus(
   return {
     limits,
     counter,
-    violation:
-      violation === undefined
-        ? undefined
-        : { ...violation, detail: `${violation.detail}; run ufo extend-budget to continue` },
+    // The detail is recorded in decisions; how to raise the budget is the caller's to say (the
+    // CLI adds its command, an MCP adapter its own hint).
+    violation,
   };
 }

@@ -11,7 +11,14 @@ import {
   startRun,
   submitChange,
 } from "../../src/app/index.js";
-import { isPidAlive, LEDGER_FILE, readJob, readRun, writeJob } from "../../src/core/jobs/index.js";
+import {
+  isPidAlive,
+  LEDGER_FILE,
+  LOGS_DIR,
+  readJob,
+  readRun,
+  writeJob,
+} from "../../src/core/jobs/index.js";
 import {
   approveToy,
   decisionOf,
@@ -49,9 +56,9 @@ describe("resume after kill -9", { timeout: TIMEOUT_MS }, () => {
       runId: run.runId,
       cardId: "toy.fast-path",
       diff,
-      hypothesis: "The handler sleeps 5 ms per request; removing it cuts latency.",
+      hypothesis: "The handler sleeps 20 ms per request; removing it cuts latency.",
     });
-    // Wait until the worker is measuring, plus a few samples into it.
+    // Wait until the worker is measuring, then until two more samples are logged.
     const deadline = Date.now() + 30_000;
     for (;;) {
       const job = await getJob(toy.context, { runId: run.runId, jobId: queued.jobId });
@@ -59,7 +66,14 @@ describe("resume after kill -9", { timeout: TIMEOUT_MS }, () => {
       expect(Date.now()).toBeLessThan(deadline);
       await delay(50);
     }
-    await delay(600);
+    const commandsLog = path.join(runDir, LOGS_DIR, "commands.log");
+    const samplesLogged = () =>
+      (readFileSync(commandsLog, "utf8").match(/\[[ab] sample \d+\]/g) ?? []).length;
+    const atMeasuring = samplesLogged();
+    while (samplesLogged() < atMeasuring + 2) {
+      expect(Date.now()).toBeLessThan(deadline);
+      await delay(50);
+    }
     const { worker } = await readRun(runDir);
     expect(worker).toBeDefined();
     process.kill(worker?.pid ?? 0, "SIGKILL");
@@ -100,7 +114,7 @@ describe("resume after kill -9", { timeout: TIMEOUT_MS }, () => {
         runId: run.runId,
         cardId: "toy.fast-path",
         diff: diffOf(other, "server.mjs", (s) => s.replace("      await sleep(20);\n", "")),
-        hypothesis: "The handler sleeps 5 ms per request; removing it cuts latency.",
+        hypothesis: "The handler sleeps 20 ms per request; removing it cuts latency.",
       });
       const kept = await waitDone(other, run.runId, queued.jobId);
       expectKeep(decisionOf(kept), kept);

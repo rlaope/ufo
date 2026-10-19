@@ -111,7 +111,17 @@ export async function launchWorker(
     throw new Error("could not read the worker's start time (ps); the worker was stopped");
   }
   const worker: WorkerRecord = { pid, startTime, launchedAt: new Date().toISOString() };
-  await updateRun(runDir, (run) => ({ ...run, worker }));
+  try {
+    await updateRun(runDir, (run) => ({ ...run, worker }));
+  } catch (error) {
+    // An unrecorded worker could not be stopped by cancel or resume; stop it now.
+    try {
+      process.kill(-pid, "SIGKILL");
+    } catch {
+      // It already exited.
+    }
+    throw error;
+  }
   return worker;
 }
 

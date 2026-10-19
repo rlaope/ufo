@@ -136,14 +136,14 @@ describe("recipes and the technique cap", { timeout: TIMEOUT_MS }, () => {
       maxTechniques: 1,
       techniquesTried: 1,
       exhausted: true,
-      detail: "1 of 1 techniques tried; run ufo extend-budget to continue",
+      detail: "1 of 1 techniques tried",
     });
 
     const change = {
       runId: run.runId,
       cardId: "toy.fast-path",
       diff: diffOf(toy, "server.mjs", withoutSleep),
-      hypothesis: "The handler sleeps 5 ms per request; removing it cuts latency.",
+      hypothesis: "The handler sleeps 20 ms per request; removing it cuts latency.",
     };
     expect(await refusal(submitChange(toy.context, change))).toMatchObject({
       exitCode: 1,

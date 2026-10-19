@@ -41,6 +41,12 @@ export async function activeRun(context: AppContext, runId?: string): Promise<Ac
  * arms and exits after it, and cancels whatever is still queued.
  */
 export async function refuseIfFinishing(active: ActiveRun): Promise<void> {
+  // Called inside the run's control lock: a cancel or finish that held it may have ended the run
+  // while this call waited.
+  const { status } = await readRun(active.runDir);
+  if (status !== "running") {
+    throw new AppError("run_not_active", `run ${active.runId} is ${status}`);
+  }
   const finishing = (await listJobs(active.runDir)).some(
     (job) => job.kind === JOB_KINDS.finish && !TERMINAL_JOB_STATUSES.has(job.status),
   );

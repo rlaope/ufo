@@ -13,6 +13,7 @@ import {
   applyToB,
   commitKeep,
   diffFromFiles,
+  headOfA,
   listChangeIds,
   readFileAtA,
   resetArms,
@@ -141,7 +142,9 @@ export async function handleChange(
   const open = await openRun(options.home, context.runDir);
   const events = await readLedger(context.runDir);
   const recorded = decisionFor(events, input.changeId);
-  if (recorded !== undefined) return completeRecorded(open, input, recorded, events);
+  if (recorded !== undefined) {
+    return completeRecorded(open, input, recorded, events, context, options);
+  }
 
   const outcome = await decide(open, input, context, options, events);
   await appendLedger(context.runDir, {
@@ -165,19 +168,31 @@ export async function handleChange(
       commit,
     });
   }
-  if (outcome.cleanup !== undefined) {
-    try {
-      await outcome.cleanup();
-    } catch (error) {
-      await appendLedger(context.runDir, {
-        type: EVENTS.resetFailed,
-        changeId: input.changeId,
-        data: { message: (error instanceof Error ? error.message : String(error)).slice(0, 4000) },
-      });
-      throw error;
-    }
-  }
+  if (outcome.cleanup !== undefined) await cleanUpDrop(context, input.changeId, outcome.cleanup);
   return toJson({ changeId: input.changeId, cardId: input.cardId, decision: outcome.decision });
+}
+
+/**
+ * Runs a recorded drop's cleanup (revert B, the card's reset hook) and records how it went:
+ * `reset_done`, or `reset_failed` and the job fails. A job re-run after a crash between the
+ * decision and this record runs the cleanup again (see `completeRecorded`).
+ */
+async function cleanUpDrop(
+  context: JobContext,
+  changeId: string,
+  cleanup: () => Promise<void>,
+): Promise<void> {
+  try {
+    await cleanup();
+  } catch (error) {
+    await appendLedger(context.runDir, {
+      type: EVENTS.resetFailed,
+      changeId,
+      data: { message: (error instanceof Error ? error.message : String(error)).slice(0, 4000) },
+    });
+    throw error;
+  }
+  await appendLedger(context.runDir, { type: EVENTS.resetDone, changeId });
 }
 
 async function commitAndRecord(open: OpenRun, change: Change, decision: Decision): Promise<string> {
@@ -210,9 +225,28 @@ async function completeRecorded(
   input: z.output<typeof ChangeJobInputSchema>,
   recorded: DecisionData,
   events: Awaited<ReturnType<typeof readLedger>>,
+  context: JobContext,
+  options: HandlerOptions,
 ): Promise<ChangeResult> {
   const result = { changeId: input.changeId, cardId: input.cardId, decision: recorded.decision };
-  if (recorded.decision.outcome !== "keep") return toJson(result);
+  if (recorded.decision.outcome !== "keep") {
+    // A drop recorded right before a crash: its cleanup (the card's reset hook) may never have
+    // run. Run it now unless the ledger says how it went.
+    const settled = events.some(
+      (e) =>
+        e.changeId === input.changeId &&
+        (e.type === EVENTS.resetDone || e.type === EVENTS.resetFailed),
+    );
+    const resolved = resolveCard(open.catalog, input.cardId, open.config.cards);
+    if (recorded.attempted && !settled && !("violation" in resolved)) {
+      const session = newSession(open, context, options.machine);
+      const armB: ArmSpec = { arm: "b", dir: open.git.armB, sha: await headOfA(open.git) };
+      await cleanUpDrop(context, input.changeId, () =>
+        dropChange(open, resolved.card, session, armB),
+      );
+    }
+    return toJson(result);
+  }
   const onBranch = (await listChangeIds(open.git)).find((c) => c.changeId === input.changeId);
   if (onBranch !== undefined) return toJson({ ...result, commit: onBranch.sha });
   const started = events.findLast(
