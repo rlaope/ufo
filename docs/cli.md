@@ -57,18 +57,21 @@ Without `--json`, a failure is one line on stderr: `ufo <command>: <code>: <mess
 | Code | Meaning | `error.code` values |
 |---|---|---|
 | 0 | Success. | |
-| 1 | A policy refused the request, the human declined, or the run needs `ufo resume` first. | `policy:<rule>` (see below), `approval_declined`, `opt_in_mismatch`, `config_exists`, `run_not_active`, `run_in_progress`, `worker_not_running`, `measurement_failed`, `ledger_mismatch`, `unsafe_state` |
+| 1 | A policy refused the request, the human declined, or the run needs `ufo resume` first. | `policy:<rule>` (see below), `approval_declined`, `opt_in_mismatch`, `config_exists`, `run_not_active`, `run_in_progress`, `worker_not_running`, `measurement_failed`, `ledger_mismatch`, `cancel_pending`, `arms_missing`, `unsafe_state` |
 | 2 | Usage or configuration error, or nothing to act on. | `usage`, `not_a_repo`, `config_missing`, `config_invalid`, `cards_invalid`, `no_run`, `unsafe_home` |
 | 3 | UFO itself failed. | `internal` |
 
-`ufo run` also exits 3 when one of its jobs (baseline, recipe, finish) fails; the worker log
-(`logs/worker.err.log` in the run state) has the detail. `ufo measure` reports a failed baseline
-as `measurement_failed` (exit 1).
+`ufo run` never leaves a run `running`. When one of its jobs (baseline, recipe, finish) fails, it
+cancels the run and exits 1 with `measurement_failed`; the worker log (`logs/worker.err.log` in the
+run state) has the detail. When the baseline is refused for noise it finishes the run at once (the
+report is kept, no recipe is tried) and exits 1 with `measurement_failed`. `ufo measure` reports a
+failed baseline as `measurement_failed` (exit 1), and the run it used ends `failed`.
 
 Policy rules (`policy:<rule>`): `protected_path`, `out_of_scope`, `test_set_shrunk`,
 `unapproved_config`, `config_changed`, `opt_in_required`, `target_not_allowed`,
 `non_tty_approval`, `budget_exceeded`, `noise_floor`, `unknown_card`, `card_not_enabled`,
-`unsafe_repo_config`. The same names appear as decision reasons when the worker refuses a change.
+`unsafe_repo_config`, `stale_base`. The same names appear as decision reasons when the worker
+refuses a change.
 
 Refusals that protect UFO's own state:
 
@@ -78,6 +81,8 @@ Refusals that protect UFO's own state:
 | `unsafe_state` (exit 1) | Something under `$UFO_HOME` is not what UFO created: a symbolic link in the run state, the approvals, or the arms, a run state file that does not validate, a run state naming another run or repository, or an arm whose git directory is not its own. UFO refuses instead of following it. |
 | `policy:unsafe_repo_config` (exit 1) | The repository's `.git/config` sets a key that would make git run a program the repository chose (see [Arms](#runs-budgets-and-decisions)). Remove the key, or move it to your global git config, and start again. |
 | `run_in_progress` (exit 1) | Another run holds the machine lock, or a run of this repository is still `running`. The message names the run and how to end it (`ufo resume --run <id>` or `ufo cancel --run <id>`). |
+| `cancel_pending` (exit 1) | `ufo resume` on a run whose cancel was requested but did not complete. Run `ufo cancel` again to end it. |
+| `arms_missing` (exit 1) | `ufo resume` on a run whose arms under `$UFO_HOME/arms` are gone. It cannot continue; `ufo cancel` ends it. |
 
 ## `ufo.yaml` reference
 
@@ -94,7 +99,7 @@ objective:
     direction: lower_is_better  # or higher_is_better
     kind: stochastic            # deterministic: 1 run per arm + 1 repeat; stochastic: 5 interleaved pairs
     replicationUnit: load_run   # process_launch | load_run | build | page_load | eval_pass | training_pass
-  scenario: GET /items, 30 sequential requests on loopback
+  scenario: GET /items, 15 sequential requests on loopback
   guardrails:
     - kind: error_rate          # maxDeltaPp: 0.1 (default), percentage points over arm A
     - kind: memory              # maxRatio: 1.2 (default), RSS of B over A
@@ -122,8 +127,12 @@ oracles:
 targets: []                     # load targets beyond loopback and the Docker bridge
 cards:                          # enabled technique card ids, in the order `ufo run` applies recipes
   - generic.code-change
+cardDirs: []                    # repository directories with more cards, e.g. [ufo/cards]
 optIns: []                      # lossy and/or upgrade; granted only by `ufo approve --allow-...`
 env: []                         # environment variable names commands may see besides the defaults
+hygiene:                        # machine checks before every sample (plan §4.5)
+  requireAcPower: true          # default true; false lets samples run on battery
+  maxLoadFactor: 0.5            # default 0.5: the 1-minute load must stay below 0.5 × cores
 ```
 
 | Key | Type | Notes |
@@ -140,6 +149,8 @@ env: []                         # environment variable names commands may see be
 | `oracles` | list | At most 16, unique `name`. M1 runs `test_pass_set` and `smoke`; the other kinds (`http_golden`, `result_set_equality`, `quality_eval`, `loss_tolerance`) are rejected until their packs exist. |
 | `targets` | list | IPv4/IPv6 addresses, CIDR ranges, or hostnames; at most 64. See [Load targets](#load-targets). |
 | `cards` | list of ids | Every id must exist in the card catalog (`policy:unknown_card` otherwise). |
+| `cardDirs` | list of paths | At most 16 repository-relative directories with technique cards, besides the built-in ones. Each must be a directory inside the repository, reached without a symbolic link (`config_invalid` otherwise). The approval covers their enabled cards, and no change may edit them. |
+| `hygiene` | object | `requireAcPower` (default `true`) and `maxLoadFactor` (default `0.5`, at most 64). Loosened values are shown at approval and recorded as limitations in the evidence bundle. |
 | `optIns` | list | `lossy`, `upgrade`. |
 | `env` | list of names | At most 64 environment variable names passed to every command besides the defaults (see below). `UFO_*` names are reserved. The approval covers the list; the values are read when a run starts. |
 
@@ -164,6 +175,7 @@ anything else stay out unless `env:` names them. UFO adds these variables:
 | `UFO_RUN_ID` | The run id |
 | `UFO_PHASE` | `baseline`, `change`, or `final_check` |
 | `UFO_SAMPLE_INDEX` | The sample's index, on the workload `command` only |
+| `UFO_TARGET_ADDR` | When `targets:` is set: each entry as `host=address`, comma-separated, as checked when the run started |
 
 Whatever a command leaves running in its process group is killed when it exits.
 
@@ -274,9 +286,13 @@ Approval is human-only.
 3. Each opt-in in `optIns` must be confirmed by its flag (`--allow-lossy`, `--allow-upgrade`), and
    a flag without a matching request is refused too (`opt_in_mismatch`).
 4. It prints the `ufo.yaml` hash, the objective, every command UFO will run (workload steps,
-   oracles, and the cards' command templates), the recipe edits, the enabled cards with their risk
-   classes and where each comes from, the load targets, the opt-ins, and the names of the
-   environment variables every command will see.
+   oracles, and the cards' command templates, each JSON-quoted so nothing in the line can hide,
+   with lines over 200 characters flagged), the recipe edits in full (`replace_text` shows the
+   whole `find` and `replace`), the script tables the commands run through with the body of each
+   package.json script they name, the card directories, the enabled cards with their risk classes
+   and where each comes from, the load targets, the opt-ins, the machine checks, and the names of
+   the environment variables every command will see. Commands may not contain invisible format
+   characters or non-ASCII spaces (`config_invalid`).
 5. You type `approve`. Anything else records nothing (`approval_declined`).
 6. UFO stores the approval in `$UFO_HOME/private/approvals/<repo-id>.json` (mode 0600), replacing
    an earlier approval of that repository: `sha256(ufo.yaml)`, the opt-ins, the `env:` names, and
@@ -328,7 +344,9 @@ allowed. A private address (RFC 1918, IPv6 ULA `fc00::/7`) is allowed only when 
 it, a range that contains it, or the hostname that resolves to it. Every other address (public,
 link-local, CGNAT) is refused even when listed: external targets are not supported in v1. Each
 listed target is resolved once when the run starts; one refused address refuses the run with
-`policy:target_not_allowed`.
+`policy:target_not_allowed`. The checked addresses reach every command as `UFO_TARGET_ADDR`
+(`host=address`, comma-separated). UFO checks the names; it does not control where the workload
+actually connects, so a workload should use `UFO_TARGET_ADDR` rather than resolve names again.
 
 ## Runs, budgets, and decisions
 
@@ -359,26 +377,38 @@ arm since the last job is not measured.
 - A kept change is one commit on the run branch with the trailers `Ufo-Technique`, `Ufo-Metric`,
   `Ufo-Bundle`, and `Ufo-Change-Id`, authored and committed as the `user.name` and `user.email`
   your repository's git config gives when the run starts. A change that was applied and not kept
-  resets B to A, then runs the card's `reset` template.
+  is recorded first; then B is reset to A and the card's `reset` template runs. A failing `reset`
+  is recorded as its own `reset_failed` event and fails the job; the decision stays.
 - A job interrupted after its decision was recorded returns that decision when it runs again. A
   recorded keep that never reached the run branch is committed only if it is the change the job
   itself queued and it passes the approval, card, opt-in, and protected-path checks again;
-  otherwise the job fails and nothing is committed.
+  otherwise the job fails and nothing is committed. A job interrupted twice fails, unless its
+  decision is recorded: then it is requeued and only finishes what the decision says.
+- A diff written against an older arm A (a `baseSha` that is no longer A's commit, because an
+  earlier change was kept) is refused before anything is applied, as `policy:stale_base`; it does
+  not count against the budget.
 - Each change that got past the policy checks counts as one technique, whatever its outcome
   (a patch that does not apply counts too; a refusal does not). When the cap or the wall-clock
   budget is reached, new changes are refused with `policy:budget_exceeded` until
   `ufo extend-budget` raises the limit.
 - A noise floor above 10% (MAD over median of the latest five samples at A) refuses decisions with
-  `policy:noise_floor`, naming the likely cause.
+  `policy:noise_floor`, naming the likely cause. When the samples at the current A already put it
+  above 10%, a change is refused before it is applied or measured and does not count against the
+  budget. The samples at A are the latest kept change's B values, or the baseline before any keep;
+  after a deterministic keep (fewer than five values), the change's own five A samples.
 - Finishing the run runs the final check (the base commit in B against the final commit in A, five
   fresh pairs), writes the report and the redacted evidence bundle, publishes the run branch,
   removes the arms (the run branch stays for review), and releases the machine lock. From the moment the finish job is
   queued, the run takes no more changes (`run_not_active`); a job still queued when it ends is
   cancelled. A headline is published only when the final check improves by at least `minEffect`.
 - `ufo cancel` stops the worker and every process group it started, removes containers labeled
-  `ufo.run=<run-id>`, resets and removes the arms, releases the machine lock, and keeps the
-  ledger.
-- `ufo resume` stops what the interrupted run left running, resets both arms to the run branch,
+  `ufo.run=<run-id>`, records the run as cancelled, then removes the arms and releases the
+  machine lock, and keeps the ledger. Cancel and finish record the final status before they
+  remove the arms, so an interruption in between leaves an ended run with arms on disk, never a
+  `running` run without them; the next start of a run in the repository removes such leftovers.
+- `ufo resume` refuses a run whose cancel did not complete (`cancel_pending`: cancel it again) and
+  a run whose arms are gone (`arms_missing`: cancel it). Otherwise it stops what the interrupted
+  run left running, resets both arms to the run branch,
   reconciles the ledger with the commits by `Ufo-Change-Id` (a commit without its ledger entry
   gets the entry; anything else stops with `ledger_mismatch` before any job is touched),
   requeues the interrupted job (once), publishes the run branch, and starts a worker for the

@@ -8,6 +8,7 @@ import {
   type OracleResult,
   type Pair,
 } from "../../domain/index.js";
+import { oneLine } from "../text.js";
 
 /** Whether the candidate stayed within one guardrail, as computed by the caller. */
 export interface GuardrailCheck {
@@ -51,12 +52,7 @@ function withDetail(reason: DecisionReason, detail: string | undefined): FailedG
 
 /** Collapses control characters, trims, and truncates text to fit `Decision.detail`. */
 function toDetail(text: string): string | undefined {
-  const line = text
-    .replace(/\p{Cc}+/gu, " ")
-    .trim()
-    .slice(0, MAX_NOTE_LENGTH)
-    .trim();
-  return line === "" ? undefined : line;
+  return oneLine(text, MAX_NOTE_LENGTH) || undefined;
 }
 
 export interface MeasuredChange {

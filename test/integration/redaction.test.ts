@@ -2,8 +2,18 @@ import { readdirSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { finishRun, type RunReport, report, startRun, submitChange } from "../../src/app/index.js";
-import { LEDGER_FILE } from "../../src/core/jobs/index.js";
+import {
+  finishRun,
+  getJob,
+  getRun,
+  REPORT_FILE,
+  type RunReport,
+  report,
+  startRun,
+  status,
+  submitChange,
+} from "../../src/app/index.js";
+import { LEDGER_FILE, listJobs } from "../../src/core/jobs/index.js";
 import {
   approveToy,
   decisionOf,
@@ -114,5 +124,25 @@ describe("redaction of command output", { timeout: TIMEOUT_MS }, () => {
       expect.stringContaining(redacted),
       expect.stringContaining(redacted),
     ]);
+
+    // Security F13: every view and report.json are redacted too; only the ledger keeps them.
+    const runDir = toy.runDir(run.runId);
+    const jobs = await Promise.all(
+      (await listJobs(runDir)).map((job) =>
+        getJob(toy.context, { runId: run.runId, jobId: job.jobId }),
+      ),
+    );
+    const views: [string, string][] = [
+      ["getRun", JSON.stringify(await getRun(toy.context, { runId: run.runId }))],
+      ["status", JSON.stringify(await status(toy.context, { runId: run.runId }))],
+      ["report", JSON.stringify(result)],
+      ["report.json", readFileSync(path.join(runDir, REPORT_FILE), "utf8")],
+      ...jobs.map((job): [string, string] => [`getJob ${job.jobId}`, JSON.stringify(job)]),
+    ];
+    expect(views.some(([, text]) => text.includes("<redacted:api_key>"))).toBe(true);
+    for (const [name, text] of views) {
+      expect(text, name).not.toContain(FAKE_KEY);
+      expect(text, name).not.toContain(home);
+    }
   });
 });

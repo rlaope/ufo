@@ -304,7 +304,8 @@ async function decide(
       };
     }
   }
-  // Recorded before any policy check, so refused changes are in the evidence bundle too.
+  // Recorded before the card, opt-in, budget, and path checks, so changes they refuse are in the
+  // evidence bundle too. Only the approval check above comes first.
   const change = ChangeSchema.parse({
     changeId,
     baseSha: input.baseSha ?? aHead,

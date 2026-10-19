@@ -46,14 +46,18 @@ per-worktree config, URL rewrites; see [cli.md](cli.md)). Your repository receiv
 `ufo/run-<run-id>` branch, by a fast-forward fetch from arm A.
 
 **Policy before code.** A change is refused before it is applied when it touches a protected path
-(tests, benchmarks, `ufo.yaml`, CI, secrets, lockfiles outside `upgrade` cards), names a card that
+(tests, benchmarks, `ufo.yaml`, CI, secrets, git attributes and submodules, the declared card
+directories, the script tables the approved commands run through such as `package.json` or a
+`Makefile`, lockfiles outside `upgrade` cards), names a card that
 is not enabled, needs an opt-in the approval does not grant, or exceeds the budget; git's own
 list of changed paths is checked again after applying. Tests that shrink the pass set are
 refused. A decision recorded in the ledger never carries code past these checks: after a crash,
 a recorded keep is committed only for the change its job queued, and only after the same checks
 pass again.
 
-**Bounded commands and environment.** UFO runs only the approved command lines. Each runs in its
+**Bounded commands and environment.** UFO runs only the approved command lines, and the review
+shows each one JSON-quoted; a command with invisible format characters or non-ASCII spaces is
+refused, so what you read is what runs. Each runs in its
 own process group, with exactly the environment captured when the run started (`PATH`, `HOME`,
 `LANG`, `LC_*`, `TMPDIR`, `USER`, `SHELL`, `TERM`, and the approved `env:` names). Other variables
 of the launching process, such as API keys or agent sockets, are not passed on.
@@ -64,7 +68,20 @@ Arm A is reset to its commit at the start of every job. One machine lock, held b
 whole life, keeps two runs from measuring at once; control operations on one run take turns.
 
 **Measured decisions.** UFO, not the agent, decides keep or drop, from interleaved samples of
-both arms, guardrails, and oracles. Evidence bundles are redacted before export.
+both arms, guardrails, and oracles.
+
+**Redacted views.** Evidence bundles, `report.json`, and every view UFO returns (`get_job`,
+`get_run`, `status`, `report`) go through the same redactor; the raw values stay in the run's
+ledger and logs under `$UFO_HOME/private`.
+
+**Load targets are checked, not enforced.** UFO resolves each `targets:` entry when the run starts
+and refuses public, link-local, and CGNAT addresses; it passes the checked addresses to the
+workload as `UFO_TARGET_ADDR`. It does not control where the workload's own code connects.
+
+**Package and CI.** The npm package runs no install scripts and pins its runtime dependencies
+exactly; `prepack` rebuilds `dist` from a clean tree. CI installs with `--ignore-scripts`, pins
+every action by commit, and on pull requests runs the identity gate from the base branch, so a
+pull request cannot change the script that sees the secret.
 
 ## What UFO cannot prevent
 
@@ -78,10 +95,11 @@ both arms, guardrails, and oracles. Evidence bundles are redacted before export.
   `ufo approve`, `ufo extend-budget`, or general-purpose interpreters on its own.
 - **R3. The approval does not cover everything the commands use.** It covers `ufo.yaml`, the
   enabled cards, the opt-ins, and the `env:` names, but not the base commit the run starts from
-  or the scripts your approved commands call (for example, a `package.json` script or a
-  `Makefile` target). Read what your commands run before you approve them.
-- **R4. Redaction is a list of patterns.** The bundle redactor removes known secret formats, your
-  home path, user name, and host name. A secret in an unknown format can pass through. The
+  or the files your approved commands read beyond the script tables UFO protects (a script a
+  `package.json` script calls, for example). The review shows each `package.json` script your
+  commands name; read what they run before you approve them.
+- **R4. Redaction is a list of patterns.** The redactor removes known secret formats, your
+  home path, user name, and host name from bundles and views. A secret in an unknown format can pass through. The
   ledger and logs under `$UFO_HOME/private` are not redacted.
 - **R5. Evidence can be forged by someone with a shell.** A bundle shows what UFO recorded, but a
   process with capability C could have written it. `ufo reproduce` re-measures on your machine and

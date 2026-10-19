@@ -23,7 +23,8 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
+      # Dependencies' install scripts do not run in CI (only fsevents has one, macOS-only).
+      - run: npm ci --ignore-scripts
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
@@ -45,9 +46,18 @@ jobs:
           IDENTITY_PATTERN: ${{ secrets.IDENTITY_PATTERN }}
           UFO_GATE_PRS: "1"
           GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
         run: |
           if [ -z "$IDENTITY_PATTERN" ]; then
             echo "::notice::IDENTITY_PATTERN is not available (for example, a pull request from a fork); skipping the identity gate."
             exit 0
           fi
-          bash scripts/identity-gate.sh
+          # A pull request must not run its own version of the script with the secret: use the
+          # base branch's copy, which the pull request cannot change.
+          gate=scripts/identity-gate.sh
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            gate="$RUNNER_TEMP/identity-gate.sh"
+            git show "origin/$BASE_REF:scripts/identity-gate.sh" > "$gate"
+          fi
+          bash "$gate"

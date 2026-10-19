@@ -35,6 +35,8 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "prepack": "npm run clean && npm run build",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "format": "biome format --write .",
@@ -43,9 +45,9 @@
     "test:integration": "vitest run test/integration"
   },
   "dependencies": {
-    "picomatch": "^4.0.7",
-    "yaml": "^2.9.1",
-    "zod": "^4.6.7"
+    "picomatch": "4.0.7",
+    "yaml": "2.9.1",
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",

@@ -14,13 +14,13 @@ import {
   violation,
 } from "../core/policy/index.js";
 import { MAX_TECHNIQUES, MAX_WALL_CLOCK_MINUTES, type OptIn } from "../domain/index.js";
+import { activeRun } from "./active.js";
 import { approvalSubject, loadCards } from "./cards.js";
 import { loadConfig } from "./config.js";
 import { type AppContext, homeFor, resolveRepo } from "./context.js";
 import { AppError } from "./errors.js";
 import { budgetStatus, EVENTS } from "./events.js";
 import { approvalReview, approvedCommands } from "./review.js";
-import { activeRun } from "./run.js";
 import { npmScriptBodies, scriptTablesFor } from "./script-tables.js";
 
 /** Asks the human one question and returns the line they typed. */

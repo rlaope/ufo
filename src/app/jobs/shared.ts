@@ -1,5 +1,6 @@
 import { type GuardrailCheck, median } from "../../core/decide/index.js";
 import type { PolicyViolation } from "../../core/policy/index.js";
+import { oneLine } from "../../core/text.js";
 import {
   DEFAULT_HYGIENE,
   type Decision,
@@ -56,8 +57,7 @@ export function newSession(open: OpenRun, context: JobContext, machine: Machine)
 }
 
 function note(text: string): string {
-  const line = text.replace(/\p{Cc}+/gu, " ").trim();
-  return line.length > MAX_NOTE_LENGTH ? `${line.slice(0, MAX_NOTE_LENGTH - 3)}...` : line;
+  return oneLine(text, MAX_NOTE_LENGTH);
 }
 
 /** A decision made before anything was measured: no pairs, no effect. */

@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import path from "node:path";
 import { promisify } from "node:util";
 import { median, pairImprovement } from "../../core/decide/index.js";
-import { collectFingerprint, writeBundle } from "../../core/evidence/index.js";
+import { collectFingerprint, redact, writeBundle } from "../../core/evidence/index.js";
 import { publishBranch, removeRun, resetArms, resetBTo, revertB } from "../../core/git/index.js";
 import {
   appendLedger,
@@ -246,19 +246,22 @@ export async function handleFinish(
       : undefined;
   const bundle = await assembleBundle(open, events, machine, baselineSha, finalSha);
   const { dir } = await writeBundle(context.runDir, bundle);
-  const report: RunReport = toJson({
-    runId: open.state.runId,
-    branch: open.git.branch,
-    baselineSha,
-    finalSha,
-    headline,
-    noHeadline,
-    finalCheck,
-    decisions: summarizeDecisions(events),
-    bundleId: bundle.bundleId,
-    bundleDir: dir,
-    limitations: bundle.limitations,
-  });
+  // Redacted like every view (security F13); the raw values stay in the ledger.
+  const report: RunReport = redact(
+    toJson({
+      runId: open.state.runId,
+      branch: open.git.branch,
+      baselineSha,
+      finalSha,
+      headline,
+      noHeadline,
+      finalCheck,
+      decisions: summarizeDecisions(events),
+      bundleId: bundle.bundleId,
+      bundleDir: dir,
+      limitations: bundle.limitations,
+    }),
+  );
   await writeJsonAtomic(path.join(context.runDir, REPORT_FILE), report);
   await appendLedger(context.runDir, {
     type: EVENTS.runFinished,

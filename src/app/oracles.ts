@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { checkTestSet, type PolicyViolation } from "../core/policy/index.js";
+import { oneLine } from "../core/text.js";
 import {
   type DecisionReason,
   type OracleResult,
@@ -94,8 +95,7 @@ export function snapshotFromRuns(first: TestOutcome, second: TestOutcome): TestS
 }
 
 function summary(text: string): string {
-  const line = text.replace(/\p{Cc}+/gu, " ").trim();
-  return line.length > 1000 ? `${line.slice(0, 997)}...` : line || "no output";
+  return oneLine(text, 1000, "no output");
 }
 
 function oracleResult(

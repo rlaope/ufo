@@ -73,14 +73,6 @@ export async function readLedger(runDir: string): Promise<LedgerEvent[]> {
   });
 }
 
-/** The most recent event about `changeId`, or `undefined`. */
-export function findLastChangeEvent(
-  events: readonly LedgerEvent[],
-  changeId: string,
-): LedgerEvent | undefined {
-  return events.findLast((event) => event.changeId === changeId);
-}
-
 export interface LedgerReconciliation {
   /** On the run branch without a `change_committed` event: the crash case, recoverable. */
   committedUnrecorded: string[];

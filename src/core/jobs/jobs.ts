@@ -31,7 +31,7 @@ export type JobProgress = z.infer<typeof JobProgressSchema>;
 export const JobRecordSchema = z.strictObject({
   jobId: JobIdSchema,
   seq: z.number().int().min(1),
-  /** Selects the worker's handler, e.g. `baseline`, `submit_change`, `finish`. */
+  /** Selects the worker's handler, e.g. `baseline`, `change`, `finish`. */
   kind: IdSchema,
   input: z.json(),
   status: JobStatusSchema,
@@ -87,7 +87,10 @@ export async function readJob(runDir: string, jobId: string): Promise<JobRecord>
   return JobRecordSchema.parse(value);
 }
 
-/** Replaces a job record. Only the worker writes a job after it was enqueued. */
+/**
+ * Replaces a job record. After it is enqueued, the worker writes it; the app writes it only to
+ * settle a job no worker will run (resume, cancel, a worker that could not start).
+ */
 export async function writeJob(runDir: string, job: JobRecord): Promise<void> {
   const parsed = JobRecordSchema.parse(job);
   await writeJsonAtomic(jobFile(runDir, parsed.jobId), parsed);

@@ -14,6 +14,7 @@ import {
   systemReaders,
   watchClockDrift,
 } from "../core/measure/index.js";
+import { oneLine } from "../core/text.js";
 import {
   type Arm,
   type HygieneConfig,
@@ -52,8 +53,7 @@ const MAX_REASON_LENGTH = 200;
 
 /** One-line, bounded reason for `Sample.invalidReason`. */
 function reason(text: string): string {
-  const line = text.replace(/\p{Cc}+/gu, " ").trim() || "invalid sample";
-  return line.length > MAX_REASON_LENGTH ? `${line.slice(0, MAX_REASON_LENGTH - 3)}...` : line;
+  return oneLine(text, MAX_REASON_LENGTH, "invalid sample");
 }
 
 export type ParsedSample =

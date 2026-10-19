@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { MAX_NOTE_LENGTH } from "../../domain/index.js";
+import { oneLine } from "../text.js";
 
 /**
  * Variables that would point git at another repository, index, or identity than the one the
@@ -97,12 +98,11 @@ export interface GitResult {
 
 /** One line of git's stderr, fit for a decision detail: no control characters, bounded length. */
 export function summarizeStderr(stderr: string): string {
-  const text = stderr
+  const lines = stderr
     .split("\n")
-    .map((line) => line.replace(/\p{Cc}/gu, " ").trim())
-    .filter((line) => line.length > 0)
-    .join("; ");
-  return text.length > MAX_NOTE_LENGTH ? `${text.slice(0, MAX_NOTE_LENGTH - 3)}...` : text;
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  return oneLine(lines.join("; "), MAX_NOTE_LENGTH);
 }
 
 /** The git subcommand of `args`, after any `--git-dir`/`--work-tree` options. */

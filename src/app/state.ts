@@ -26,7 +26,10 @@ import { approvalSubject, type CardSet } from "./cards.js";
 import { parseConfigText } from "./config.js";
 import { resolveRepo } from "./context.js";
 
-/** App-level state of one run, next to `run.json`; written once by `startRun`. */
+/**
+ * App-level state of one run, next to `run.json`; written by `startRun`, and again by
+ * `finishRun` only to add the self-reported model id.
+ */
 export const APP_STATE_FILE = "app.json";
 /** The finished run's report: headline, final check, bundle location. */
 export const REPORT_FILE = "report.json";

@@ -6,7 +6,6 @@ import {
   appendLedger,
   COMMITTED_EVENT,
   createRunState,
-  findLastChangeEvent,
   LEDGER_FILE,
   readLedger,
   reconcileLedger,
@@ -45,16 +44,6 @@ describe("ledger", () => {
   it("rejects malformed events", async () => {
     await expect(appendLedger(runDir, { type: "Not Snake" })).rejects.toThrow();
     await expect(appendLedger(runDir, { type: "ok", changeId: "not-a-uuid" })).rejects.toThrow();
-  });
-
-  it("finds the last event of a change", async () => {
-    await appendLedger(runDir, { type: "change_submitted", changeId: ID_1 });
-    await appendLedger(runDir, { type: "change_submitted", changeId: ID_2 });
-    await appendLedger(runDir, { type: "change_decided", changeId: ID_1, data: "drop" });
-    const events = await readLedger(runDir);
-    expect(findLastChangeEvent(events, ID_1)?.type).toBe("change_decided");
-    expect(findLastChangeEvent(events, ID_2)?.type).toBe("change_submitted");
-    expect(findLastChangeEvent(events, ID_3)).toBeUndefined();
   });
 
   it("ignores a partial last line and drops it on the next append", async () => {
