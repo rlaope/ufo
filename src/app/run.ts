@@ -696,26 +696,30 @@ export async function measure(
 /**
  * Ends a measure run that was not cancelled here: its final status, then its arms and branch. A
  * run something else ended first (`ufo cancel`) was cleaned up by that, or is by the next start.
+ * Under the run's control lock: a `ufo cancel` that marked the baseline cancelled finishes first,
+ * instead of racing this close.
  */
-async function closeMeasureRun(
+function closeMeasureRun(
   context: AppContext,
   started: { runId: string; runDir: string; home: string },
   job: JobRecord | undefined,
 ): Promise<void> {
-  await killRunProcesses(started.runDir, killOptions(context));
-  // The status first, as everywhere: a crash in the cleanup below leaves an ended run whose arms
-  // and branch the next start removes.
-  if (!(await endRun(started.runDir, job?.status === "succeeded" ? "finished" : "failed"))) {
-    return;
-  }
-  const open = await openRun(started.home, started.runDir);
-  await removeRun(open.git, { deleteBranch: true }).catch(async (error: unknown) => {
-    await appendLedger(started.runDir, {
-      type: EVENTS.cleanupFailed,
-      data: { message: (error instanceof Error ? error.message : String(error)).slice(0, 4000) },
+  return withControlLock(started.runDir, async () => {
+    await killRunProcesses(started.runDir, killOptions(context));
+    // The status first, as everywhere: a crash in the cleanup below leaves an ended run whose
+    // arms and branch the next start removes.
+    if (!(await endRun(started.runDir, job?.status === "succeeded" ? "finished" : "failed"))) {
+      return;
+    }
+    const open = await openRun(started.home, started.runDir);
+    await removeRun(open.git, { deleteBranch: true }).catch(async (error: unknown) => {
+      await appendLedger(started.runDir, {
+        type: EVENTS.cleanupFailed,
+        data: { message: (error instanceof Error ? error.message : String(error)).slice(0, 4000) },
+      });
     });
+    await releaseMachineLock({ runId: started.runId, home: started.home });
   });
-  await releaseMachineLock({ runId: started.runId, home: started.home });
 }
 
 export interface RunToEndResult {

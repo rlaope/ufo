@@ -269,12 +269,16 @@ describe("Ctrl-C", { timeout: TIMEOUT_MS }, () => {
     const own = makeToy();
     try {
       await approveToy(own);
-      const measured = measure(own.context);
+      // Settled into a value at once: measure may fail before the cancel below returns.
+      const measured = measure(own.context).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
       const ready = measuring(own);
       while (!(await ready())) await new Promise((resolve) => setTimeout(resolve, 20));
       const [runId] = await listRunIds(own.home, { repoId: own.repoId });
       await cancelRun(own.context, { runId: runId as string });
-      await expect(measured).rejects.toMatchObject({ code: "measurement_failed" });
+      expect(await measured).toMatchObject({ code: "measurement_failed" });
       const types = (await readLedger(own.runDir(runId as string))).map((event) => event.type);
       expect(types).toContain("run_cancelled");
       expect(types).not.toContain("cleanup_failed");
