@@ -7,7 +7,8 @@ import { readMachineLock } from "../../src/core/jobs/index.js";
 import { approveToy, git, lightWorkload, makeToy, TIMEOUT_MS, type Toy } from "./helpers.js";
 
 // Code review (round 3) #5: a start that fails after it created the arms and the run branch
-// removes them before its run state, so nothing is left that no later start would find.
+// leaves none of them behind, nor its run state or the machine lock. (The order, arms and branch
+// before the run state, matters only for a crash in between, which this test does not cover.)
 
 vi.mock("../../src/worker/index.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../src/worker/index.js")>();

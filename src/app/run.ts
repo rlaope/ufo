@@ -591,6 +591,48 @@ function untilAborted<T>(work: Promise<T>, signal: AbortSignal | undefined): Pro
 
 const isInterrupted = (error: unknown) => error instanceof AppError && error.code === "interrupted";
 
+/** Refuses to go on once `signal` aborted: no more work is queued for an interrupted run. */
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted === true) throw new AppError("interrupted", "interrupted");
+}
+
+/**
+ * A start that failed after `signal` aborted (Ctrl-C also reaches the git and ps processes the
+ * start runs) fails `interrupted`, with what went wrong; the start cleaned up after itself.
+ */
+async function startUnlessAborted<T>(
+  start: Promise<T>,
+  signal: AbortSignal | undefined,
+): Promise<T> {
+  try {
+    return await start;
+  } catch (error) {
+    if (signal?.aborted !== true) throw error;
+    const why = error instanceof Error ? error.message : String(error);
+    throw new AppError("interrupted", `interrupted; the run did not start (${why})`, {
+      cause: error,
+    });
+  }
+}
+
+/** Cancels the run after `ufo run` or `ufo measure` cannot go on, and says what that did. */
+async function cancelAndSay(
+  context: AppContext,
+  runId: string,
+  what: string,
+): Promise<{ cancelled: boolean; how: string }> {
+  return cancelRun(context, { runId }).then(
+    () => ({ cancelled: true, how: `${what} ${runId} was cancelled` }),
+    (cancelError: unknown) => ({
+      cancelled: false,
+      how:
+        cancelError instanceof AppError && cancelError.code === "run_not_active"
+          ? `${what} ${runId} had already ended`
+          : `${what} ${runId} could not be cancelled (${cancelError instanceof Error ? cancelError.message : String(cancelError)})`,
+    }),
+  );
+}
+
 export interface MeasureResult {
   runId: string;
   baseline: BaselineResult;
@@ -599,7 +641,8 @@ export interface MeasureResult {
 /**
  * `ufo measure`: the baseline alone (oracle snapshot, five samples, noise floor) at the current
  * HEAD, through a short-lived run whose branch and arms are removed afterwards. Once `signal`
- * aborts, the run is cancelled and cleaned up the same way, and the call fails `interrupted`.
+ * aborts, the run is cancelled like `ufo cancel` does (its jobs too), and the call fails
+ * `interrupted`.
  */
 export async function measure(
   context: AppContext,
@@ -608,9 +651,12 @@ export async function measure(
     readonly signal?: AbortSignal;
   } = {},
 ): Promise<MeasureResult> {
-  const started = await startRunFor(context, options, "measure");
+  const started = await startUnlessAborted(
+    startRunFor(context, options, "measure"),
+    options.signal,
+  );
   let job: JobRecord | undefined;
-  let interrupted = false;
+  let cancelled = false;
   try {
     job = await untilAborted(
       waitForJobDone(context, started.runId, started.baselineJobId, options.onProgress),
@@ -618,10 +664,9 @@ export async function measure(
     );
   } catch (error) {
     if (isInterrupted(error)) {
-      interrupted = true;
-      throw new AppError("interrupted", `interrupted; measure run ${started.runId} was cancelled`, {
-        cause: error,
-      });
+      const cancel = await cancelAndSay(context, started.runId, "measure run");
+      cancelled = cancel.cancelled;
+      throw new AppError("interrupted", `interrupted; ${cancel.how}`, { cause: error });
     }
     // The measure run is closed below, so there is nothing to resume.
     if (error instanceof AppError && error.code === "worker_not_running") {
@@ -633,22 +678,7 @@ export async function measure(
     }
     throw error;
   } finally {
-    const { home } = started;
-    await killRunProcesses(started.runDir, killOptions(context));
-    // The status first, as everywhere: a crash in the cleanup below leaves an ended run whose
-    // arms and branch the next start removes.
-    await endRun(
-      started.runDir,
-      interrupted ? "cancelled" : job?.status === "succeeded" ? "finished" : "failed",
-    );
-    const open = await openRun(home, started.runDir);
-    await removeRun(open.git, { deleteBranch: true }).catch(async (error: unknown) => {
-      await appendLedger(started.runDir, {
-        type: EVENTS.cleanupFailed,
-        data: { message: (error instanceof Error ? error.message : String(error)).slice(0, 4000) },
-      });
-    });
-    await releaseMachineLock({ runId: started.runId, home });
+    if (!cancelled) await closeMeasureRun(context, started, job);
   }
   if (job?.status !== "succeeded") {
     throw new AppError(
@@ -657,6 +687,26 @@ export async function measure(
     );
   }
   return { runId: started.runId, baseline: job.result as unknown as BaselineResult };
+}
+
+/** Ends a measure run that was not cancelled: its final status, then its arms and branch. */
+async function closeMeasureRun(
+  context: AppContext,
+  started: { runId: string; runDir: string; home: string },
+  job: JobRecord | undefined,
+): Promise<void> {
+  await killRunProcesses(started.runDir, killOptions(context));
+  // The status first, as everywhere: a crash in the cleanup below leaves an ended run whose arms
+  // and branch the next start removes.
+  await endRun(started.runDir, job?.status === "succeeded" ? "finished" : "failed");
+  const open = await openRun(started.home, started.runDir);
+  await removeRun(open.git, { deleteBranch: true }).catch(async (error: unknown) => {
+    await appendLedger(started.runDir, {
+      type: EVENTS.cleanupFailed,
+      data: { message: (error instanceof Error ? error.message : String(error)).slice(0, 4000) },
+    });
+  });
+  await releaseMachineLock({ runId: started.runId, home: started.home });
 }
 
 export interface RunToEndResult {
@@ -678,7 +728,7 @@ export async function runToEnd(
 ): Promise<RunToEndResult> {
   const say = options.onProgress ?? (() => undefined);
   const { signal } = options;
-  const started = await startRun(context, { hostAgent: "none" });
+  const started = await startUnlessAborted(startRun(context, { hostAgent: "none" }), signal);
   say(`run ${started.runId} on ${started.branch}`);
   for (const warning of started.warnings) say(`warning: ${warning}`);
   let ended: Awaited<ReturnType<typeof recipesToEnd>>;
@@ -687,18 +737,12 @@ export async function runToEnd(
     const quiet = (line: string) => {
       if (signal?.aborted !== true) say(line);
     };
-    ended = await untilAborted(recipesToEnd(context, started, quiet), signal);
+    ended = await untilAborted(recipesToEnd(context, started, quiet, signal), signal);
   } catch (error) {
     // A worker that stopped can be resumed. Anything else ends the run, so it never stays
     // `running` behind `ufo run`.
     if (error instanceof AppError && error.code === "worker_not_running") throw error;
-    const how = await cancelRun(context, { runId: started.runId }).then(
-      () => `run ${started.runId} was cancelled`,
-      (cancelError: unknown) =>
-        cancelError instanceof AppError && cancelError.code === "run_not_active"
-          ? `run ${started.runId} had already ended`
-          : `run ${started.runId} could not be cancelled (${cancelError instanceof Error ? cancelError.message : String(cancelError)})`,
-    );
+    const { how } = await cancelAndSay(context, started.runId, "run");
     if (error instanceof JobFailed) {
       throw new AppError("measurement_failed", `${error.message}; ${how}`, { cause: error });
     }
@@ -724,6 +768,7 @@ async function recipesToEnd(
   context: AppContext,
   started: StartRunResult,
   say: (line: string) => void,
+  signal: AbortSignal | undefined,
 ): Promise<RunToEndResult & { refusal?: BaselineResult["refusal"] }> {
   const { runId } = started;
   const scoped = { runId };
@@ -740,6 +785,7 @@ async function recipesToEnd(
   const decisions: RunToEndResult["decisions"] = [];
   let skipped: string[] = [];
   if (baseline?.refusal === undefined) {
+    throwIfAborted(signal);
     const recipes = await runRecipes(context, scoped);
     for (const queued of recipes.jobs) {
       const job = await wait(queued.jobId, queued.cardId);
@@ -750,6 +796,7 @@ async function recipesToEnd(
     skipped = recipes.skipped;
     for (const cardId of skipped) say(`${cardId}: skipped, budget exhausted`);
   }
+  throwIfAborted(signal);
   const finish = await finishRun(context, scoped);
   await wait(finish.jobId, "finish");
   const finished = await report(context, scoped);

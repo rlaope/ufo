@@ -6,7 +6,13 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { listRunIds, measure } from "../../src/app/index.js";
 import { main } from "../../src/cli/main.js";
-import { listJobs, readMachineLock, readRun } from "../../src/core/jobs/index.js";
+import {
+  listJobs,
+  readLedger,
+  readMachineLock,
+  readRun,
+  TERMINAL_JOB_STATUSES,
+} from "../../src/core/jobs/index.js";
 import {
   approveToy,
   git,
@@ -232,10 +238,28 @@ describe("Ctrl-C", { timeout: TIMEOUT_MS }, () => {
           ),
         );
         expect(line, result.stderr).not.toBeNull();
+        expect(result.stderr).toContain(
+          "interrupted: cancelling the run (Ctrl-C again to stop waiting)",
+        );
         expect((await readRun(own.runDir(line?.[1] as string))).status).toBe("cancelled");
         expect(await readMachineLock({ home: own.home })).toBeUndefined();
         if (command === "measure") noRunLeftover(own);
       }
+    } finally {
+      await own.cleanup();
+    }
+  });
+
+  it("fails a start it interrupted as interrupted, saying why the start stopped", async () => {
+    // Not approved: the start fails, as one whose git or ps process got the Ctrl-C would.
+    const own = makeToy({ config: lightWorkload() });
+    try {
+      const result = await ufo(["run"], own, ctrlC());
+      expect(result.code, result.stderr).toBe(1);
+      expect(result.stderr).toMatch(
+        /^ufo run: interrupted: interrupted; the run did not start \(.*approve.*\)$/m,
+      );
+      expect(await readMachineLock({ home: own.home })).toBeUndefined();
     } finally {
       await own.cleanup();
     }
@@ -248,9 +272,15 @@ describe("Ctrl-C", { timeout: TIMEOUT_MS }, () => {
       await approveToy(own);
       const result = await ufo(["measure"], own, ctrlC(measuring(own)));
       expect(result.code, result.stderr).toBe(1);
-      expect(result.stderr).toMatch(
-        /^ufo measure: interrupted: interrupted; measure run \S+ was cancelled$/m,
+      const line = result.stderr.match(
+        /^ufo measure: interrupted: interrupted; measure run (\S+) was cancelled$/m,
       );
+      expect(line, result.stderr).not.toBeNull();
+      // Cancelled as `ufo cancel` does: the baseline job too, and the cancel is recorded.
+      const runDir = own.runDir(line?.[1] as string);
+      const jobs = await listJobs(runDir);
+      expect(jobs.filter((job) => !TERMINAL_JOB_STATUSES.has(job.status))).toEqual([]);
+      expect((await readLedger(runDir)).map((event) => event.type)).toContain("run_cancelled");
       expect(await readMachineLock({ home: own.home })).toBeUndefined();
       noRunLeftover(own);
     } finally {

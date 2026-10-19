@@ -70,9 +70,11 @@ run state) has the detail. When the baseline is refused for noise it finishes th
 report is kept, no recipe is tried) and exits 1 with `measurement_failed`. `ufo measure` reports a
 failed baseline as `measurement_failed` (exit 1), and the run it used ends `failed`.
 
-Ctrl-C (or SIGTERM) during `ufo run` or `ufo measure` cancels the run: UFO stops its worker,
-removes the arms (and, for `measure`, the branch), releases the machine lock, and exits 1 with
-`interrupted`. A second Ctrl-C ends the process at once; `ufo cancel` then finishes the cleanup.
+Ctrl-C (or SIGTERM) during `ufo run` or `ufo measure` cancels the run as `ufo cancel` does: UFO
+stops its worker, cancels its jobs, removes the arms (and, for `measure`, the branch), releases
+the machine lock, and exits 1 with `interrupted`. A Ctrl-C during the start fails the start the
+same way. A second Ctrl-C ends the process at once: a run left `running` then needs
+`ufo cancel`, and the next start removes the arms of a run that had already ended.
 
 Policy rules (`policy:<rule>`): `protected_path`, `out_of_scope`, `test_set_shrunk`,
 `unapproved_config`, `config_changed`, `opt_in_required`, `target_not_allowed`,

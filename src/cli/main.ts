@@ -47,12 +47,14 @@ export interface CliIo {
  */
 async function interruptible<T>(
   signals: Pick<NodeJS.EventEmitter, "once" | "off">,
+  say: (text: string) => void,
   work: (signal: AbortSignal) => Promise<T>,
 ): Promise<T> {
   const controller = new AbortController();
   const abort = () => {
     signals.off("SIGINT", abort);
     signals.off("SIGTERM", abort);
+    say("interrupted: cancelling the run (Ctrl-C again to stop waiting)\n");
     controller.abort();
   };
   signals.once("SIGINT", abort);
@@ -166,7 +168,7 @@ async function execute(
       return { result, text: formatApprove(result) };
     }
     case "measure": {
-      const result = await interruptible(io.signals ?? process, (signal) =>
+      const result = await interruptible(io.signals ?? process, io.stderr, (signal) =>
         measure(context, {
           signal,
           onProgress: (job) => progress(`baseline: ${job.progress?.message ?? job.status}`),
@@ -175,7 +177,7 @@ async function execute(
       return { result, text: formatMeasure(result) };
     }
     case "run": {
-      const result = await interruptible(io.signals ?? process, (signal) =>
+      const result = await interruptible(io.signals ?? process, io.stderr, (signal) =>
         runToEnd(context, { onProgress: progress, signal }),
       );
       return { result: result.report, text: formatReport(result.report) };
