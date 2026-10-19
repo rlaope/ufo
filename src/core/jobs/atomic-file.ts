@@ -73,13 +73,23 @@ export async function appendNoFollow(file: string, text: string): Promise<void> 
  * is fsynced, and is renamed over `file`. A crash before the rename leaves the old file intact
  * plus a stray temp file.
  */
-export async function writeFileAtomic(file: string, text: string): Promise<void> {
+/**
+ * Replaces `file` by writing a temp file and renaming it over. `durable: false` skips the fsyncs,
+ * for advisory records (heartbeat, child process groups) written while samples are timed: they
+ * guard processes, which an OS crash or power loss ends anyway.
+ */
+export async function writeFileAtomic(
+  file: string,
+  text: string,
+  options: { durable?: boolean } = {},
+): Promise<void> {
+  const durable = options.durable ?? true;
   const temp = `${file}.${process.pid}.${randomBytes(4).toString("hex")}${TEMP_SUFFIX}`;
   try {
     const handle = await openNoFollow(temp, OPEN_CREATE_EXCLUSIVE);
     try {
       await handle.writeFile(text);
-      await handle.sync();
+      if (durable) await handle.sync();
     } finally {
       await handle.close();
     }
@@ -89,11 +99,15 @@ export async function writeFileAtomic(file: string, text: string): Promise<void>
     await rm(temp, { force: true });
     throw error;
   }
-  await syncDir(path.dirname(file));
+  if (durable) await syncDir(path.dirname(file));
 }
 
-export async function writeJsonAtomic(file: string, value: unknown): Promise<void> {
-  await writeFileAtomic(file, `${JSON.stringify(value, null, 2)}\n`);
+export async function writeJsonAtomic(
+  file: string,
+  value: unknown,
+  options: { durable?: boolean } = {},
+): Promise<void> {
+  await writeFileAtomic(file, `${JSON.stringify(value, null, 2)}\n`, options);
 }
 
 /** Parsed JSON content of `file`, or `undefined` when it (or its directory) does not exist. */

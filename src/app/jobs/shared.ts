@@ -1,10 +1,12 @@
 import { type GuardrailCheck, median } from "../../core/decide/index.js";
 import type { PolicyViolation } from "../../core/policy/index.js";
 import {
+  DEFAULT_HYGIENE,
   type Decision,
   type DecisionOutcome,
   type DecisionReason,
   DecisionSchema,
+  type HygieneConfig,
   MAX_NOTE_LENGTH,
   type Metric,
   type Objective,
@@ -43,6 +45,7 @@ export function newSession(open: OpenRun, context: JobContext, machine: Machine)
     runId: open.state.runId,
     workload: open.config.workload,
     objective: open.config.objective,
+    hygiene: open.config.hygiene,
     machine,
     signal: context.signal,
     env: open.state.env,
@@ -140,4 +143,18 @@ export function metricTrailer(metric: Metric, pairs: readonly { a: number; b: nu
   const change = ma === 0 ? 0 : ((mb - ma) / ma) * 100;
   const sign = change > 0 ? "+" : "";
   return `${metric.name} ${formatValue(ma)} -> ${formatValue(mb)} (${sign}${change.toFixed(1)}%)`;
+}
+
+/** Limitations a loosened hygiene check puts on every sample, in plain words. */
+export function hygieneLimitations(hygiene: HygieneConfig): string[] {
+  const lines: string[] = [];
+  if (!hygiene.requireAcPower) {
+    lines.push("hygiene: samples were allowed on battery power (ufo.yaml hygiene.requireAcPower)");
+  }
+  if (hygiene.maxLoadFactor !== DEFAULT_HYGIENE.maxLoadFactor) {
+    lines.push(
+      `hygiene: the load limit was ${hygiene.maxLoadFactor} × cores, not ${DEFAULT_HYGIENE.maxLoadFactor} (ufo.yaml hygiene.maxLoadFactor)`,
+    );
+  }
+  return lines;
 }

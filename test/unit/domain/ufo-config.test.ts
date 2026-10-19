@@ -81,3 +81,20 @@ function manyOracles(count: number) {
     command: "npm run smoke",
   }));
 }
+
+describe("UfoConfigSchema hygiene", () => {
+  it("defaults to AC power and a 0.5 × cores load limit, and bounds the factor", () => {
+    expect(UfoConfigSchema.parse(ufoConfig()).hygiene).toEqual({
+      requireAcPower: true,
+      maxLoadFactor: 0.5,
+    });
+    expect(
+      UfoConfigSchema.parse({ ...ufoConfig(), hygiene: { maxLoadFactor: 2 } }).hygiene,
+    ).toEqual({ requireAcPower: true, maxLoadFactor: 2 });
+    for (const bad of [0, -1, 65]) {
+      expect(
+        UfoConfigSchema.safeParse({ ...ufoConfig(), hygiene: { maxLoadFactor: bad } }).success,
+      ).toBe(false);
+    }
+  });
+});

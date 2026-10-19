@@ -24,6 +24,20 @@ export const WorkloadSchema = z.strictObject({
 });
 export type Workload = z.infer<typeof WorkloadSchema>;
 
+/** Plan §4.5 defaults: every sample needs AC power and a 1-minute load below 0.5 × cores. */
+export const DEFAULT_HYGIENE = { requireAcPower: true, maxLoadFactor: 0.5 } as const;
+
+/**
+ * Machine checks before every sample. Loosening them (CI runners without a battery reading, a
+ * shared machine) keeps samples valid where the defaults would refuse them; the bundle records
+ * the change as a limitation.
+ */
+export const HygieneConfigSchema = z.strictObject({
+  requireAcPower: z.boolean().default(DEFAULT_HYGIENE.requireAcPower),
+  maxLoadFactor: z.number().positive().max(64).default(DEFAULT_HYGIENE.maxLoadFactor),
+});
+export type HygieneConfig = z.infer<typeof HygieneConfigSchema>;
+
 /**
  * The shape of `ufo.yaml`. The scenario and budget live inside `objective`, so each has one
  * source of truth.
@@ -43,5 +57,6 @@ export const UfoConfigSchema = z.strictObject({
    * LC_*, TMPDIR, USER, SHELL, TERM). Their values are captured when the run starts.
    */
   env: EnvNameListSchema.default([]),
+  hygiene: HygieneConfigSchema.default({ ...DEFAULT_HYGIENE }),
 });
 export type UfoConfig = z.infer<typeof UfoConfigSchema>;

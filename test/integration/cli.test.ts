@@ -3,9 +3,19 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { measure } from "../../src/app/index.js";
 import { main } from "../../src/cli/main.js";
 import { readMachineLock } from "../../src/core/jobs/index.js";
-import { approveToy, git, makeToy, TIMEOUT_MS, type Toy, userState, workerLog } from "./helpers.js";
+import {
+  approveToy,
+  git,
+  lightWorkload,
+  makeToy,
+  TIMEOUT_MS,
+  type Toy,
+  userState,
+  workerLog,
+} from "./helpers.js";
 
 // The CLI end to end. `ufo measure` and `ufo run` go through main() with the toy's context (its
 // UFO home, card directory, and the test worker on a pinned machine); the built
@@ -159,5 +169,29 @@ describe("ufo CLI", { timeout: TIMEOUT_MS }, () => {
     );
     expect(await readMachineLock({ home: toy.home })).toBeUndefined();
     expect(userState(toy.repo)).toEqual(before);
+  });
+});
+
+// Verifier V6: the shipped worker entry (dist/cli/index.js) on this real machine, with the
+// machine checks loosened in ufo.yaml so the test does not depend on AC power or an idle CPU.
+describe("the built ufo worker", { timeout: TIMEOUT_MS }, () => {
+  it("measures a baseline with hygiene loosened in ufo.yaml, and records it as a limitation", async () => {
+    const real = makeToy({
+      config: (yaml) =>
+        `${lightWorkload()(yaml)}hygiene:\n  requireAcPower: false\n  maxLoadFactor: 64\n`,
+    });
+    try {
+      await approveToy(real);
+      const result = await measure({ ...real.context, workerEntry: BUILT_CLI });
+      expect(result.baseline.values).toHaveLength(5);
+      expect(result.baseline.limitations).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining("allowed on battery power"),
+          expect.stringContaining("64 × cores"),
+        ]),
+      );
+    } finally {
+      await real.cleanup();
+    }
   });
 });

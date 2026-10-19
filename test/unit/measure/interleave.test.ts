@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_MAX_RERUNS,
+  invalidSamplesMessage,
   MeasurementError,
   planInterleaved,
   type RunSample,
@@ -121,7 +122,8 @@ describe("runInterleaved", () => {
     expect(error.arm).toBe("a");
     expect(error.index).toBe(1);
     expect(error.reasons).toEqual(["sleep/wake", "load", "battery", "load"]);
-    expect(error.message).toContain("sleep/wake; load; battery; load");
+    // Every reason stays in `reasons`; the message lists each once, with its count.
+    expect(error.message).toBe("sample a1 was invalid 4 times: sleep/wake; load (×2); battery");
     expect(calls).toEqual(["a0", "b0", "a1", "a1", "a1", "a1"]);
   });
 
@@ -155,5 +157,14 @@ describe("runInterleaved", () => {
     const { runSample } = recorder();
     await expect(runInterleaved(1, runSample, { maxReruns: -1 })).rejects.toThrow(RangeError);
     await expect(runInterleaved(1, runSample, { maxReruns: 1.5 })).rejects.toThrow(RangeError);
+  });
+});
+
+describe("invalidSamplesMessage", () => {
+  it("lists each distinct reason once with its count", () => {
+    const reasons = ["on battery", "on battery", "load 9.1", "on battery"];
+    expect(invalidSamplesMessage({ arm: "a", index: 0 }, reasons)).toBe(
+      "sample a0 was invalid 4 times: on battery (×3); load 9.1",
+    );
   });
 });

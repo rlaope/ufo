@@ -72,18 +72,23 @@ export async function runWorker(options: RunWorkerOptions): Promise<WorkerSummar
   let current: { jobId: string; controller: AbortController } | undefined;
 
   const tick = async () => {
-    await writeJsonAtomic(path.join(runDir, HEARTBEAT_FILE), {
-      pid: process.pid,
-      at: new Date().toISOString(),
-      ...(current ? { jobId: current.jobId } : {}),
-    });
+    // Advisory, and written while samples are timed: no fsync.
+    await writeJsonAtomic(
+      path.join(runDir, HEARTBEAT_FILE),
+      {
+        pid: process.pid,
+        at: new Date().toISOString(),
+        ...(current ? { jobId: current.jobId } : {}),
+      },
+      { durable: false },
+    );
     if (!cancelled && (await isCancelRequested(runDir))) {
       cancelled = true;
       current?.controller.abort();
     }
   };
   await tick();
-  // One tick at a time: a slow disk must not pile up fsyncs that starve the job writes, and the
+  // One tick at a time: a slow disk must not pile up writes that starve the job writes, and the
   // loop below waits for the last tick so nothing writes into the run directory after it returns.
   let inFlight: Promise<void> | undefined;
   const timer = setInterval(() => {

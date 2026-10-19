@@ -7,7 +7,7 @@ import { describeResult, succeeded } from "../commands.js";
 import { type BaselineData, EVENTS } from "../events.js";
 import { snapshotOracles } from "../oracles.js";
 import { approvalViolation, jsonData, openRun, toJson } from "../state.js";
-import { BASELINE_SAMPLES, type HandlerOptions, newSession } from "./shared.js";
+import { BASELINE_SAMPLES, type HandlerOptions, hygieneLimitations, newSession } from "./shared.js";
 
 export interface BaselineResult {
   sha: string;
@@ -78,7 +78,7 @@ export async function handleBaseline(
       tests: oracles.tests,
       samples: session.samples,
       oracleResults: oracles.results,
-      limitations: oracles.limitations,
+      limitations: [...oracles.limitations, ...hygieneLimitations(open.config.hygiene)],
       commands: [...session.commands],
     };
   } catch (error) {

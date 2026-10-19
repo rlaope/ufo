@@ -110,10 +110,21 @@ async function runValidSample(
   }
   throw new MeasurementError(
     "too_many_invalid_samples",
-    `sample ${slot.arm}${slot.index} was invalid ${reasons.length} times: ${reasons.join("; ")}`,
+    invalidSamplesMessage(slot, reasons),
     slot,
     reasons,
   );
+}
+
+/**
+ * `sample a0 was invalid 4 times: <reason> (×4)`: each distinct reason once, in first-seen
+ * order, with its count when it repeats (a busy machine gives the same reason every rerun).
+ */
+export function invalidSamplesMessage(slot: PlannedSample, reasons: readonly string[]): string {
+  const counts = new Map<string, number>();
+  for (const reason of reasons) counts.set(reason, (counts.get(reason) ?? 0) + 1);
+  const listed = [...counts].map(([reason, n]) => (n > 1 ? `${reason} (×${n})` : reason));
+  return `sample ${slot.arm}${slot.index} was invalid ${reasons.length} times: ${listed.join("; ")}`;
 }
 
 function assertCount(value: number, name: string, min: number): void {

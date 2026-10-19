@@ -19,6 +19,7 @@ import {
   clampWaitS,
   createRunState,
   enqueueJob,
+  isPidAlive,
   type JobRecord,
   JobRecordSchema,
   listJobs,
@@ -454,16 +455,33 @@ async function queueRecipes(context: AppContext, active: ActiveRun): Promise<Rec
 
 /** How often a wait checks that a worker is still there to finish the job. */
 const WORKER_CHECK_S = 1;
+/**
+ * Between these, a wait checks the worker with a signal-0 probe only; every this many checks
+ * it also compares the process start time (`ps`), which costs a process spawn while samples
+ * are being timed.
+ */
+const FULL_WORKER_CHECK_EVERY = 10;
 /** A worker found missing is looked for once more after this, in case it is being launched. */
 const WORKER_RECHECK_MS = 500;
+
+function workerProcessExists(run: Awaited<ReturnType<typeof readRun>>): boolean {
+  const { worker } = run;
+  return worker !== undefined && worker.exitedAt === undefined && isPidAlive(worker.pid);
+}
 
 /**
  * Throws once no worker is left to finish `job`: the worker crashed or was killed, before or
  * while running it. `worker_not_running` asks for `ufo resume`; a run that is no longer
  * running has nothing to resume (`run_not_active`).
  */
-async function requireWorker(runDir: string, runId: string, job: JobRecord): Promise<JobRecord> {
-  if (await isWorkerAlive(await readRun(runDir))) return job;
+async function requireWorker(
+  runDir: string,
+  runId: string,
+  job: JobRecord,
+  full: boolean,
+): Promise<JobRecord> {
+  const current = await readRun(runDir);
+  if (full ? await isWorkerAlive(current) : workerProcessExists(current)) return job;
   await delay(WORKER_RECHECK_MS);
   const latest = await readJob(runDir, job.jobId);
   const run = await readRun(runDir);
@@ -490,6 +508,7 @@ export async function getJob(
 ): Promise<JobRecord> {
   const located = await locateRun(context, options.runId);
   const deadline = Date.now() + clampWaitS(options.waitS ?? 0) * 1000;
+  let checks = 0;
   try {
     for (;;) {
       const remainingS = Math.max(0, deadline - Date.now()) / 1000;
@@ -499,7 +518,8 @@ export async function getJob(
         Math.min(remainingS, WORKER_CHECK_S),
       );
       if (TERMINAL_JOB_STATUSES.has(polled.status)) return polled;
-      const job = await requireWorker(located.runDir, located.runId, polled);
+      const full = checks++ % FULL_WORKER_CHECK_EVERY === 0;
+      const job = await requireWorker(located.runDir, located.runId, polled, full);
       if (TERMINAL_JOB_STATUSES.has(job.status) || Date.now() >= deadline) return job;
     }
   } catch (error) {

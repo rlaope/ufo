@@ -6,6 +6,7 @@ import {
   checkHygiene,
   DEFAULT_MAX_RERUNS,
   describeHygiene,
+  invalidSamplesMessage,
   MeasurementError,
   type SampleOutcome,
   type SystemReaders,
@@ -15,6 +16,7 @@ import {
 } from "../core/measure/index.js";
 import {
   type Arm,
+  type HygieneConfig,
   labelSchema,
   type Objective,
   type Sample,
@@ -121,6 +123,7 @@ export interface SessionOptions {
   readonly runId: string;
   readonly workload: Workload;
   readonly objective: Objective;
+  readonly hygiene: HygieneConfig;
   readonly machine: Machine;
   readonly signal: AbortSignal;
   readonly env: NodeJS.ProcessEnv;
@@ -293,7 +296,7 @@ export class WorkloadSession {
         : { valid: false as const, reason: reason(outcome) };
     };
 
-    const hygiene = await checkHygiene(this.options.machine.readers);
+    const hygiene = await checkHygiene(this.options.machine.readers, this.hygieneOptions());
     if (!hygiene.ok) return record(`machine hygiene: ${describeHygiene(hygiene)}`);
     const { reset, command } = this.options.workload;
     if (reset !== undefined) {
@@ -332,7 +335,7 @@ export class WorkloadSession {
         if (reasons.length > DEFAULT_MAX_RERUNS) {
           throw new MeasurementError(
             "too_many_invalid_samples",
-            `sample ${spec.arm}${index} was invalid ${reasons.length} times: ${reasons.join("; ")}`,
+            invalidSamplesMessage({ arm: spec.arm, index }, reasons),
             { arm: spec.arm, index },
             reasons,
           );
@@ -342,10 +345,20 @@ export class WorkloadSession {
     return values;
   }
 
+  private hygieneOptions() {
+    return {
+      loadFactor: this.options.hygiene.maxLoadFactor,
+      requireAcPower: this.options.hygiene.requireAcPower,
+    };
+  }
+
   /** The likely cause of noise, for a `policy:noise_floor` detail. */
   async noiseCause(): Promise<string> {
     return describeHygiene(
-      await checkHygiene(this.options.machine.readers, { clockDrifts: this.drifts }),
+      await checkHygiene(this.options.machine.readers, {
+        ...this.hygieneOptions(),
+        clockDrifts: this.drifts,
+      }),
     );
   }
 

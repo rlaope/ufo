@@ -111,18 +111,28 @@ export async function readRun(runDir: string): Promise<RunRecord> {
 }
 
 /** Writes `run` as-is. The caller must hold the run lock (see `withRunLock`). */
-export async function replaceRun(runDir: string, run: RunRecord): Promise<RunRecord> {
+export async function replaceRun(
+  runDir: string,
+  run: RunRecord,
+  options: { durable?: boolean } = {},
+): Promise<RunRecord> {
   const parsed = RunRecordSchema.parse({ ...run, updatedAt: new Date().toISOString() });
-  await writeJsonAtomic(path.join(runDir, RUN_FILE), parsed);
+  await writeJsonAtomic(path.join(runDir, RUN_FILE), parsed, options);
   return parsed;
 }
 
-/** Read-modify-write of `run.json` under the run lock, so concurrent updates are not lost. */
+/**
+ * Read-modify-write of `run.json` under the run lock, so concurrent updates are not lost.
+ * `durable: false` skips the fsyncs (see `writeFileAtomic`).
+ */
 export function updateRun(
   runDir: string,
   mutate: (run: RunRecord) => RunRecord,
+  options: { durable?: boolean } = {},
 ): Promise<RunRecord> {
-  return withRunLock(runDir, async () => replaceRun(runDir, mutate(await readRun(runDir))));
+  return withRunLock(runDir, async () =>
+    replaceRun(runDir, mutate(await readRun(runDir)), options),
+  );
 }
 
 /**

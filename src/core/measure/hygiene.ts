@@ -208,6 +208,8 @@ export interface HygieneReport {
 
 export interface HygieneOptions {
   readonly loadFactor?: number;
+  /** `false`: battery power is not an issue. Defaults to `true`. */
+  readonly requireAcPower?: boolean;
   /** Drift probes of recent samples, to report sleep/wake among them. */
   readonly clockDrifts?: readonly ClockDriftProbe[];
 }
@@ -224,7 +226,7 @@ export async function checkHygiene(
   const load = probeLoad(readers, options.loadFactor);
   const clockDrifts = options.clockDrifts ?? [];
   const issues: HygieneIssue[] = [];
-  if (power === "battery") {
+  if (power === "battery" && (options.requireAcPower ?? true)) {
     issues.push({ kind: "battery", message: "running on battery power" });
   }
   if (!load.ok) {

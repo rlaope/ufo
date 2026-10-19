@@ -129,19 +129,26 @@ export async function trackChildGroup(runDir: string, pgid: number): Promise<Chi
   const startTime = await readProcessStartTime(pgid);
   if (startTime === undefined) throw new Error(`no start time for process group ${pgid}`);
   const group: ChildGroup = { pgid, startTime };
-  await updateRun(runDir, (run) => ({
-    ...run,
-    childGroups: [...run.childGroups.filter((g) => g.pgid !== pgid), group],
-  }));
+  // Not fsynced: written around every timed sample, and it guards processes, which an OS crash
+  // ends anyway.
+  await updateRun(
+    runDir,
+    (run) => ({
+      ...run,
+      childGroups: [...run.childGroups.filter((g) => g.pgid !== pgid), group],
+    }),
+    { durable: false },
+  );
   return group;
 }
 
 /** Forgets a child group that exited on its own. */
 export async function untrackChildGroup(runDir: string, pgid: number): Promise<void> {
-  await updateRun(runDir, (run) => ({
-    ...run,
-    childGroups: run.childGroups.filter((g) => g.pgid !== pgid),
-  }));
+  await updateRun(
+    runDir,
+    (run) => ({ ...run, childGroups: run.childGroups.filter((g) => g.pgid !== pgid) }),
+    { durable: false },
+  );
 }
 
 export async function trackPort(runDir: string, port: number): Promise<void> {

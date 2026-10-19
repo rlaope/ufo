@@ -262,3 +262,17 @@ describe("checkHygiene and describeHygiene", () => {
     expect(report.ok).toBe(true);
   });
 });
+
+describe("checkHygiene with AC power not required", () => {
+  it("does not count battery power as an issue", async () => {
+    const readers = {
+      platform: "darwin" as const,
+      pmsetBatt: async () => "Now drawing from 'Battery Power'\n",
+      powerSupplies: async () => [],
+      loadAverage: () => 0,
+      cores: () => 8,
+    };
+    expect((await checkHygiene(readers)).issues.map((i) => i.kind)).toEqual(["battery"]);
+    expect((await checkHygiene(readers, { requireAcPower: false })).ok).toBe(true);
+  });
+});
