@@ -80,8 +80,11 @@ workload as `UFO_TARGET_ADDR`. It does not control where the workload's own code
 
 **Package and CI.** The npm package runs no install scripts and pins its runtime dependencies
 exactly; `prepack` rebuilds `dist` from a clean tree. CI installs with `--ignore-scripts`, pins
-every action by commit, and on pull requests runs the identity gate from the base branch, so a
-pull request cannot change the script that sees the secret.
+every action by commit, and checks out without persisting credentials. The identity gate is its
+own workflow: on pull requests it runs as `pull_request_target`, so its workflow file and script
+come from `main` and the pull request is fetched only as data. A collaborator who can push a
+branch with a new workflow can still reach repository secrets; the repository has no other
+collaborators.
 
 ## What UFO cannot prevent
 

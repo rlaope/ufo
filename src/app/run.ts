@@ -189,7 +189,12 @@ async function startRunFor(
       cards: [...cards.values()].map(({ source, card }) => ({ source, card })),
       configText: loaded.text,
       configHash: loaded.hash,
-      env: captureEnv(launcherEnv, loaded.config.env),
+      env: captureEnv(launcherEnv, loaded.config.env, [
+        repo.root,
+        repo.gitDir,
+        repo.commonDir,
+        home,
+      ]),
       gitEnv: captureGitEnv(launcherEnv),
       targetAddrs,
       hostAgent,
@@ -443,13 +448,23 @@ async function cancelLocked(context: AppContext, active: ActiveRun): Promise<Can
   if (current.status !== "running") {
     throw new AppError("run_not_active", `run ${active.runId} is ${current.status}`);
   }
+  // The unfinished jobs before the cancel: the worker may cancel some itself once it sees the
+  // flag, before it is stopped, so what this call settles below is not the whole list.
+  const unfinished = new Set(
+    (await listJobs(runDir))
+      .filter((job) => !TERMINAL_JOB_STATUSES.has(job.status))
+      .map((job) => job.jobId),
+  );
   await requestCancel(runDir);
   const kill = await killRunProcesses(runDir, killOptions(context));
-  const settled = await settleInterrupted(runDir, "cancelled");
+  await settleInterrupted(runDir, "cancelled");
+  const cancelledJobs = (await listJobs(runDir))
+    .filter((job) => unfinished.has(job.jobId) && job.status === "cancelled")
+    .map((job) => job.jobId);
   await updateRun(runDir, (run) => ({ ...run, status: "cancelled" }));
   await appendLedger(runDir, {
     type: EVENTS.runCancelled,
-    data: jsonData({ cancelledJobs: settled.cancelled, processes: killSummary(kill) }),
+    data: jsonData({ cancelledJobs, processes: killSummary(kill) }),
   });
   // The arms are deleted whole, so whatever a job left in them needs no reset first, and an arm
   // that is already gone is not an error.
@@ -457,7 +472,7 @@ async function cancelLocked(context: AppContext, active: ActiveRun): Promise<Can
   await releaseMachineLock({ runId: active.runId, home: active.home });
   return {
     runId: active.runId,
-    cancelledJobs: settled.cancelled,
+    cancelledJobs,
     processes: killSummary(kill),
     observationsKept: (await readLedger(runDir)).length,
   };

@@ -17,7 +17,7 @@ import {
   openNoFollow,
   readTextNoFollow,
 } from "../jobs/atomic-file.js";
-import { approvalsRoot, ensureTrustedDir, ufoHome } from "../paths.js";
+import { approvalsRoot, assertTrustedDir, ensureTrustedDir, ufoHome } from "../paths.js";
 import { PolicyError, type PolicyViolation, preview, violation } from "./rules.js";
 
 const APPROVAL_VERSION = 3;
@@ -173,9 +173,12 @@ export async function readApproval(
   repoId: string,
   options: ApprovalStoreOptions = {},
 ): Promise<Approval | undefined> {
+  const file = approvalPath(repoId, options);
   let raw: string;
   try {
-    raw = await readTextNoFollow(approvalPath(repoId, options));
+    // Every directory from the home down, as for run state (security N8), then the file itself.
+    await assertTrustedDir(options.home ?? ufoHome(), path.dirname(file));
+    raw = await readTextNoFollow(file);
   } catch (error) {
     if (isErrno(error, "ENOENT")) return undefined;
     throw error;

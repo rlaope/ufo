@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { realpath, stat } from "node:fs/promises";
+import { lstat, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import {
   type ApprovalSubject,
@@ -44,7 +44,14 @@ export function cardSource(repoRoot: string, dir: string): string {
  * A `cardDirs` entry of ufo.yaml as an absolute directory: it must exist, be a directory, and be
  * reached without a symbolic link, inside the repository.
  */
-async function repoCardDir(repoRoot: string, dir: string): Promise<string> {
+interface CheckedDir {
+  readonly dir: string;
+  readonly real: string;
+  readonly dev: number;
+  readonly ino: number;
+}
+
+async function repoCardDir(repoRoot: string, dir: string): Promise<CheckedDir> {
   const root = await realpath(repoRoot);
   const target = path.join(root, dir);
   const real = await realpath(target).catch(() => undefined);
@@ -57,7 +64,20 @@ async function repoCardDir(repoRoot: string, dir: string): Promise<string> {
       `ufo.yaml cardDirs: ${dir} must be a directory inside the repository, reached without a symbolic link`,
     );
   }
-  return real;
+  const info = await lstat(real);
+  return { dir, real, dev: info.dev, ino: info.ino };
+}
+
+/** Refuses a declared card directory that was replaced while its cards were loaded (N6). */
+async function assertUnchanged(checked: CheckedDir): Promise<void> {
+  const real = await realpath(checked.real).catch(() => undefined);
+  const info = real === undefined ? undefined : await lstat(real).catch(() => undefined);
+  if (real !== checked.real || info?.dev !== checked.dev || info?.ino !== checked.ino) {
+    throw new AppError(
+      "config_invalid",
+      `ufo.yaml cardDirs: ${checked.dir} changed while its cards were loaded; try again`,
+    );
+  }
 }
 
 /**
@@ -72,8 +92,9 @@ export async function loadCards(
   const declared = await Promise.all(config.cardDirs.map((dir) => repoCardDir(repoRoot, dir)));
   const catalog = await loadCatalog([
     ...(context.cardDirs ?? []).map((dir) => path.resolve(dir)),
-    ...declared,
+    ...declared.map((checked) => checked.real),
   ]);
+  for (const checked of declared) await assertUnchanged(checked);
   const cards = new Map<string, SourcedCard>();
   for (const [id, card] of catalog.cards) {
     const dir = catalog.dirs.get(id) ?? BUILTIN_CARDS_DIR;

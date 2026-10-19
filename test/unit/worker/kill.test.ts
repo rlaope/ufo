@@ -1,19 +1,22 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  CHILDREN_FILE,
   createRunState,
   isProcessGroupAlive,
   readProcessStartTime,
   readRun,
   updateRun,
+  writeJsonAtomic,
 } from "../../../src/core/jobs/index.js";
 import {
   type Exec,
   killRunProcesses,
+  readChildGroups,
   runContainerLabel,
   trackChildGroup,
   trackContainerLabel,
@@ -116,14 +119,11 @@ describe("killRunProcesses", () => {
     const reused = spawnGroup();
     const exited = spawn(process.execPath, ["-e", ""], { detached: true, stdio: "ignore" });
     await once(exited, "exit");
-    await updateRun(runDir, (run) => ({
-      ...run,
-      childGroups: [
-        { pgid: process.pid, startTime: "Thu Jan  1 00:00:00 1970" },
-        { pgid: exited.pid as number, startTime: "Thu Jan  1 00:00:00 1970" },
-        { pgid: reused, startTime: "Thu Jan  1 00:00:00 1970" },
-      ],
-    }));
+    await writeJsonAtomic(path.join(runDir, CHILDREN_FILE), [
+      { pgid: process.pid, startTime: "Thu Jan  1 00:00:00 1970" },
+      { pgid: exited.pid as number, startTime: "Thu Jan  1 00:00:00 1970" },
+      { pgid: reused, startTime: "Thu Jan  1 00:00:00 1970" },
+    ]);
     const report = await killRunProcesses(runDir, { exec: fakeDocker({}).exec });
     expect(report.terminated).toEqual([]);
     expect(report.skipped).toEqual([
@@ -203,14 +203,23 @@ describe("tracking", () => {
     await trackPort(runDir, 18080);
     await trackContainerLabel(runDir, runContainerLabel(RUN_ID));
     await trackContainerLabel(runDir, runContainerLabel(RUN_ID));
-    let run = await readRun(runDir);
-    expect(run.childGroups.map((g) => g.pgid)).toEqual([pgid]);
+    const run = await readRun(runDir);
+    expect((await readChildGroups(runDir)).map((g) => g.pgid)).toEqual([pgid]);
     expect(run.ports).toEqual([18080]);
     expect(run.containerLabels).toEqual([`ufo.run=${RUN_ID}`]);
 
     await untrackChildGroup(runDir, pgid);
-    run = await readRun(runDir);
-    expect(run.childGroups).toEqual([]);
+    expect(await readChildGroups(runDir)).toEqual([]);
+  });
+
+  it("keeps child groups out of run.json, and reads an invalid or torn list as none (N5, F6)", async () => {
+    await trackChildGroup(runDir, spawnGroup());
+    expect(Object.keys(await readRun(runDir))).not.toContain("childGroups");
+    // A group without a start time is not trusted to be signalled.
+    await writeJsonAtomic(path.join(runDir, CHILDREN_FILE), [{ pgid: 4242 }]);
+    expect(await readChildGroups(runDir)).toEqual([]);
+    await writeFile(path.join(runDir, CHILDREN_FILE), '[{"pgid": 42');
+    expect(await readChildGroups(runDir)).toEqual([]);
   });
 
   it("refuses ids and labels that are not this run's", async () => {

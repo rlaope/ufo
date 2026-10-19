@@ -206,7 +206,7 @@ describe("run record", () => {
     expect((await readdir(runDir)).sort()).toEqual(
       ["artifacts", "jobs", "logs", RUN_FILE, "samples"].sort(),
     );
-    expect(run).toMatchObject({ status: "running", childGroups: [], ports: [] });
+    expect(run).toMatchObject({ status: "running", ports: [] });
     expect(await readRun(runDir)).toEqual(run);
     expect((await stat(runDir)).mode & 0o777).toBe(0o700);
     expect((await stat(path.join(runDir, JOBS_DIR))).mode & 0o777).toBe(0o700);
@@ -253,16 +253,12 @@ describe("run record", () => {
     expect((await readRun(runDir)).ports.sort()).toEqual(ports);
   });
 
-  it("requires a start time for the worker and every child group it records (F6)", async () => {
+  it("requires a start time for the worker (F6)", async () => {
     const { runDir } = await createRunState(root, { runId: "run-1", repoId: "repo" });
     const launchedAt = new Date().toISOString();
     await expect(
       updateRun(runDir, (run) => ({ ...run, worker: { pid: 4242, launchedAt } as never })),
     ).rejects.toThrow();
-    await expect(
-      updateRun(runDir, (run) => ({ ...run, childGroups: [{ pgid: 4242 } as never] })),
-    ).rejects.toThrow();
-    expect(await readRun(runDir)).toMatchObject({ childGroups: [] });
     expect((await readRun(runDir)).worker).toBeUndefined();
   });
 

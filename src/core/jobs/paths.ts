@@ -22,6 +22,8 @@ export const RUN_LOCK_FILE = "run.lock";
 export const CONTROL_LOCK_FILE = "control.lock";
 export const LEDGER_FILE = "ledger.jsonl";
 export const HEARTBEAT_FILE = "heartbeat.json";
+/** Child process groups the worker started; advisory, rewritten around every timed sample. */
+export const CHILDREN_FILE = "children.json";
 /** Present once a cancel was requested; the worker stops claiming jobs when it sees it. */
 export const CANCEL_FILE = "cancel.json";
 export const JOBS_DIR = "jobs";

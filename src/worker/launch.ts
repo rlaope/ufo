@@ -3,8 +3,11 @@ import { once } from "node:events";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { z } from "zod";
 import {
+  CHILDREN_FILE,
   type ChildGroup,
+  ChildGroupSchema,
   ContainerLabelSchema,
   isPidAlive,
   LOGS_DIR,
@@ -13,10 +16,13 @@ import {
   PgidSchema,
   PortSchema,
   type RunRecord,
+  readJsonIfExists,
   readProcessStartTime,
   readRun,
   updateRun,
   type WorkerRecord,
+  withRunLock,
+  writeJsonAtomic,
 } from "../core/jobs/index.js";
 
 /** The CLI subcommand that runs the worker main loop. */
@@ -129,26 +135,42 @@ export async function trackChildGroup(runDir: string, pgid: number): Promise<Chi
   const startTime = await readProcessStartTime(pgid);
   if (startTime === undefined) throw new Error(`no start time for process group ${pgid}`);
   const group: ChildGroup = { pgid, startTime };
-  // Not fsynced: written around every timed sample, and it guards processes, which an OS crash
-  // ends anyway.
-  await updateRun(
-    runDir,
-    (run) => ({
-      ...run,
-      childGroups: [...run.childGroups.filter((g) => g.pgid !== pgid), group],
-    }),
-    { durable: false },
-  );
+  await updateChildGroups(runDir, (groups) => [...groups.filter((g) => g.pgid !== pgid), group]);
   return group;
 }
 
 /** Forgets a child group that exited on its own. */
 export async function untrackChildGroup(runDir: string, pgid: number): Promise<void> {
-  await updateRun(
-    runDir,
-    (run) => ({ ...run, childGroups: run.childGroups.filter((g) => g.pgid !== pgid) }),
-    { durable: false },
-  );
+  await updateChildGroups(runDir, (groups) => groups.filter((g) => g.pgid !== pgid));
+}
+
+const ChildGroupsSchema = z.array(ChildGroupSchema).max(10_000);
+
+/**
+ * The child process groups the worker tracked. They live in their own advisory file, written
+ * without fsync around every timed sample (security N5): `run.json` is always written durably,
+ * so an OS crash can at worst lose this file, never the run record. A missing or unreadable
+ * file is no groups: after an OS crash those processes are gone anyway.
+ */
+export async function readChildGroups(runDir: string): Promise<ChildGroup[]> {
+  try {
+    const value = await readJsonIfExists(path.join(runDir, CHILDREN_FILE));
+    const parsed = ChildGroupsSchema.safeParse(value ?? []);
+    return parsed.success ? parsed.data : [];
+  } catch (error) {
+    if (error instanceof SyntaxError) return [];
+    throw error;
+  }
+}
+
+async function updateChildGroups(
+  runDir: string,
+  mutate: (groups: ChildGroup[]) => ChildGroup[],
+): Promise<void> {
+  await withRunLock(runDir, async () => {
+    const groups = mutate(await readChildGroups(runDir));
+    await writeJsonAtomic(path.join(runDir, CHILDREN_FILE), groups, { durable: false });
+  });
 }
 
 export async function trackPort(runDir: string, port: number): Promise<void> {

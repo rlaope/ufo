@@ -10,7 +10,7 @@ import {
   readProcessStartTime,
   readRun,
 } from "../core/jobs/index.js";
-import { runContainerLabel, workerArgv } from "./launch.js";
+import { readChildGroups, runContainerLabel, workerArgv } from "./launch.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -78,7 +78,7 @@ export async function killRunProcesses(
   const run = await readRun(runDir);
   const seen = new Set(worker === undefined ? [] : [worker.pid]);
   await stopGroups(
-    run.childGroups.filter((group) => !seen.has(group.pgid)),
+    (await readChildGroups(runDir)).filter((group) => !seen.has(group.pgid)),
     graceMs,
     report,
   );

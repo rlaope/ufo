@@ -1,8 +1,9 @@
 import type { Dirent } from "node:fs";
-import { readdir, readFile } from "node:fs/promises";
+import { readdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
+import { readTextNoFollow } from "../core/jobs/index.js";
 import { type PolicyViolation, violation } from "../core/policy/index.js";
 import { type TechniqueCard, TechniqueCardSchema } from "../domain/index.js";
 
@@ -75,7 +76,13 @@ async function listDirs(dir: string): Promise<string[]> {
 }
 
 async function readCard(file: string): Promise<TechniqueCard> {
-  const text = await readFile(file, "utf8");
+  // Not through a symbolic link, even one that replaced the file after the directory listing.
+  let text: string;
+  try {
+    text = await readTextNoFollow(file);
+  } catch (error) {
+    throw new CardLoadError(`${file}: cannot read the card`, { cause: error });
+  }
   if (Buffer.byteLength(text) > MAX_CARD_BYTES) throw new CardLoadError(`${file}: too large`);
   let value: unknown;
   try {

@@ -4,7 +4,8 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runCommand } from "../../../src/app/index.js";
-import { createRunState, readRun } from "../../../src/core/jobs/index.js";
+import { createRunState } from "../../../src/core/jobs/index.js";
+import { readChildGroups } from "../../../src/worker/index.js";
 
 // Code review #16: once a stopped command's group is gone, nothing signals its id again.
 
@@ -38,7 +39,7 @@ describe("runCommand", () => {
     // Past the grace period after which the delayed SIGKILL would have fired.
     await delay(2500);
     expect(kill.mock.calls.filter(([target]) => target === group).length).toBe(signalledBefore);
-    expect((await readRun(runDir)).childGroups).toEqual([]);
+    expect(await readChildGroups(runDir)).toEqual([]);
   });
 
   it("runs with exactly the given environment", async () => {

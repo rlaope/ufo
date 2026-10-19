@@ -19,6 +19,7 @@ import {
   isWorkerAlive,
   killRunProcesses,
   launchWorker,
+  readChildGroups,
   readHeartbeat,
   requestCancel,
   WORKER_ERR_LOG,
@@ -89,10 +90,10 @@ describe("detached worker", () => {
     const worker = await launchWorker(runDir, { entry: ENTRY });
     leftovers.push(worker.pid);
     await waitUntil(
-      async () => existsSync(readyFile) && (await readRun(runDir)).childGroups.length === 1,
+      async () => existsSync(readyFile) && (await readChildGroups(runDir)).length === 1,
       "the child group",
     );
-    const [group] = (await readRun(runDir)).childGroups;
+    const [group] = await readChildGroups(runDir);
     if (group === undefined) throw new Error("no child group");
     leftovers.push(group.pgid);
     expect(group.startTime).toBeDefined();

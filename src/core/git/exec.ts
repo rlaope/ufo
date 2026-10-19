@@ -3,42 +3,34 @@ import { MAX_NOTE_LENGTH } from "../../domain/index.js";
 import { oneLine } from "../text.js";
 
 /**
- * Variables that would point git at another repository, index, or identity than the one the
- * command runs in, inject configuration, or name programs for git to run. A UFO invoked from a
- * git hook or alias inherits them; left in place, a reset meant for arm B would hit the user's
- * working tree.
+ * The only variables git gets from the process that runs it: where it finds programs and the
+ * user's own config, the locale, the temp dir, and the user. Everything else, including
+ * variables that would point git at another repository or index, inject config, or name programs
+ * (`GIT_DIR`, `GIT_CONFIG_*`, `GIT_SSH_COMMAND`, ...) and every secret of the launching process,
+ * stays out, so a program git runs never sees more than this.
  */
-const SCRUBBED_ENV = [
-  "GIT_DIR",
-  "GIT_WORK_TREE",
-  "GIT_INDEX_FILE",
-  "GIT_COMMON_DIR",
-  "GIT_OBJECT_DIRECTORY",
-  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-  "GIT_NAMESPACE",
-  "GIT_PREFIX",
-  "GIT_AUTHOR_NAME",
-  "GIT_AUTHOR_EMAIL",
-  "GIT_AUTHOR_DATE",
-  "GIT_COMMITTER_NAME",
-  "GIT_COMMITTER_EMAIL",
-  "GIT_COMMITTER_DATE",
-  "GIT_CONFIG_PARAMETERS",
-  "GIT_CONFIG_COUNT",
-  "GIT_EXTERNAL_DIFF",
-  "GIT_DIFF_OPTS",
-  "GIT_SSH",
-  "GIT_SSH_COMMAND",
-  "GIT_ASKPASS",
-  "GIT_EDITOR",
-  "GIT_SEQUENCE_EDITOR",
-  "GIT_PROXY_COMMAND",
-  "GIT_TEMPLATE_DIR",
-  "GIT_EXEC_PATH",
-  "GIT_REPLACE_REF_BASE",
+const GIT_ENV_NAMES: readonly string[] = [
+  "PATH",
+  "HOME",
+  "USER",
+  "LOGNAME",
+  "LANG",
+  "TMPDIR",
+  "TZ",
+  "XDG_CONFIG_HOME",
+  "GIT_CONFIG_GLOBAL",
+  "GIT_CONFIG_SYSTEM",
+  "GIT_CONFIG_NOSYSTEM",
 ];
-/** `GIT_CONFIG_KEY_<n>` / `GIT_CONFIG_VALUE_<n>` inject configuration like `-c` does. */
-const SCRUBBED_ENV_PREFIXES = ["GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"];
+
+export function gitProcessEnv(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(source)) {
+    if (value === undefined) continue;
+    if (GIT_ENV_NAMES.includes(key) || key.startsWith("LC_")) env[key] = value;
+  }
+  return env;
+}
 
 // Hooks, fsmonitor, signing programs, and pagers run commands outside the approved command
 // set; automatic gc and maintenance would rewrite a repository behind UFO's back. Repository
@@ -113,16 +105,12 @@ function subcommand(args: readonly string[]): string {
 /** Runs git without a shell. Resolves with the exit code; rejects only when git could not run. */
 export function runGit(args: readonly string[], cwd: string, input?: string): Promise<GitResult> {
   const env: NodeJS.ProcessEnv = {
-    ...process.env,
+    ...gitProcessEnv(process.env),
     GIT_OPTIONAL_LOCKS: "0",
     GIT_TERMINAL_PROMPT: "0",
     GIT_NO_REPLACE_OBJECTS: "1",
     GIT_PAGER: "cat",
   };
-  for (const key of SCRUBBED_ENV) delete env[key];
-  for (const key of Object.keys(env)) {
-    if (SCRUBBED_ENV_PREFIXES.some((prefix) => key.startsWith(prefix))) delete env[key];
-  }
   return new Promise((resolve, reject) => {
     const child = execFile(
       "git",

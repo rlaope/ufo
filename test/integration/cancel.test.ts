@@ -12,7 +12,7 @@ import {
   updateRun,
 } from "../../src/core/jobs/index.js";
 import { newRunId } from "../../src/core/paths.js";
-import { type Exec, trackContainerLabel } from "../../src/worker/index.js";
+import { type Exec, readChildGroups, trackContainerLabel } from "../../src/worker/index.js";
 import {
   approveToy,
   diffOf,
@@ -75,7 +75,9 @@ describe("cancel", { timeout: TIMEOUT_MS }, () => {
     expect(isProcessGroupAlive(worker?.pid ?? 0)).toBe(false);
     const after = await readRun(runDir);
     expect(after.status).toBe("cancelled");
-    for (const group of after.childGroups) expect(isProcessGroupAlive(group.pgid)).toBe(false);
+    for (const group of await readChildGroups(runDir)) {
+      expect(isProcessGroupAlive(group.pgid)).toBe(false);
+    }
     expect((await readJob(runDir, queued.jobId)).status).toBe("cancelled");
     expect(await readMachineLock({ home: toy.home })).toBeUndefined();
 

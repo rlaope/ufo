@@ -1,6 +1,6 @@
 import type { OptIn, TechniqueCard, UfoConfig } from "../domain/index.js";
 import type { CardSet } from "./cards.js";
-import { describeDefaultEnv } from "./env.js";
+import { describeDefaultEnv, secretLikeNames } from "./env.js";
 import { hygieneLimitations } from "./jobs/shared.js";
 
 // What `ufo approve` shows the human before they type `approve`.
@@ -119,7 +119,12 @@ export function approvalReview(
     `Load targets: loopback and the default Docker bridge${config.targets.length > 0 ? `, plus ${config.targets.join(", ")}` : ""}. UFO checks these names when the run starts and passes the checked addresses as UFO_TARGET_ADDR; it does not control where the workload connects.`,
     `Opt-ins: ${optIns.length > 0 ? optIns.join(", ") : "none"}`,
     `Machine checks before every sample: ${config.hygiene.requireAcPower ? "AC power" : "battery allowed"}, 1-minute load below ${config.hygiene.maxLoadFactor} × cores${hygieneLimitations(config.hygiene).length > 0 ? " (loosened from the defaults; the bundle records it)" : ""}`,
-    `Environment of every command: ${describeDefaultEnv()}${config.env.length > 0 ? `, plus ${config.env.join(", ")} from ufo.yaml` : ""}; values are read when the run starts, everything else is left out`,
+    `Environment of every command: ${describeDefaultEnv()}${config.env.length > 0 ? `, plus ${config.env.join(", ")} from ufo.yaml` : ""}; values are read when the run starts, everything else is left out, and PATH keeps only absolute entries outside the repository and UFO's home`,
+    ...(secretLikeNames(config.env).length > 0
+      ? [
+          `  Warning: env lists names that look like secrets (${secretLikeNames(config.env).join(", ")}); patched code can read every listed variable.`,
+        ]
+      : []),
     "",
     "Patches are executed code: these commands bound what UFO runs, not what patched code does.",
     "",

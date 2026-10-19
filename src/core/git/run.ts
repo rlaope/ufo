@@ -219,6 +219,8 @@ export async function createRunArms(
   };
   let branchCreated = false;
   try {
+    // Again right before the first write to the user's repository (security N2).
+    await checkRepoConfig(root, baseSha);
     await git(["branch", "--no-track", branch, baseSha], root);
     branchCreated = true;
     for (const arm of [run.armA, run.armB]) {

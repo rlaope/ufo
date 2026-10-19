@@ -72,7 +72,6 @@ export const RunRecordSchema = z.strictObject({
     })
     .default({}),
   worker: WorkerRecordSchema.optional(),
-  childGroups: z.array(ChildGroupSchema).max(10_000).default([]),
   ports: z.array(PortSchema).max(1000).default([]),
   containerLabels: z.array(ContainerLabelSchema).max(1000).default([]),
 });

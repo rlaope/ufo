@@ -569,6 +569,15 @@ describe("checkRepoConfig (F3 preflight)", () => {
     ["includeIf.gitdir:/tmp/.path", "x.gitconfig"],
     ["extensions.worktreeConfig", "true"],
     ["url./tmp/elsewhere.insteadOf", "/"],
+    // Security N1: config-based hooks, credential helpers, network settings, remote helper
+    // programs, bundle URIs, submodule update commands, and sections UFO does not know.
+    ["hook.mark.command", "true"],
+    ["credential.helper", "store"],
+    ["http.proxy", "http://127.0.0.1:9"],
+    ["fetch.bundleURI", "file:///tmp/x.bundle"],
+    ["remote.origin.uploadpack", "/bin/true"],
+    ["submodule.lib.update", "!true"],
+    ["unknownsection.key", "1"],
   ])(
     "refuses a repository whose config sets %s, before anything is created",
     async (key, value) => {
@@ -589,6 +598,19 @@ describe("checkRepoConfig (F3 preflight)", () => {
       expect(existsSync(path.join(home, "arms", await repoId(repo), runId))).toBe(false);
     },
   );
+
+  it("runs no config-based hook: the repository is refused before git writes to it", async () => {
+    const repo = newRepo();
+    const marker = path.join(path.dirname(repo), "hook-ran");
+    gitIn(repo, "config", "hook.mark.command", `touch ${marker}`);
+    gitIn(repo, "config", "hook.mark.event", "reference-transaction");
+    const runId = nextRunId();
+    await expect(createRunArms(repo, runId, { home })).rejects.toMatchObject({
+      violation: { rule: "unsafe_repo_config" },
+    });
+    expect(existsSync(marker)).toBe(false);
+    expect(gitIn(repo, "branch", "--list", runBranch(runId)).trim()).toBe("");
+  });
 
   it("allows ordinary repository settings, including hooks and fsmonitor that UFO overrides", async () => {
     const repo = newRepo();

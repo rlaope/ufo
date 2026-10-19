@@ -207,6 +207,13 @@ describe("approval store (AC 18)", () => {
       await expect(
         recordApproval(REPO, subject(), { home: path.join(linkHome, "home3") }),
       ).rejects.toMatchObject({ code: "unsafe_state" });
+      // Security N8: every directory on the read path is checked, not only the file's parent:
+      // here `private` is the symlink and `approvals` below it is a real directory.
+      mkdirSync(path.join(linkHome, "home4"));
+      symlinkSync(path.join(linkHome, "real", "private"), path.join(linkHome, "home4", "private"));
+      await expect(
+        readApproval(REPO, { home: path.join(linkHome, "home4") }),
+      ).rejects.toMatchObject({ code: "unsafe_state" });
     } finally {
       rmSync(linkHome, { recursive: true, force: true });
     }

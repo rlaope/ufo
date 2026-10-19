@@ -4,23 +4,95 @@ import { PolicyError, preview, violation } from "../policy/rules.js";
 import { git } from "./exec.js";
 
 /**
- * Repository config keys that make git run a program the repository chose, or point git at
- * other files: filter and diff drivers, merge drivers, signing programs, an alternate work tree,
- * SSH and proxy commands, includes, per-worktree config, and URL rewrites. Keys are matched in
- * lowercase (git lowercases section and key names).
+ * Sections of repository config UFO lets through. Anything else is refused, so a section a new
+ * git release adds (as `hook.*` config-based hooks were) fails closed instead of running a
+ * program the repository chose. Section names are matched in lowercase, as git stores them.
+ */
+const ALLOWED_SECTIONS: ReadonlySet<string> = new Set([
+  "advice",
+  "alias",
+  "am",
+  "apply",
+  "author",
+  "blame",
+  "branch",
+  "checkout",
+  "clone",
+  "color",
+  "column",
+  "commit",
+  "committer",
+  "core",
+  "diff",
+  "difftool",
+  "extensions",
+  "feature",
+  "fetch",
+  "format",
+  "gc",
+  "grep",
+  "gui",
+  "help",
+  "i18n",
+  "index",
+  "init",
+  "interactive",
+  "lfs",
+  "log",
+  "mailmap",
+  "maintenance",
+  "man",
+  "merge",
+  "mergetool",
+  "notes",
+  "pack",
+  "pager",
+  "protocol",
+  "pull",
+  "push",
+  "rebase",
+  "remote",
+  "repack",
+  "rerere",
+  "sendemail",
+  "sequence",
+  "sparse",
+  "splitindex",
+  "stash",
+  "status",
+  "submodule",
+  "tag",
+  "trailer",
+  "transfer",
+  "user",
+  "versionsort",
+  "web",
+  "worktree",
+]);
+
+/**
+ * Keys inside allowed sections that still make git run a program the repository chose, reach a
+ * network endpoint, or point git at other files: diff and merge drivers, an alternate work tree,
+ * SSH and proxy commands, remote helper programs, bundle URIs, submodule update commands, and
+ * per-worktree config. Refused sections (`hook`, `credential`, `http`, `filter`, `url`, `gpg`,
+ * `include`, `includeif`, `uploadpack`, and any unknown one) need no entry here.
  */
 const UNSAFE_KEYS: readonly RegExp[] = [
-  /^filter\./,
   /^diff\.external$/,
   /^diff\..+\.(?:command|textconv)$/,
   /^merge\..+\.driver$/,
-  /^gpg\./,
   /^core\.(?:worktree|sshcommand|alternaterefscommand|askpass|gitproxy)$/,
-  /^include\./,
-  /^includeif\./,
   /^extensions\.worktreeconfig$/,
-  /^url\..+\.(?:insteadof|pushinsteadof)$/,
+  /^remote\..+\.(?:uploadpack|receivepack|vcs|proxy|proxyauthmethod)$/,
+  /^(?:fetch|transfer)\.bundleuri$/,
+  /^submodule\..+\.update$/,
 ];
+
+function unsafeKey(key: string): boolean {
+  const lower = key.toLowerCase();
+  const section = lower.split(".")[0] ?? "";
+  return !ALLOWED_SECTIONS.has(section) || UNSAFE_KEYS.some((pattern) => pattern.test(lower));
+}
 
 /** Attributes that select a driver by name. */
 const DRIVER_ATTRIBUTES = ["filter", "diff", "merge"] as const;
@@ -69,8 +141,8 @@ async function attributeFiles(repoRoot: string, sha: string): Promise<Map<string
 }
 
 /**
- * Refuses (`policy:unsafe_repo_config`) a repository whose local config would make git run a
- * program the repository chose, or whose attributes (in `sha`'s tree and `info/attributes`,
+ * Refuses (`policy:unsafe_repo_config`) a repository whose local config has a key outside the
+ * allowed sections, or one that would make git run a program the repository chose, or whose attributes (in `sha`'s tree and `info/attributes`,
  * when `sha` is given) name a driver the repository's config defines. Runs before UFO executes any git command in the user's repository that could invoke
  * one (status, branch, fetch), and again before each fetch into it.
  *
@@ -81,14 +153,12 @@ export async function checkRepoConfig(repoRoot: string, sha?: string): Promise<v
   const keys = configKeys(
     await git(["config", "--local", "--no-includes", "--list", "-z"], repoRoot),
   );
-  const unsafe = keys.filter((key) =>
-    UNSAFE_KEYS.some((pattern) => pattern.test(key.toLowerCase())),
-  );
+  const unsafe = keys.filter(unsafeKey);
   if (unsafe.length > 0) {
     throw new PolicyError(
       violation(
         "unsafe_repo_config",
-        `the repository's git config sets ${preview([...new Set(unsafe)])}, which could make git run a program the repository chose; remove it from .git/config (a setting in your global config is not affected) and try again`,
+        `the repository's git config sets ${preview([...new Set(unsafe)])}, which could make git run a program or reach an endpoint the repository chose, or is a setting UFO does not know; remove it from .git/config (a setting in your global config is not affected) and try again`,
         [...new Set(unsafe)],
       ),
     );
