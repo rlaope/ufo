@@ -49,6 +49,9 @@ export const DEFAULT_PROTECTED_PATHS: readonly string[] = [
   "**/jmh",
   "**/*.bench.*",
   "**/*_bench.*",
+  // Git attributes and submodules: they choose filters and what a checkout contains.
+  "**/.gitattributes",
+  "**/.gitmodules",
   // CI definitions, which hold the test steps.
   ".github/workflows",
   ".github/actions",

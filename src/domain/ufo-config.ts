@@ -2,11 +2,12 @@ import { z } from "zod";
 import { ObjectiveSchema } from "./objective.js";
 import { OracleSpecSchema } from "./oracle.js";
 import { EnvNameListSchema, OptInListSchema, TargetListSchema } from "./policy.js";
-import { CommandLineSchema, IdSchema, uniqueArray } from "./primitives.js";
+import { CommandLineSchema, IdSchema, RepoPathSchema, uniqueArray } from "./primitives.js";
 import { SCHEMA_VERSION } from "./version.js";
 
 const MAX_ORACLES = 16;
 const MAX_CARDS = 256;
+const MAX_CARD_DIRS = 16;
 
 /**
  * Commands for each workload lifecycle step:
@@ -50,6 +51,11 @@ export const UfoConfigSchema = z.strictObject({
   targets: TargetListSchema.default([]),
   /** Technique card ids enabled for this target, in the order `ufo run` applies recipes. */
   cards: uniqueArray(IdSchema, MAX_CARDS, (c) => c, "card ids").default([]),
+  /**
+   * Repository directories with technique cards besides the built-in ones. Their cards are
+   * covered by the approval like the others, and no change may edit them.
+   */
+  cardDirs: uniqueArray(RepoPathSchema, MAX_CARD_DIRS, (d) => d, "card directories").default([]),
   /** Requested here, granted only when `ufo approve` confirms them. */
   optIns: OptInListSchema.default([]),
   /**

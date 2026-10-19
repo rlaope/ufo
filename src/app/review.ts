@@ -36,13 +36,35 @@ export function approvedCommands(
   return commands;
 }
 
+/** Long enough that a reader should check the whole line, not skim it. */
+const LONG_COMMAND = 200;
+
+function describeCommand(what: string, command: string): string {
+  // JSON-quoted, so nothing in the line can hide from the reader.
+  const long = command.length > LONG_COMMAND ? ` (long: ${command.length} characters)` : "";
+  return `  ${what}${long}: ${JSON.stringify(command)}`;
+}
+
 function describeEdits(card: TechniqueCard): string[] {
   const defaults = card.params.map((p) => `${p.name}=${String(p.default)}`).join(", ");
-  return card.edits.map((edit) =>
+  const withDefaults = defaults ? ` (defaults: ${defaults})` : "";
+  return card.edits.flatMap((edit) =>
     edit.op === "set_property"
-      ? `  ${card.id}: set ${edit.key}=${edit.value} in ${edit.file}${defaults ? ` (defaults: ${defaults})` : ""}`
-      : `  ${card.id}: replace ${JSON.stringify(edit.find.slice(0, 60))} in ${edit.file}`,
+      ? [`  ${card.id}: set ${edit.key}=${edit.value} in ${edit.file}${withDefaults}`]
+      : [
+          `  ${card.id}: in ${edit.file}${withDefaults}, replace`,
+          `    ${JSON.stringify(edit.find)}`,
+          "    with",
+          `    ${JSON.stringify(edit.replace)}`,
+        ],
   );
+}
+
+export interface ScriptTableReview {
+  /** Files the approved commands dispatch through; patches may not edit them. */
+  readonly files: readonly string[];
+  /** `name: body` of each package.json script the commands run. */
+  readonly npmScripts: readonly string[];
 }
 
 export function approvalReview(
@@ -52,6 +74,7 @@ export function approvalReview(
   cards: readonly TechniqueCard[],
   sources: CardSet,
   optIns: readonly OptIn[],
+  scripts: ScriptTableReview = { files: [], npmScripts: [] },
 ): string {
   const { objective } = config;
   const lines = [
@@ -64,8 +87,18 @@ export function approvalReview(
     `  guardrails: ${objective.guardrails.map((g) => g.kind).join(", ") || "defaults only"}`,
     "",
     "Commands UFO will run (with /bin/sh -c, in each arm's directory; {{param}} is filled from the card's typed parameters):",
-    ...approvedCommands(config, cards).map(({ what, command }) => `  ${what}: ${command}`),
+    ...approvedCommands(config, cards).map(({ what, command }) => describeCommand(what, command)),
   ];
+  if (scripts.files.length > 0) {
+    lines.push(
+      "",
+      `Script tables these commands run through (protected from patches): ${scripts.files.join(", ")}`,
+      ...scripts.npmScripts.map((line) => `  package.json script ${line}`),
+    );
+  }
+  if (config.cardDirs.length > 0) {
+    lines.push("", `Card directories (protected from patches): ${config.cardDirs.join(", ")}`);
+  }
   const recipes = cards.filter((card) => card.edits.length > 0);
   if (recipes.length > 0) {
     lines.push("", "Recipe edits (UFO writes the diff itself):", ...recipes.flatMap(describeEdits));
@@ -83,7 +116,7 @@ export function approvalReview(
   }
   lines.push(
     "",
-    `Load targets: loopback and the default Docker bridge${config.targets.length > 0 ? `, plus ${config.targets.join(", ")}` : ""}`,
+    `Load targets: loopback and the default Docker bridge${config.targets.length > 0 ? `, plus ${config.targets.join(", ")}` : ""}. UFO checks these names when the run starts and passes the checked addresses as UFO_TARGET_ADDR; it does not control where the workload connects.`,
     `Opt-ins: ${optIns.length > 0 ? optIns.join(", ") : "none"}`,
     `Machine checks before every sample: ${config.hygiene.requireAcPower ? "AC power" : "battery allowed"}, 1-minute load below ${config.hygiene.maxLoadFactor} × cores${hygieneLimitations(config.hygiene).length > 0 ? " (loosened from the defaults; the bundle records it)" : ""}`,
     `Environment of every command: ${describeDefaultEnv()}${config.env.length > 0 ? `, plus ${config.env.join(", ")} from ufo.yaml` : ""}; values are read when the run starts, everything else is left out`,

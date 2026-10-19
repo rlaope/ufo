@@ -181,3 +181,12 @@ describe("idRecord", () => {
     expectRejects(Values, { ok: "1" });
   });
 });
+
+describe("CommandLineSchema invisible characters", () => {
+  it("rejects format characters and non-ASCII spaces", () => {
+    for (const bad of ["npm run\u202ebench", "node\u200bbench.mjs", "node\u00a0bench.mjs"]) {
+      expect(CommandLineSchema.safeParse(bad).success).toBe(false);
+    }
+    expect(CommandLineSchema.safeParse("node bench.mjs --runs 5").success).toBe(true);
+  });
+});

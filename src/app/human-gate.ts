@@ -21,6 +21,7 @@ import { AppError } from "./errors.js";
 import { budgetStatus, EVENTS } from "./events.js";
 import { approvalReview, approvedCommands } from "./review.js";
 import { activeRun } from "./run.js";
+import { npmScriptBodies, scriptTablesFor } from "./script-tables.js";
 
 /** Asks the human one question and returns the line they typed. */
 export type Confirm = (prompt: string) => Promise<string>;
@@ -68,7 +69,7 @@ export async function approveWithGate(
   const repo = await resolveRepo(context.cwd);
   const home = await homeFor(context, repo);
   const loaded = await loadConfig(repo.root);
-  const catalog = await loadCards(repo.root, context);
+  const catalog = await loadCards(repo.root, context, loaded.config);
   const cards = loaded.config.cards.map((id) => {
     const entry = catalog.get(id);
     if (entry === undefined) {
@@ -97,7 +98,14 @@ export async function approveWithGate(
       );
     }
   }
-  options.print(approvalReview(repo.root, loaded.hash, loaded.config, cards, catalog, requested));
+  const commands = approvedCommands(loaded.config, cards).map((c) => c.command);
+  const scripts = {
+    files: scriptTablesFor(commands),
+    npmScripts: await npmScriptBodies(repo.root, commands),
+  };
+  options.print(
+    approvalReview(repo.root, loaded.hash, loaded.config, cards, catalog, requested, scripts),
+  );
   const answer = await options.confirm('Type "approve" to approve: ');
   if (answer.trim() !== "approve") {
     throw new AppError("approval_declined", "not approved; nothing was recorded");

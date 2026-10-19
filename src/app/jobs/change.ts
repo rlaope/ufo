@@ -64,6 +64,7 @@ import {
   latestBaseline,
 } from "../events.js";
 import { checkCandidate } from "../oracles.js";
+import { configProtectedPaths } from "../script-tables.js";
 import { approvalViolation, jsonData, type OpenRun, openRun, toJson } from "../state.js";
 import { type ArmSpec, WorkloadError, type WorkloadSession } from "../workload.js";
 import {
@@ -96,6 +97,14 @@ export interface ChangeResult {
   decision: Decision;
   /** The commit on the run branch when the change was kept. */
   commit?: string;
+}
+
+/** The cards the run's approved ufo.yaml enables, from the catalog captured at start. */
+function enabledCards(open: OpenRun): TechniqueCard[] {
+  return open.config.cards.flatMap((id) => {
+    const card = open.catalog.cards.get(id);
+    return card === undefined ? [] : [card];
+  });
 }
 
 /** The card's reset hook: its command template with id `reset`, run in B after a drop. */
@@ -235,7 +244,11 @@ async function completeRecorded(
   }
   const optIn = checkOptIn(card.riskClass, open.optIns);
   if (optIn !== undefined) notCommitted(input.changeId, `policy:${optIn.rule}: ${optIn.detail}`);
-  const protectedGlobs = protectedPathsFor(card.riskClass, open.optIns);
+  const protectedGlobs = protectedPathsFor(
+    card.riskClass,
+    open.optIns,
+    configProtectedPaths(open.config, enabledCards(open)),
+  );
   const before = checkProtectedPaths(change.diff, protectedGlobs);
   if (before !== undefined) notCommitted(input.changeId, `policy:${before.rule}: ${before.detail}`);
   const applied = await applyToB(open.git, change);
@@ -334,7 +347,11 @@ async function decide(
   const noise = await noiseRefusal(open, events, changeId, session);
   if (noise !== undefined) return { decision: noise, attempted: false, change };
 
-  const protectedGlobs = protectedPathsFor(card.riskClass, open.optIns);
+  const protectedGlobs = protectedPathsFor(
+    card.riskClass,
+    open.optIns,
+    configProtectedPaths(open.config, enabledCards(open)),
+  );
   const before = checkProtectedPaths(change.diff, protectedGlobs);
   if (before !== undefined)
     return { decision: refusal(changeId, before), attempted: false, change };

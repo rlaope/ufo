@@ -167,12 +167,18 @@ async function startRunFor(
   const home = await homeFor(context, repo);
   const loaded = await loadConfig(repo.root);
   // The cards as they are now, checked against the approval and captured for the run's jobs.
-  const cards = await loadCards(repo.root, context);
+  const cards = await loadCards(repo.root, context, loaded.config);
   const subject = approvalSubject(loaded.hash, loaded.config, cards);
   const refused = await checkApproval(repo.repoId, subject, { home });
   if (refused !== undefined) throw new PolicyError(refused);
+  const targetAddrs: string[] = [];
   for (const target of loaded.config.targets) {
-    await resolveAndCheckTarget(targetHost(target), loaded.config.targets, context.resolver);
+    const pinned = await resolveAndCheckTarget(
+      targetHost(target),
+      loaded.config.targets,
+      context.resolver,
+    );
+    targetAddrs.push(`${pinned.host}=${pinned.address}`);
   }
   for (const id of loaded.config.cards) {
     if (!cards.has(id)) {
@@ -221,6 +227,7 @@ async function startRunFor(
       configHash: loaded.hash,
       env: captureEnv(launcherEnv, loaded.config.env),
       gitEnv: captureGitEnv(launcherEnv),
+      targetAddrs,
       hostAgent,
       ...(modelId === undefined ? {} : { modelId }),
       bundleId: BundleIdSchema.parse(`ufo-${runId}`),

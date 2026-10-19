@@ -48,7 +48,10 @@ export function newSession(open: OpenRun, context: JobContext, machine: Machine)
     hygiene: open.config.hygiene,
     machine,
     signal: context.signal,
-    env: open.state.env,
+    env:
+      open.state.targetAddrs.length === 0
+        ? open.state.env
+        : { ...open.state.env, UFO_TARGET_ADDR: open.state.targetAddrs.join(",") },
   });
 }
 

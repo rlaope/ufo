@@ -53,7 +53,13 @@ export const CommandLineSchema = z
   .trim()
   .min(1)
   .max(MAX_COMMAND_LENGTH)
-  .regex(/^[^\p{Cc}]*$/u, "must be a single line without control characters");
+  .regex(/^[^\p{Cc}]*$/u, "must be a single line without control characters")
+  // Bidi overrides, zero-width characters, and exotic spaces would make the command `ufo approve`
+  // prints look different from the bytes that run.
+  .regex(
+    /^[^\p{Cf}\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*$/u,
+    "must not contain invisible format characters or non-ASCII spaces",
+  );
 
 /** Repository-relative path or glob: no absolute paths, no `..` segments, no backslashes. */
 export const RepoPathSchema = z

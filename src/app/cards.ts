@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import {
   type ApprovalSubject,
@@ -9,6 +10,7 @@ import {
 import type { TechniqueCard, UfoConfig } from "../domain/index.js";
 import { BUILTIN_CARDS_DIR, loadCatalog } from "../techniques/index.js";
 import type { AppContext } from "./context.js";
+import { AppError } from "./errors.js";
 
 /** The installed package's version. Resolves to the package root from both src/ and dist/. */
 export function packageVersion(): string {
@@ -38,12 +40,40 @@ export function cardSource(repoRoot: string, dir: string): string {
   return `dir:${relative === "" ? "." : relative}`;
 }
 
-/** The built-in cards and those of the context's card directories, each with its source. */
+/**
+ * A `cardDirs` entry of ufo.yaml as an absolute directory: it must exist, be a directory, and be
+ * reached without a symbolic link, inside the repository.
+ */
+async function repoCardDir(repoRoot: string, dir: string): Promise<string> {
+  const root = await realpath(repoRoot);
+  const target = path.join(root, dir);
+  const real = await realpath(target).catch(() => undefined);
+  if (real === undefined || !(await stat(real)).isDirectory()) {
+    throw new AppError("config_invalid", `ufo.yaml cardDirs: ${dir} is not a directory`);
+  }
+  if (real !== target || !real.startsWith(`${root}${path.sep}`)) {
+    throw new AppError(
+      "config_invalid",
+      `ufo.yaml cardDirs: ${dir} must be a directory inside the repository, reached without a symbolic link`,
+    );
+  }
+  return real;
+}
+
+/**
+ * The built-in cards, those of the context's card directories, and those of the `cardDirs`
+ * ufo.yaml declares, each with its source.
+ */
 export async function loadCards(
   repoRoot: string,
   context: Pick<AppContext, "cardDirs">,
+  config: Pick<UfoConfig, "cardDirs"> = { cardDirs: [] },
 ): Promise<Map<string, SourcedCard>> {
-  const catalog = await loadCatalog((context.cardDirs ?? []).map((dir) => path.resolve(dir)));
+  const declared = await Promise.all(config.cardDirs.map((dir) => repoCardDir(repoRoot, dir)));
+  const catalog = await loadCatalog([
+    ...(context.cardDirs ?? []).map((dir) => path.resolve(dir)),
+    ...declared,
+  ]);
   const cards = new Map<string, SourcedCard>();
   for (const [id, card] of catalog.cards) {
     const dir = catalog.dirs.get(id) ?? BUILTIN_CARDS_DIR;

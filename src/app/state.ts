@@ -82,6 +82,11 @@ export const AppStateSchema = z.strictObject({
   env: EnvValuesSchema,
   /** The launcher's git configuration variables, for the worker's own git calls only. */
   gitEnv: EnvValuesSchema,
+  /**
+   * `targets:` entries as resolved and checked at start, `host=address`; passed to every command
+   * as `UFO_TARGET_ADDR`. UFO does not control where the workload connects.
+   */
+  targetAddrs: z.array(z.string().max(300)).max(64).default([]),
   /** `none` for a recipe-only `ufo run`. */
   hostAgent: IdSchema,
   /** Self-reported by the agent; UFO cannot verify it. */
