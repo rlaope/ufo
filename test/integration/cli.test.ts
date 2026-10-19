@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { listRunIds, measure } from "../../src/app/index.js";
+import { cancelRun, listRunIds, measure } from "../../src/app/index.js";
 import { main } from "../../src/cli/main.js";
 import {
   listJobs,
@@ -260,6 +260,26 @@ describe("Ctrl-C", { timeout: TIMEOUT_MS }, () => {
         /^ufo run: interrupted: interrupted; the run did not start \(.*approve.*\)$/m,
       );
       expect(await readMachineLock({ home: own.home })).toBeUndefined();
+    } finally {
+      await own.cleanup();
+    }
+  });
+
+  it("leaves the cleanup of a measure run cancelled from outside to that cancel", async () => {
+    const own = makeToy();
+    try {
+      await approveToy(own);
+      const measured = measure(own.context);
+      const ready = measuring(own);
+      while (!(await ready())) await new Promise((resolve) => setTimeout(resolve, 20));
+      const [runId] = await listRunIds(own.home, { repoId: own.repoId });
+      await cancelRun(own.context, { runId: runId as string });
+      await expect(measured).rejects.toMatchObject({ code: "measurement_failed" });
+      const types = (await readLedger(own.runDir(runId as string))).map((event) => event.type);
+      expect(types).toContain("run_cancelled");
+      expect(types).not.toContain("cleanup_failed");
+      expect((await readRun(own.runDir(runId as string))).status).toBe("cancelled");
+      noRunLeftover(own);
     } finally {
       await own.cleanup();
     }

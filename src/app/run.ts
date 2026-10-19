@@ -658,8 +658,12 @@ export async function measure(
   let job: JobRecord | undefined;
   let cancelled = false;
   try {
+    // Nothing more is printed for the baseline once interrupted.
+    const progress = (current: JobRecord) => {
+      if (options.signal?.aborted !== true) options.onProgress?.(current);
+    };
     job = await untilAborted(
-      waitForJobDone(context, started.runId, started.baselineJobId, options.onProgress),
+      waitForJobDone(context, started.runId, started.baselineJobId, progress),
       options.signal,
     );
   } catch (error) {
@@ -689,7 +693,10 @@ export async function measure(
   return { runId: started.runId, baseline: job.result as unknown as BaselineResult };
 }
 
-/** Ends a measure run that was not cancelled: its final status, then its arms and branch. */
+/**
+ * Ends a measure run that was not cancelled here: its final status, then its arms and branch. A
+ * run something else ended first (`ufo cancel`) was cleaned up by that, or is by the next start.
+ */
 async function closeMeasureRun(
   context: AppContext,
   started: { runId: string; runDir: string; home: string },
@@ -698,7 +705,9 @@ async function closeMeasureRun(
   await killRunProcesses(started.runDir, killOptions(context));
   // The status first, as everywhere: a crash in the cleanup below leaves an ended run whose arms
   // and branch the next start removes.
-  await endRun(started.runDir, job?.status === "succeeded" ? "finished" : "failed");
+  if (!(await endRun(started.runDir, job?.status === "succeeded" ? "finished" : "failed"))) {
+    return;
+  }
   const open = await openRun(started.home, started.runDir);
   await removeRun(open.git, { deleteBranch: true }).catch(async (error: unknown) => {
     await appendLedger(started.runDir, {
