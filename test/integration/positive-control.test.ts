@@ -21,6 +21,7 @@ import {
   approveToy,
   decisionOf,
   diffOf,
+  expectKeep,
   git,
   gitDirListing,
   makeToy,
@@ -79,9 +80,9 @@ describe("positive control", { timeout: TIMEOUT_MS }, () => {
     expect(run.arms.a).toBe(path.join(toy.home, "arms", toy.repoId, run.runId, "a"));
     expect((await waitDone(toy, run.runId, run.baselineJobId)).status).toBe("succeeded");
 
-    const diff = diffOf(toy, "server.mjs", (s) => s.replace("      await sleep(5);\n", ""));
+    const diff = diffOf(toy, "server.mjs", (s) => s.replace("      await sleep(20);\n", ""));
     const hypothesis = [
-      "The handler awaits sleep(5) on every request; removing it cuts latency.",
+      "The handler awaits sleep(20) on every request; removing it cuts latency.",
       `Found while profiling with OPENAI_API_KEY=${FAKE_KEY} under ${os.homedir()}/projects/toy.`,
     ].join("\n");
     const queued = await submitChange(toy.context, {
@@ -91,7 +92,7 @@ describe("positive control", { timeout: TIMEOUT_MS }, () => {
       hypothesis,
     });
     const kept = await waitDone(toy, run.runId, queued.jobId);
-    expect(decisionOf(kept)).toMatchObject({ outcome: "keep" });
+    expectKeep(decisionOf(kept), kept);
 
     // One commit on the run branch with all four trailers.
     const log = git(toy.repo, "log", "--format=%H%x00%B%x00", `${run.baseSha}..${run.branch}`);
@@ -160,7 +161,7 @@ describe("positive control", { timeout: TIMEOUT_MS }, () => {
     expect(git(toy.repo, "rev-parse", run.branch).trim()).toBe(finalSha);
     const result = (await report(toy.context, { runId: run.runId })) as RunReport;
     expect(result.headline).toMatch(
-      /^toy-http GET \/items, 30 sequential requests on loopback: latency_ms [\d.]+ → [\d.]+ ms \([\d.]+×, range [\d.]+×–[\d.]+×, 5 pairs, .+, claude-code \+ test-model-1 \(self-reported\)\)$/,
+      /^toy-http GET \/items, 15 sequential requests on loopback: latency_ms [\d.]+ → [\d.]+ ms \([\d.]+×, range [\d.]+×–[\d.]+×, 5 pairs, .+, claude-code \+ test-model-1 \(self-reported\)\)$/,
     );
     expect(result.finalCheck?.medianImprovement).toBeGreaterThan(0.3);
     expect(result.finalCheck?.pairs).toHaveLength(5);

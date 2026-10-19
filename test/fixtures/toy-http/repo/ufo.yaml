@@ -6,7 +6,7 @@ objective:
     direction: lower_is_better
     kind: stochastic
     replicationUnit: load_run
-  scenario: toy-http GET /items, 30 sequential requests on loopback
+  scenario: toy-http GET /items, 15 sequential requests on loopback
   guardrails:
     - kind: error_rate
   minEffect: 0.03

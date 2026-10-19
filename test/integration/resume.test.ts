@@ -16,6 +16,7 @@ import {
   approveToy,
   decisionOf,
   diffOf,
+  expectKeep,
   git,
   makeToy,
   TIMEOUT_MS,
@@ -43,7 +44,7 @@ describe("resume after kill -9", { timeout: TIMEOUT_MS }, () => {
     const runDir = toy.runDir(run.runId);
     expect((await waitDone(toy, run.runId, run.baselineJobId)).status).toBe("succeeded");
 
-    const diff = diffOf(toy, "server.mjs", (s) => s.replace("      await sleep(5);\n", ""));
+    const diff = diffOf(toy, "server.mjs", (s) => s.replace("      await sleep(20);\n", ""));
     const queued = await submitChange(toy.context, {
       runId: run.runId,
       cardId: "toy.fast-path",
@@ -72,7 +73,7 @@ describe("resume after kill -9", { timeout: TIMEOUT_MS }, () => {
     expect(resumed.workerPid).not.toBe(worker?.pid);
 
     const done = await waitDone(toy, run.runId, queued.jobId);
-    expect(decisionOf(done)).toMatchObject({ outcome: "keep" });
+    expectKeep(decisionOf(done), done);
     const finish = await finishRun(toy.context, { runId: run.runId });
     expect((await waitDone(toy, run.runId, finish.jobId)).status).toBe("succeeded");
     expect(((await report(toy.context, { runId: run.runId })) as RunReport).headline).toBeDefined();
@@ -98,11 +99,11 @@ describe("resume after kill -9", { timeout: TIMEOUT_MS }, () => {
       const queued = await submitChange(other.context, {
         runId: run.runId,
         cardId: "toy.fast-path",
-        diff: diffOf(other, "server.mjs", (s) => s.replace("      await sleep(5);\n", "")),
+        diff: diffOf(other, "server.mjs", (s) => s.replace("      await sleep(20);\n", "")),
         hypothesis: "The handler sleeps 5 ms per request; removing it cuts latency.",
       });
       const kept = await waitDone(other, run.runId, queued.jobId);
-      expect(decisionOf(kept)).toMatchObject({ outcome: "keep" });
+      expectKeep(decisionOf(kept), kept);
 
       // The crash case of the recovery rule: the commit landed, its ledger event did not, and
       // the job still looks like it was running.

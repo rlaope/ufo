@@ -13,7 +13,7 @@ import {
   requireTty,
   violation,
 } from "../core/policy/index.js";
-import { MAX_TECHNIQUES, type OptIn } from "../domain/index.js";
+import { MAX_TECHNIQUES, MAX_WALL_CLOCK_MINUTES, type OptIn } from "../domain/index.js";
 import { approvalSubject, loadCards } from "./cards.js";
 import { loadConfig } from "./config.js";
 import { type AppContext, homeFor, resolveRepo } from "./context.js";
@@ -158,7 +158,10 @@ export async function extendBudgetWithGate(
     }
   }
   const maxTechniques = Math.min(MAX_TECHNIQUES, status.limits.maxTechniques + addTechniques);
-  const wallClockMinutes = status.limits.wallClockMinutes + addMinutes;
+  const wallClockMinutes = Math.min(
+    MAX_WALL_CLOCK_MINUTES,
+    status.limits.wallClockMinutes + addMinutes,
+  );
   options.print(
     [
       `Run ${active.runId} budget:`,

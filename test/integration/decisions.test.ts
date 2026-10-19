@@ -21,7 +21,7 @@ import {
 // One run, one baseline, many changes: each is decided by the real worker in arm B and must
 // leave B back at A with nothing committed.
 
-const SLEEP = "      await sleep(5);\n";
+const SLEEP = "      await sleep(20);\n";
 const withoutSleep = (s: string) => s.replace(SLEEP, "");
 
 let toy: Toy;
@@ -67,7 +67,7 @@ describe("decisions on one run", { timeout: TIMEOUT_MS }, () => {
       reason: "policy:protected_path",
     });
     const bench = diffOf(toy, "bench/latency.mjs", (s) =>
-      s.replace("REQUESTS = 30", "REQUESTS = 3"),
+      s.replace("REQUESTS = 15", "REQUESTS = 3"),
     );
     expect((await decide("toy.fast-path", bench)).reason).toBe("policy:protected_path");
     expectBAtA();
@@ -128,7 +128,7 @@ describe("decisions on one run", { timeout: TIMEOUT_MS }, () => {
     expectBAtA();
   });
 
-  it("AC 2: drops a patch that adds a 5 ms sleep, resets B, and commits nothing", async () => {
+  it("AC 2: drops a patch that adds a second 20 ms sleep, resets B, and commits nothing", async () => {
     const diff = diffOf(toy, "server.mjs", (s) => s.replace(SLEEP, `${SLEEP}${SLEEP}`));
     const decision = await decide("toy.fast-path", diff, "A second sleep (control).");
     expect(decision).toMatchObject({ outcome: "drop" });

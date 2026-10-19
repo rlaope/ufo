@@ -7,6 +7,7 @@ import {
   submitChange,
 } from "../../src/app/index.js";
 import { listChangeIds } from "../../src/core/git/index.js";
+import { readLedger } from "../../src/core/jobs/index.js";
 import {
   approveToy,
   decisionOf,
@@ -51,12 +52,12 @@ describe("noise floor above 10%", { timeout: TIMEOUT_MS }, () => {
     expect(baseline.refusal?.detail).toMatch(/^noise floor \d+\.\d% exceeds 10\.0%; /);
     expect(baseline.refusal?.detail).toContain(CAUSE);
 
-    // Removing the 5 ms sleep is kept on a quiet machine (positive control); here it is refused.
+    // Removing the 20 ms sleep is kept on a quiet machine (positive control); here it is refused.
     const queued = await submitChange(toy.context, {
       runId: run.runId,
       cardId: "toy.fast-path",
-      diff: diffOf(toy, "server.mjs", (s) => s.replace("      await sleep(5);\n", "")),
-      hypothesis: "The handler sleeps 5 ms per request; removing it cuts latency.",
+      diff: diffOf(toy, "server.mjs", (s) => s.replace("      await sleep(20);\n", "")),
+      hypothesis: "The handler sleeps 20 ms per request; removing it cuts latency.",
     });
     const decision = decisionOf(await waitDone(toy, run.runId, queued.jobId));
     expect(decision).toMatchObject({ outcome: "inconclusive", reason: "policy:noise_floor" });
@@ -72,5 +73,15 @@ describe("noise floor above 10%", { timeout: TIMEOUT_MS }, () => {
     expect(view.decisions).toMatchObject([
       { outcome: "inconclusive", reason: "policy:noise_floor" },
     ]);
+    // Refused before anything was applied or measured (code review #5): not an attempt.
+    expect(view.budget.techniquesTried).toBe(0);
+    const types = (await readLedger(toy.runDir(run.runId))).map((event) => event.type);
+    expect(types.filter((type) => type === "decision")).toHaveLength(1);
+    expect(
+      (await readLedger(toy.runDir(run.runId))).some(
+        (event) =>
+          event.type === "decision" && (event.data as { samples: unknown[] }).samples.length > 0,
+      ),
+    ).toBe(false);
   });
 });

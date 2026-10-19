@@ -137,7 +137,7 @@ describe("ufo CLI", { timeout: TIMEOUT_MS }, () => {
       new RegExp(`^Run ${runId}: [0-9a-f]{7} -> [0-9a-f]{7} on ufo/run-${runId}$`),
     );
     expect(lines[1]).toMatch(
-      /^toy-http GET \/items, 30 sequential requests on loopback: latency_ms [\d.]+ → [\d.]+ ms \(.+, 5 pairs, .+, no agent \(recipes\)\)$/,
+      /^toy-http GET \/items, 15 sequential requests on loopback: latency_ms [\d.]+ → [\d.]+ ms \(.+, 5 pairs, .+, no agent \(recipes\)\)$/,
     );
     expect(result.stdout).toMatch(/^ {2}toy\.no-delay keep [+-]?\d+\.\d% -> [0-9a-f]{7}$/m);
     expect(result.stdout).toMatch(/^Evidence bundle: .+$/m);

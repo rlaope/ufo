@@ -28,6 +28,8 @@ export const POLICY_RULES = [
   "card_not_enabled",
   /** The repository's git config would make git run a program the repository chose. */
   "unsafe_repo_config",
+  /** The diff was written against an older arm A; an earlier change was kept since. */
+  "stale_base",
 ] as const;
 export type PolicyRuleName = (typeof POLICY_RULES)[number];
 

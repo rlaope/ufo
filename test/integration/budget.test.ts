@@ -12,11 +12,13 @@ import {
   submitChange,
 } from "../../src/app/index.js";
 import { listChangeIds } from "../../src/core/git/index.js";
-import { readLedger } from "../../src/core/jobs/index.js";
+import { appendLedger, readLedger } from "../../src/core/jobs/index.js";
+import { MAX_WALL_CLOCK_MINUTES } from "../../src/domain/index.js";
 import {
   approveToy,
   decisionOf,
   diffOf,
+  expectKeep,
   git,
   makeToy,
   TIMEOUT_MS,
@@ -29,7 +31,7 @@ import {
 // check as an agent's diff, before anything is applied. AC 21: the cap stops the run until a
 // human extends the budget at a terminal; then it continues.
 
-const SLEEP = "      await sleep(5);\n";
+const SLEEP = "      await sleep(20);\n";
 const withoutSleep = (s: string) => s.replace(SLEEP, "");
 
 let toy: Toy;
@@ -107,7 +109,7 @@ describe("recipes and the technique cap", { timeout: TIMEOUT_MS }, () => {
     // Nothing reached B or the run branch.
     expectBAtA();
     expect(readFileSync(path.join(run.arms.b, "bench/latency.mjs"), "utf8")).toContain(
-      "const REQUESTS = 30;",
+      "const REQUESTS = 15;",
     );
     const open = await openRun(toy.home, runDir);
     expect(await listChangeIds(open.git)).toEqual([]);
@@ -188,7 +190,7 @@ describe("recipes and the technique cap", { timeout: TIMEOUT_MS }, () => {
 
     // The run continues: the next change is measured and kept, which reaches the new cap.
     const kept = await decide(change.cardId, change.diff, change.hypothesis);
-    expect(kept).toMatchObject({ outcome: "keep" });
+    expectKeep(kept);
     const open = await openRun(toy.home, runDir);
     expect((await listChangeIds(open.git)).map((c) => c.changeId)).toEqual([kept.queued.changeId]);
     expect((await getRun(toy.context, { runId: run.runId })).budget).toMatchObject({
@@ -197,5 +199,26 @@ describe("recipes and the technique cap", { timeout: TIMEOUT_MS }, () => {
       exhausted: true,
     });
     expect((await refusal(submitChange(toy.context, change))).code).toBe("policy:budget_exceeded");
+  });
+
+  it("caps a wall-clock raise at the schema limit, and an unreadable raise changes nothing", async () => {
+    const extended = await extendBudgetWithGate(toy.context, {
+      runId: run.runId,
+      techniques: 0,
+      minutes: 20_000,
+      print: () => undefined,
+      stdin: { isTTY: true },
+      confirm: async () => "extend",
+    });
+    expect(extended.wallClockMinutes).toBe(MAX_WALL_CLOCK_MINUTES);
+    // A raise out of range that did not come through the gate: the run stays usable.
+    await appendLedger(runDir, {
+      type: "budget_extended",
+      data: { maxTechniques: 5, wallClockMinutes: 20_000 },
+    });
+    expect((await getRun(toy.context, { runId: run.runId })).budget).toMatchObject({
+      maxTechniques: 2,
+      wallClockMinutes: MAX_WALL_CLOCK_MINUTES,
+    });
   });
 });

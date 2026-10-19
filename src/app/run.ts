@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { rm } from "node:fs/promises";
+import { lstat, rm } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { ZodError } from "zod";
@@ -10,10 +10,12 @@ import {
   publishBranch,
   removeRun,
   resetArms,
+  runLayout,
 } from "../core/git/index.js";
 import {
   acquireMachineLock,
   appendLedger,
+  cancelJob,
   clampWaitS,
   createRunState,
   enqueueJob,
@@ -45,6 +47,7 @@ import {
 } from "../core/policy/index.js";
 import { BundleIdSchema, IdSchema, labelSchema } from "../domain/index.js";
 import {
+  isCancelRequested,
   isWorkerAlive,
   type KillReport,
   killRunProcesses,
@@ -62,7 +65,7 @@ import {
 } from "./context.js";
 import { captureEnv, captureGitEnv } from "./env.js";
 import { AppError } from "./errors.js";
-import { budgetStatus, committedChangeIds, EVENTS, latestBaseline } from "./events.js";
+import { budgetStatus, committedChangeIds, decisionFor, EVENTS, latestBaseline } from "./events.js";
 import {
   type BaselineResult,
   ChangeJobInputSchema,
@@ -135,6 +138,25 @@ async function refuseActiveRuns(home: string, repo: Repo): Promise<void> {
   }
 }
 
+async function exists(target: string): Promise<boolean> {
+  return (await lstat(target).catch(() => undefined)) !== undefined;
+}
+
+/**
+ * Removes the arms of this repository's ended runs. A run writes its final status before it
+ * removes its arms, so a crash in between leaves an ended run with arms on disk; nothing else
+ * would ever remove them.
+ */
+async function sweepEndedRuns(home: string, repo: Repo): Promise<void> {
+  for (const id of await listRunIds(home, repo)) {
+    const runDir = runDirFor(home, repo.repoId, id);
+    if ((await readRun(runDir)).status === "running") continue;
+    if (!(await exists(runLayout(home, repo.repoId, id).dir))) continue;
+    const open = await openRun(home, runDir);
+    await removeRun(open.git, { deleteBranch: open.state.purpose === "measure" });
+  }
+}
+
 async function startRunFor(
   context: AppContext,
   options: StartRunOptions,
@@ -165,6 +187,7 @@ async function startRunFor(
     usage(error);
   }
   await refuseActiveRuns(home, repo);
+  await sweepEndedRuns(home, repo);
 
   const runId = newRunId();
   // The run's state exists before it takes the machine lock, so another start that finds the
@@ -269,6 +292,27 @@ export async function activeRun(context: AppContext, runId?: string): Promise<Ac
 }
 
 /**
+ * Starts a worker for jobs just queued. When none can start (another run holds the machine
+ * lock), the jobs are cancelled before the refusal is thrown: a queued job no worker will ever
+ * claim would count against the budget and, for a finish job, refuse all later work.
+ */
+async function ensureWorkerFor(
+  context: AppContext,
+  active: ActiveRun,
+  jobs: readonly JobRecord[],
+): Promise<void> {
+  try {
+    await ensureWorker(context, active.runDir, active.home, active.open.state);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    for (const job of jobs) {
+      await cancelJob(active.runDir, job, `no worker could start: ${reason}`.slice(0, 4000));
+    }
+    throw error;
+  }
+}
+
+/**
  * Once `finishRun` queued the finish job, the run takes no more work: the worker removes the
  * arms and exits after it, and cancels whatever is still queued.
  */
@@ -350,7 +394,7 @@ export async function submitChange(
       kind: JOB_KINDS.change,
       input: jsonData(input),
     });
-    await ensureWorker(context, active.runDir, active.home, active.open.state);
+    await ensureWorkerFor(context, active, [job]);
     return { runId: active.runId, changeId, jobId: job.jobId };
   });
 }
@@ -382,6 +426,7 @@ async function queueRecipes(context: AppContext, active: ActiveRun): Promise<Rec
     .map((id) => open.catalog.cards.get(id))
     .filter((card) => card !== undefined && card.kind === "recipe" && card.edits.length > 0);
   const jobs: RecipeJobs["jobs"] = [];
+  const queued: JobRecord[] = [];
   const skipped: string[] = [];
   for (const card of recipes) {
     if (card === undefined) continue;
@@ -400,9 +445,10 @@ async function queueRecipes(context: AppContext, active: ActiveRun): Promise<Rec
       source: "recipe",
     });
     const job = await enqueueJob(active.runDir, { kind: JOB_KINDS.change, input: jsonData(input) });
+    queued.push(job);
     jobs.push({ cardId: card.id, changeId, jobId: job.jobId });
   }
-  if (jobs.length > 0) await ensureWorker(context, active.runDir, active.home, active.open.state);
+  if (queued.length > 0) await ensureWorkerFor(context, active, queued);
   return { runId: active.runId, jobs, skipped };
 }
 
@@ -622,7 +668,7 @@ export async function finishRun(
     const state = { ...active.open.state, ...(modelId === undefined ? {} : { modelId }) };
     if (modelId !== undefined) await writeAppState(active.runDir, state);
     const job = await enqueueJob(active.runDir, { kind: JOB_KINDS.finish, input: {} });
-    await ensureWorker(context, active.runDir, active.home, state);
+    await ensureWorkerFor(context, { ...active, open: { ...active.open, state } }, [job]);
     return { runId: active.runId, jobId: job.jobId };
   });
 }
@@ -636,7 +682,11 @@ function killSummary(report: KillReport) {
   };
 }
 
-/** Requeues jobs an interrupted worker left running; a job interrupted twice fails instead. */
+/**
+ * Requeues jobs an interrupted worker left running; a job interrupted twice fails instead,
+ * unless it is a change whose decision is already recorded: re-run, it only finishes what the
+ * decision says (a keep's commit) and measures nothing.
+ */
 async function settleInterrupted(
   runDir: string,
   status: "queued" | "cancelled",
@@ -652,16 +702,15 @@ async function settleInterrupted(
   for (const job of await listJobs(runDir)) {
     if (TERMINAL_JOB_STATUSES.has(job.status)) continue;
     if (status === "cancelled") {
-      await writeJob(runDir, {
-        ...job,
-        status: "cancelled",
-        error: { message: "cancelled" },
-        updatedAt: now,
-        finishedAt: now,
-      });
+      await cancelJob(runDir, job, "cancelled");
       result.cancelled.push(job.jobId);
     } else if (job.status === "running") {
-      if (requeuedBefore.has(job.jobId)) {
+      const changeId = (job.input as { changeId?: unknown } | null)?.changeId;
+      const decided =
+        job.kind === JOB_KINDS.change &&
+        typeof changeId === "string" &&
+        decisionFor(events, changeId) !== undefined;
+      if (requeuedBefore.has(job.jobId) && !decided) {
         await writeJob(runDir, {
           ...job,
           status: "failed",
@@ -713,8 +762,21 @@ async function resumeLocked(context: AppContext, active: ActiveRun): Promise<Res
   if (current.status !== "running") {
     throw new AppError("run_not_active", `run ${active.runId} is ${current.status}`);
   }
-  const kill = await killRunProcesses(runDir, context.exec ? { exec: context.exec } : {});
+  // A worker started now would see the cancel flag and cancel every job at once.
+  if (await isCancelRequested(runDir)) {
+    throw new AppError(
+      "cancel_pending",
+      `a cancel of run ${active.runId} did not complete; cancel it again to end the run`,
+    );
+  }
   const { git } = active.open;
+  if (!(await exists(git.armA)) || !(await exists(git.armB))) {
+    throw new AppError(
+      "arms_missing",
+      `the arms of run ${active.runId} are gone, so it cannot continue; cancel it to end the run`,
+    );
+  }
+  const kill = await killRunProcesses(runDir, context.exec ? { exec: context.exec } : {});
   const armSha = await resetArms(git);
   // Reconciled before any job is requeued, so a refused resume changes no job.
   const events = await readLedger(runDir);
@@ -769,7 +831,9 @@ export interface CancelResult {
 /**
  * `cancel_run`: stops the worker and everything the run started (process groups, containers
  * labeled `ufo.run=<id>`; a missing Docker is reported, not fatal), cancels unfinished jobs,
- * resets both arms and removes them (the run branch stays), and keeps the ledger.
+ * records the run as cancelled, then removes both arms (the run branch stays) and releases the
+ * machine lock, and keeps the ledger. The status comes before the cleanup, so a cancel cut short
+ * leaves an ended run, never a `running` one without arms; a later start removes the leftovers.
  */
 export async function cancelRun(
   context: AppContext,
@@ -788,14 +852,15 @@ async function cancelLocked(context: AppContext, active: ActiveRun): Promise<Can
   await requestCancel(runDir);
   const kill = await killRunProcesses(runDir, context.exec ? { exec: context.exec } : {});
   const settled = await settleInterrupted(runDir, "cancelled");
-  await resetArms(open.git);
-  await removeRun(open.git, { deleteBranch: open.state.purpose === "measure" });
   await updateRun(runDir, (run) => ({ ...run, status: "cancelled" }));
-  await releaseMachineLock({ runId: active.runId, home: active.home });
   await appendLedger(runDir, {
     type: EVENTS.runCancelled,
     data: jsonData({ cancelledJobs: settled.cancelled, processes: killSummary(kill) }),
   });
+  // The arms are deleted whole, so whatever a job left in them needs no reset first, and an arm
+  // that is already gone is not an error.
+  await removeRun(open.git, { deleteBranch: open.state.purpose === "measure" });
+  await releaseMachineLock({ runId: active.runId, home: active.home });
   return {
     runId: active.runId,
     cancelledJobs: settled.cancelled,

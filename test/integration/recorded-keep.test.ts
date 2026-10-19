@@ -2,7 +2,13 @@ import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { cancelRun, JOB_KINDS, resumeRun, startRun } from "../../src/app/index.js";
-import { appendLedger, enqueueJob, isPidAlive, readRun } from "../../src/core/jobs/index.js";
+import {
+  appendLedger,
+  enqueueJob,
+  isPidAlive,
+  readRun,
+  writeJob,
+} from "../../src/core/jobs/index.js";
 import {
   approveToy,
   diffOf,
@@ -107,7 +113,7 @@ describe("a recorded keep", { timeout: TIMEOUT_MS }, () => {
       { diff: testEdit },
     );
     // A keep whose recorded diff is not the diff the job enqueued.
-    const fast = diffOf(toy, "server.mjs", (s) => s.replace("      await sleep(5);\n", ""));
+    const fast = diffOf(toy, "server.mjs", (s) => s.replace("      await sleep(20);\n", ""));
     const swapped = diffOf(toy, "server.mjs", (s) => `${s}// swapped\n`);
     const swappedJob = await forgedKeep(runDir, run.baseSha, { diff: swapped }, { diff: fast });
     // A keep recorded under another card than the job's.
@@ -132,6 +138,33 @@ describe("a recorded keep", { timeout: TIMEOUT_MS }, () => {
     // Nothing reached the run branch, and B is back at A.
     expect(git(toy.repo, "rev-parse", run.branch).trim()).toBe(run.baseSha);
     expect(git(run.arms.b, "status", "--porcelain")).toBe("");
+    await cancelRun(toy.context, { runId: run.runId });
+  });
+});
+
+// Code review #12: a change job interrupted twice is failed, unless its decision is recorded;
+// then it is requeued and only finishes what the decision says.
+describe("a change job interrupted twice", { timeout: TIMEOUT_MS }, () => {
+  it("is requeued, not failed, when its decision is already recorded", async () => {
+    await approveToy(toy);
+    const run = await startRun(toy.context);
+    const runDir = toy.runDir(run.runId);
+    expect((await waitDone(toy, run.runId, run.baselineJobId)).status).toBe("succeeded");
+    await stopWorker(runDir);
+
+    const fast = diffOf(toy, "server.mjs", (s) => s.replace("      await sleep(20);\n", ""));
+    const job = await forgedKeep(runDir, run.baseSha, { diff: fast }, { diff: fast });
+    // The worker that ran it died, and so did the worker of the earlier resume.
+    const now = new Date().toISOString();
+    await writeJob(runDir, { ...job, status: "running", startedAt: now, updatedAt: now });
+    await appendLedger(runDir, { type: "job_requeued", data: { jobId: job.jobId } });
+
+    const resumed = await resumeRun(toy.context, { runId: run.runId });
+    expect(resumed.failed).toEqual([]);
+    expect(resumed.requeued).toEqual([job.jobId]);
+    const done = await waitDone(toy, run.runId, job.jobId);
+    expect(done.status).toBe("succeeded");
+    expect((done.result as { commit?: string }).commit).toMatch(/^[0-9a-f]{40}$/);
     await cancelRun(toy.context, { runId: run.runId });
   });
 });

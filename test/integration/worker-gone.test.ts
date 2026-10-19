@@ -23,6 +23,7 @@ import {
   approveToy,
   decisionOf,
   diffOf,
+  expectKeep,
   git,
   makeToy,
   TIMEOUT_MS,
@@ -82,7 +83,7 @@ describe("a dead worker", { timeout: TIMEOUT_MS }, () => {
         cardId: "toy.fast-path",
         hypothesis: "The handler sleeps 5 ms per request; removing it cuts latency.",
         source: "agent",
-        diff: diffOf(toy, "server.mjs", (s) => s.replace("      await sleep(5);\n", "")),
+        diff: diffOf(toy, "server.mjs", (s) => s.replace("      await sleep(20);\n", "")),
       },
     });
 
@@ -106,7 +107,7 @@ describe("a dead worker", { timeout: TIMEOUT_MS }, () => {
     expect(resumed.workerPid).toBeDefined();
     expect(resumed.workerPid).not.toBe(worker.pid);
     const done = await waitForJobDone(toy.context, run.runId, change.jobId);
-    expect(decisionOf(done)).toMatchObject({ outcome: "keep" });
+    expectKeep(decisionOf(done), done);
   });
 
   it("ends ufo measure with measurement_failed, since its run is closed, not resumable", async () => {

@@ -79,7 +79,21 @@ export function makeToy(options: ToyOptions = {}): Toy {
   const globalConfig = path.join(root, "global.gitconfig");
   writeFileSync(globalConfig, "");
   const gitEnv = { GIT_CONFIG_GLOBAL: globalConfig, GIT_CONFIG_NOSYSTEM: "1" };
+  // The test process runs git too (the app layer creates the arms in-process), so it needs the
+  // empty global config while the toy lives; cleanup puts the previous values back.
+  const previousEnv = {
+    GIT_CONFIG_GLOBAL: process.env.GIT_CONFIG_GLOBAL,
+    GIT_CONFIG_NOSYSTEM: process.env.GIT_CONFIG_NOSYSTEM,
+  };
   Object.assign(process.env, gitEnv);
+  const restoreEnv = () => {
+    // A toy made later owns the variables now; its own cleanup restores them.
+    if (process.env.GIT_CONFIG_GLOBAL !== globalConfig) return;
+    for (const [key, value] of Object.entries(previousEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  };
   const repo = path.join(root, "repo");
   cpSync(FIXTURE_REPO, repo, { recursive: true });
   if (options.config !== undefined) {
@@ -126,6 +140,7 @@ export function makeToy(options: ToyOptions = {}): Toy {
         );
       }
       await rm(root, { recursive: true, force: true });
+      restoreEnv();
     },
   };
 }
@@ -257,4 +272,18 @@ export function decisionOf(job: JobRecord) {
   }
   return (job.result as { decision: { outcome: string; reason?: string; detail?: string } })
     .decision;
+}
+
+/**
+ * Asserts a keep and, when it is not one, fails with the whole decision (reason, detail,
+ * effect, pairs) and the job's stats: `toMatchObject` would hide every field but `outcome`.
+ */
+export function expectKeep(decision: { outcome: string }, job?: JobRecord): void {
+  if (decision.outcome === "keep") return;
+  const stats = (job?.result as { stats?: unknown } | undefined)?.stats;
+  throw new Error(
+    `expected a keep, got ${JSON.stringify(decision, null, 2)}${
+      stats === undefined ? "" : `\nstats: ${JSON.stringify(stats, null, 2)}`
+    }`,
+  );
 }

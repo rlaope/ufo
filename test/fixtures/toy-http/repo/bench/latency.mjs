@@ -6,7 +6,7 @@
 import { once } from "node:events";
 import { createApp } from "../server.mjs";
 
-const REQUESTS = 30;
+const REQUESTS = 15;
 const NOISE_PATTERN = [-1, 1, -0.5, 0.5, 0];
 
 const server = createApp();

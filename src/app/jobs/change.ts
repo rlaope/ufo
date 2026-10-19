@@ -4,6 +4,9 @@ import {
   decideDeterministic,
   decideStochastic,
   INITIAL_PAIRS,
+  MAX_NOISE_FLOOR,
+  MIN_NOISE_SAMPLES,
+  noiseFloor,
   type StochasticResult,
 } from "../../core/decide/index.js";
 import {
@@ -28,6 +31,7 @@ import {
   checkPaths,
   checkProtectedPaths,
   protectedPathsFor,
+  violation,
 } from "../../core/policy/index.js";
 import {
   type Change,
@@ -71,16 +75,19 @@ import {
   unmeasured,
 } from "./shared.js";
 
-export const ChangeJobInputSchema = z.strictObject({
+const changeJobFields = {
   changeId: z.uuid(),
   cardId: IdSchema,
   hypothesis: HypothesisSchema,
   evidenceRefs: z.array(RepoPathSchema).max(32).default([]),
-  /** `agent`: a diff from `submitChange`; `recipe`: UFO computes the diff from the card's edits. */
-  source: z.enum(["agent", "recipe"]),
-  diff: UnifiedDiffSchema.optional(),
   baseSha: GitShaSchema.optional(),
-});
+};
+
+/** `agent`: a diff from `submitChange`; `recipe`: UFO computes the diff from the card's edits. */
+export const ChangeJobInputSchema = z.discriminatedUnion("source", [
+  z.strictObject({ ...changeJobFields, source: z.literal("agent"), diff: UnifiedDiffSchema }),
+  z.strictObject({ ...changeJobFields, source: z.literal("recipe") }),
+]);
 export type ChangeJobInput = z.input<typeof ChangeJobInputSchema>;
 
 export interface ChangeResult {
@@ -101,6 +108,8 @@ interface Outcome {
   samples?: DecisionData["samples"];
   oracleResults?: OracleResult[];
   commands?: string[];
+  /** Resets B and runs the card's reset hook after a measured drop; runs once it is recorded. */
+  cleanup?: () => Promise<void>;
 }
 
 /**
@@ -108,9 +117,11 @@ interface Outcome {
  * paths) →
  * apply to B → protected-path backstop on git's own list → setup in both arms (B failing is
  * `build_failed`) → oracles in B → interleaved measurement with at most one escalation →
- * decision. A keep is committed first and recorded second; anything else resets B and runs the
- * card's reset hook. A job re-run after a crash returns the recorded decision instead of
- * measuring again, and commits a recorded keep that never reached the run branch.
+ * decision. The decision is recorded first. A keep is then committed and the commit recorded
+ * (`change_committed`); anything else then resets B and runs the card's reset hook, whose
+ * failure is recorded as its own event and fails the job without losing the decision. A job
+ * re-run after a crash returns the recorded decision instead of measuring again, and commits a
+ * recorded keep that never reached the run branch.
  */
 export async function handleChange(
   job: JobRecord,
@@ -144,6 +155,18 @@ export async function handleChange(
       decision: outcome.decision,
       commit,
     });
+  }
+  if (outcome.cleanup !== undefined) {
+    try {
+      await outcome.cleanup();
+    } catch (error) {
+      await appendLedger(context.runDir, {
+        type: EVENTS.resetFailed,
+        changeId: input.changeId,
+        data: { message: (error instanceof Error ? error.message : String(error)).slice(0, 4000) },
+      });
+      throw error;
+    }
   }
   return toJson({ changeId: input.changeId, cardId: input.cardId, decision: outcome.decision });
 }
@@ -241,7 +264,7 @@ async function decide(
   // A is measured exactly at its commit: whatever was written into it since the last job is
   // discarded first (security F11). B is reset when the change is applied.
   const aHead = await resetArms(open.git);
-  let diff = input.diff;
+  let diff = input.source === "agent" ? input.diff : undefined;
   if (input.source === "recipe") {
     if ("violation" in resolved) {
       return { decision: refusal(changeId, resolved.violation), attempted: false };
@@ -297,6 +320,19 @@ async function decide(
   if (baseline === undefined) {
     throw new Error("the run has no completed baseline; a change cannot be decided before it");
   }
+  // A diff written against an older A: an earlier change was kept since. Not an attempt.
+  if (input.baseSha !== undefined && input.baseSha !== aHead) {
+    const stale = violation(
+      "stale_base",
+      `the diff was written against ${input.baseSha.slice(0, 12)}, but arm A is at ${aHead.slice(0, 12)}; rebase it on the current A`,
+      [input.baseSha],
+    );
+    return { decision: refusal(changeId, stale), attempted: false, change };
+  }
+  const session = newSession(open, context, options.machine);
+  // Too noisy at the current A to decide anything: measuring would only spend the budget.
+  const noise = await noiseRefusal(open, events, changeId, session);
+  if (noise !== undefined) return { decision: noise, attempted: false, change };
 
   const protectedGlobs = protectedPathsFor(card.riskClass, open.optIns);
   const before = checkProtectedPaths(change.diff, protectedGlobs);
@@ -317,7 +353,6 @@ async function decide(
     return { decision: refusal(changeId, after), attempted: true, change };
   }
 
-  const session = newSession(open, context, options.machine);
   const armA: ArmSpec = { arm: "a", dir: open.git.armA, sha: aHead };
   const armB: ArmSpec = { arm: "b", dir: open.git.armB, sha: aHead };
   let outcome: Outcome;
@@ -332,8 +367,34 @@ async function decide(
     samples: session.samples,
     commands: [...session.commands],
   };
-  if (outcome.decision.outcome !== "keep") await dropChange(open, card, session, armB);
+  if (outcome.decision.outcome !== "keep") {
+    outcome = { ...outcome, cleanup: () => dropChange(open, card, session, armB) };
+  }
   return outcome;
+}
+
+/**
+ * `policy:noise_floor` (inconclusive, not an attempt) when the samples at the current A already
+ * put the noise floor above the limit: every change would end the same way after measuring.
+ */
+async function noiseRefusal(
+  open: OpenRun,
+  events: Awaited<ReturnType<typeof readLedger>>,
+  changeId: string,
+  session: WorkloadSession,
+): Promise<Decision | undefined> {
+  if (open.config.objective.primary.kind !== "stochastic") return undefined;
+  const values = currentNoiseValues(events);
+  if (values.length < MIN_NOISE_SAMPLES) return undefined;
+  const floor = noiseFloor(values);
+  if (floor <= MAX_NOISE_FLOOR) return undefined;
+  const pct = (ratio: number) => `${(ratio * 100).toFixed(1)}%`;
+  return unmeasured(
+    changeId,
+    "inconclusive",
+    "policy:noise_floor",
+    `noise floor ${pct(floor)} exceeds ${pct(MAX_NOISE_FLOOR)}; likely cause: ${await session.noiseCause()}`,
+  );
 }
 
 async function dropChange(
@@ -439,8 +500,11 @@ async function measureChange(
       firstIndex = 2;
     }
     const events = await readLedger(open.runDir);
-    const noiseSamples = currentNoiseValues(events);
     let pairs = await runInterleaved(INITIAL_PAIRS, sampleOf, { firstIndex });
+    // The latest samples at the current A: the kept change's B values or the baseline, else
+    // (the latest keep was deterministic) this change's own A samples.
+    const recorded = currentNoiseValues(events);
+    const noiseSamples = recorded.length >= MIN_NOISE_SAMPLES ? recorded : pairs.map((p) => p.a);
     const stochastic = async (all: Pair[]): Promise<StochasticResult> =>
       decideStochastic({
         changeId,

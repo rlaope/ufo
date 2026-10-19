@@ -27,7 +27,7 @@ import {
 // after approval refuses the run start; one changed after the start has no effect, because the
 // worker runs the cards captured at start; a card ufo.yaml does not enable needs no approval.
 
-const SLEEP = "      await sleep(5);\n";
+const SLEEP = "      await sleep(20);\n";
 
 let toy: Toy;
 let cardsDir: string;
@@ -132,7 +132,7 @@ describe("approval of technique cards", { timeout: TIMEOUT_MS }, () => {
     );
     const diff = (started?.data as { change?: { diff?: string } } | undefined)?.change?.diff;
     expect(diff).toContain("+items.extra_delay_ms=0");
-    expect(diff).not.toContain("items.extra_delay_ms=1");
+    expect(diff).not.toMatch(/^\+items\.extra_delay_ms=1$/m);
 
     // A dropped change runs the reset hook of the captured card.
     const slower = await submitChange(context, {

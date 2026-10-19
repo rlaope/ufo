@@ -31,7 +31,9 @@ export type AppErrorCode =
   | "approval_declined"
   | "opt_in_mismatch"
   | "measurement_failed"
-  | "ledger_mismatch";
+  | "ledger_mismatch"
+  | "cancel_pending"
+  | "arms_missing";
 
 const EXIT_BY_CODE: Record<AppErrorCode, ExitCode> = {
   usage: EXIT_USAGE,
@@ -47,6 +49,8 @@ const EXIT_BY_CODE: Record<AppErrorCode, ExitCode> = {
   opt_in_mismatch: EXIT_REFUSED,
   measurement_failed: EXIT_REFUSED,
   ledger_mismatch: EXIT_REFUSED,
+  cancel_pending: EXIT_REFUSED,
+  arms_missing: EXIT_REFUSED,
 };
 
 /** An expected failure of an app workflow, with the exit code the CLI reports for it. */

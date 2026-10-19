@@ -6,13 +6,13 @@ import { collectFingerprint, writeBundle } from "../../core/evidence/index.js";
 import { publishBranch, removeRun, resetArms, resetBTo, revertB } from "../../core/git/index.js";
 import {
   appendLedger,
+  cancelJob,
   type JobRecord,
   type LedgerEvent,
   listJobs,
   readLedger,
   releaseMachineLock,
   updateRun,
-  writeJob,
   writeJsonAtomic,
 } from "../../core/jobs/index.js";
 import { MeasurementError, probePowerSource, runInterleaved } from "../../core/measure/index.js";
@@ -262,25 +262,20 @@ export async function handleFinish(
     data: jsonData({ headline, noHeadline, finalSha, bundleId: bundle.bundleId }),
   });
 
-  // The arms go next; the user's branch must hold every kept commit before they do.
+  // The user's branch must hold every kept commit before the run counts as finished. The status
+  // comes before the arms are removed, so a crash in between leaves a finished run with arms on
+  // disk (a later start removes them), never a `running` run without arms.
   if (finalSha !== baselineSha) await publishBranch(open.git);
-  await removeRun(open.git);
   await updateRun(context.runDir, (run) => ({
     ...run,
     status: "finished",
     shas: { ...run.shas, a: finalSha, b: finalSha },
   }));
+  await removeRun(open.git);
   // A job queued while this one ran would wait forever for a worker of a finished run.
   for (const queued of await listJobs(context.runDir)) {
     if (queued.status !== "queued") continue;
-    const at = new Date().toISOString();
-    await writeJob(context.runDir, {
-      ...queued,
-      status: "cancelled",
-      error: { message: "the run finished before this job started" },
-      updatedAt: at,
-      finishedAt: at,
-    });
+    await cancelJob(context.runDir, queued, "the run finished before this job started");
   }
   await releaseMachineLock({ runId: open.state.runId, home: open.home });
   context.exitAfterJob();

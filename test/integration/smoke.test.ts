@@ -4,6 +4,7 @@ import {
   approveToy,
   decisionOf,
   diffOf,
+  expectKeep,
   makeToy,
   TIMEOUT_MS,
   type Toy,
@@ -27,7 +28,7 @@ describe("smoke", { timeout: TIMEOUT_MS }, () => {
     const baseline = await waitDone(toy, started.runId, started.baselineJobId);
     console.log(JSON.stringify(baseline, null, 2));
     expect(baseline.status).toBe("succeeded");
-    const diff = diffOf(toy, "server.mjs", (s) => s.replace("      await sleep(5);\n", ""));
+    const diff = diffOf(toy, "server.mjs", (s) => s.replace("      await sleep(20);\n", ""));
     const queued = await submitChange(toy.context, {
       runId: started.runId,
       cardId: "toy.fast-path",
@@ -36,7 +37,7 @@ describe("smoke", { timeout: TIMEOUT_MS }, () => {
     });
     const done = await waitDone(toy, started.runId, queued.jobId);
     console.log(JSON.stringify(done, null, 2));
-    expect(decisionOf(done)).toMatchObject({ outcome: "keep" });
+    expectKeep(decisionOf(done), done);
     console.log(JSON.stringify(await getRun(toy.context, { runId: started.runId }), null, 2));
   });
 });

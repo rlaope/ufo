@@ -8,6 +8,7 @@ import {
   readLedger,
   readMachineLock,
   readRun,
+  TERMINAL_JOB_STATUSES,
 } from "../../src/core/jobs/index.js";
 import { approveToy, diffOf, git, makeToy, TIMEOUT_MS, type Toy, waitDone } from "./helpers.js";
 
@@ -34,19 +35,23 @@ describe("cancel", { timeout: TIMEOUT_MS }, () => {
     const queued = await submitChange(toy.context, {
       runId: run.runId,
       cardId: "toy.fast-path",
-      diff: diffOf(toy, "server.mjs", (s) => s.replace("      await sleep(5);\n", "")),
-      hypothesis: "The handler sleeps 5 ms per request; removing it cuts latency.",
+      diff: diffOf(toy, "server.mjs", (s) => s.replace("      await sleep(20);\n", "")),
+      hypothesis: "The handler sleeps 20 ms per request; removing it cuts latency.",
     });
+    const deadline = Date.now() + 60_000;
     for (;;) {
       const job = await getJob(toy.context, { runId: run.runId, jobId: queued.jobId });
       if (job.progress?.message === "measuring") break;
+      if (TERMINAL_JOB_STATUSES.has(job.status) || Date.now() > deadline) {
+        throw new Error(`the change never started measuring: ${JSON.stringify(job)}`);
+      }
       await delay(50);
     }
     const { worker } = await readRun(runDir);
     const later = await submitChange(toy.context, {
       runId: run.runId,
       cardId: "toy.fast-path",
-      diff: diffOf(toy, "server.mjs", (s) => s.replace("sleep(5)", "sleep(4)")),
+      diff: diffOf(toy, "server.mjs", (s) => s.replace("sleep(20)", "sleep(19)")),
       hypothesis: "A shorter sleep.",
     });
 

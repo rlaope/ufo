@@ -16,6 +16,7 @@ import {
   approveToy,
   decisionOf,
   diffOf,
+  expectKeep,
   lightWorkload,
   makeToy,
   TIMEOUT_MS,
@@ -113,12 +114,11 @@ describe("trusted run state", { timeout: TIMEOUT_MS }, () => {
     const queued = await submitChange(toy.context, {
       runId: run.runId,
       cardId: "toy.fast-path",
-      diff: diffOf(toy, "server.mjs", (s) => s.replace("      await sleep(5);\n", "")),
+      diff: diffOf(toy, "server.mjs", (s) => s.replace("      await sleep(20);\n", "")),
       hypothesis: "The handler sleeps 5 ms per request; removing it cuts latency.",
     });
-    expect(decisionOf(await waitDone(toy, run.runId, queued.jobId))).toMatchObject({
-      outcome: "keep",
-    });
+    const keptJob = await waitDone(toy, run.runId, queued.jobId);
+    expectKeep(decisionOf(keptJob), keptJob);
     expect(existsSync(path.join(run.arms.a, "stray.mjs"))).toBe(false);
     await cancelRun(toy.context, { runId: run.runId });
   }
@@ -138,7 +138,7 @@ describe("trusted run state", { timeout: TIMEOUT_MS }, () => {
     const queued = await submitChange(toy.context, {
       runId: run.runId,
       cardId: "toy.cache-items",
-      diff: diffOf(toy, "server.mjs", (s) => s.replace("      await sleep(5);\n", "")),
+      diff: diffOf(toy, "server.mjs", (s) => s.replace("      await sleep(20);\n", "")),
       hypothesis: "Caching items skips the delay.",
     });
     expect(decisionOf(await waitDone(toy, run.runId, queued.jobId))).toMatchObject({

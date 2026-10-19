@@ -93,6 +93,18 @@ export async function writeJob(runDir: string, job: JobRecord): Promise<void> {
   await writeJsonAtomic(jobFile(runDir, parsed.jobId), parsed);
 }
 
+/** Writes `job` as cancelled, with `message` as the reason. */
+export async function cancelJob(runDir: string, job: JobRecord, message: string): Promise<void> {
+  const at = new Date().toISOString();
+  await writeJob(runDir, {
+    ...job,
+    status: "cancelled",
+    error: { message },
+    updatedAt: at,
+    finishedAt: at,
+  });
+}
+
 /** All jobs in sequence order. Temp files of in-flight writes are skipped. */
 export async function listJobs(runDir: string): Promise<JobRecord[]> {
   const dir = path.join(runDir, JOBS_DIR);

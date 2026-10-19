@@ -35,7 +35,7 @@ export function createApp() {
       return;
     }
     if (req.url === "/items") {
-      await sleep(5);
+      await sleep(20);
       if (extraDelayMs > 0) await sleep(extraDelayMs);
       res.writeHead(200, { "content-type": "application/json" });
       res.end(formatItems(ITEMS));

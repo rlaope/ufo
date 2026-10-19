@@ -28,6 +28,8 @@ export const EVENTS = {
   decision: "decision",
   committed: COMMITTED_EVENT,
   budgetExtended: "budget_extended",
+  /** The card's reset hook failed after a recorded drop. */
+  resetFailed: "reset_failed",
   finalCheck: "final_check",
   runFinished: "run_finished",
   runCancelled: "run_cancelled",
@@ -130,12 +132,11 @@ export function committedChangeIds(events: readonly LedgerEvent[]): Set<string> 
 
 /**
  * Primary-metric values at the current A, for the noise floor: the B values of the latest kept
- * change when it has at least five, else the latest baseline.
+ * change (fewer than five when it was a deterministic keep), or the latest baseline before any
+ * keep. Never an older keep's values: they were measured at an earlier A.
  */
 export function currentNoiseValues(events: readonly LedgerEvent[]): number[] {
-  const kept = decisionsOf(events).findLast(
-    (d) => d.decision.outcome === "keep" && d.decision.pairs.length >= 5,
-  );
+  const kept = decisionsOf(events).findLast((d) => d.decision.outcome === "keep");
   if (kept !== undefined) return kept.decision.pairs.map((pair) => pair.b);
   return latestBaseline(events)?.values ?? [];
 }
@@ -159,7 +160,11 @@ export function budgetStatus(
 ): BudgetStatus {
   let limits = budget;
   for (const event of events) {
-    if (event.type === EVENTS.budgetExtended) limits = dataOf(event, BudgetExtendedDataSchema);
+    if (event.type !== EVENTS.budgetExtended) continue;
+    // A raise the schema rejects changes nothing: the ledger is append-only, so a throw here
+    // would make the run unusable for good.
+    const raise = BudgetExtendedDataSchema.safeParse(event.data);
+    if (raise.success) limits = raise.data;
   }
   const tried = decisionsOf(events).filter((d) => d.attempted).length;
   const elapsed = Math.max(0, (options.now ?? new Date()).getTime() - Date.parse(startedAt));
