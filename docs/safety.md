@@ -40,9 +40,12 @@ refused. `ufo worker` accepts only a run directory under its own home's runs dir
 config, hooks, or templates. Every git command in an arm names its git directory and work tree,
 runs without hooks, fsmonitor, signing, textconv, external diff programs, or pagers, and first
 checks that the arm is still the directory UFO created. Before git runs in your repository, UFO
-refuses repository config that would make git run a program the repository chose (filter,
-diff, and merge drivers, signing programs, `core.worktree`, SSH and proxy commands, includes,
-per-worktree config, URL rewrites; see [cli.md](cli.md)). Your repository receives only the
+refuses repository config outside a list of known sections, and keys inside them that would make
+git run a program or reach an endpoint the repository chose (config-based hooks, which
+`core.hooksPath` does not turn off, credential helpers, `http.*`, filter, diff, and merge drivers,
+signing programs, `core.worktree`, SSH and proxy commands, remote helper programs, bundle URIs,
+includes, per-worktree config, URL rewrites; see [cli.md](cli.md)). git itself runs with an
+allowlisted environment. Your repository receives only the
 `ufo/run-<run-id>` branch, by a fast-forward fetch from arm A.
 
 **Policy before code.** A change is refused before it is applied when it touches a protected path
@@ -64,7 +67,8 @@ of the launching process, such as API keys or agent sockets, are not passed on.
 
 **Careful cleanup.** Cancel and resume signal a process only after checking its start time (and,
 for the worker, its command line), and remove only containers labeled with the run's own id.
-Arm A is reset to its commit at the start of every job. One machine lock, held by a run for its
+Arm A is reset to its commit at the start of every job (files git ignores, such as build
+outputs, are kept, so a build can be reused). One machine lock, held by a run for its
 whole life, keeps two runs from measuring at once; control operations on one run take turns.
 
 **Measured decisions.** UFO, not the agent, decides keep or drop, from interleaved samples of
@@ -93,14 +97,22 @@ collaborators.
   code does when those commands run it, and a process can leave its process group. Only
   containment helps: run UFO in a sandbox, container, or VM, and keep secrets out of the
   approved `env:` list.
+- **R1a. Shared object files.** The arms are `--local` clones, which share object files with your
+  repository by hard link. Patched code that writes into an arm's object store can damage objects
+  your repository uses. Agent write access to the arms is equivalent to R1.
 - **R2. A shell defeats every gate.** An agent that can run arbitrary commands as you can write
   `$UFO_HOME`, imitate a terminal, or signal any of your processes. Do not allow an agent to run
-  `ufo approve`, `ufo extend-budget`, or general-purpose interpreters on its own.
+  `ufo approve`, `ufo extend-budget`, or general-purpose interpreters on its own. A host that
+  runs agent commands in a pseudo-terminal provides a terminal too.
 - **R3. The approval does not cover everything the commands use.** It covers `ufo.yaml`, the
   enabled cards, the opt-ins, and the `env:` names, but not the base commit the run starts from
   or the files your approved commands read beyond the script tables UFO protects (a script a
   `package.json` script calls, for example). The review shows each `package.json` script your
   commands name; read what they run before you approve them.
+- **R3a. Runners and files UFO does not know.** Script tables of the runners UFO recognizes, and
+  their config files, are protected at any depth. A command that runs a repository script
+  directly, or through a runner UFO does not recognize, is not protected that way; the review
+  shows the command, so check what it runs.
 - **R4. Redaction is a list of patterns.** The redactor removes known secret formats, your
   home path, user name, and host name from bundles and views. A secret in an unknown format can pass through. The
   ledger and logs under `$UFO_HOME/private` are not redacted.
@@ -113,7 +125,13 @@ collaborators.
   text as untrusted data.
 - **R7. Your host may not protect `.git`.** Some agent hosts let tools edit `.git` silently.
   UFO trusts nothing there, but such an agent can still change your own branches; review the run
-  branch before you merge it.
+  branch before you merge it. UFO checks `.git/config` right before each git command it runs in
+  your repository; an edit that lands between that check and the command is not caught.
+
+- **R8. Drivers from your own git config.** UFO refuses filter, diff, and merge drivers defined
+  in the repository's config, but not those in your global or system config. When the
+  repository's attributes name one of them (git-lfs, git-crypt), it runs in the arms, and may
+  reach the network outside the `targets:` check.
 
 ## Using UFO safely
 

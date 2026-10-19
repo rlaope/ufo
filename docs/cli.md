@@ -360,13 +360,22 @@ they carry none of your repository's config, hooks, or worktree admin data, and 
 gains no `worktrees/` entry. Every git command UFO runs in an arm names its git directory and
 work tree explicitly and runs with hooks, fsmonitor, commit and tag signing, automatic gc, and
 pagers off; patch diffs never run textconv or external diff programs. Before any git command in
-your repository that could run a repository-defined program, UFO checks `.git/config` and refuses
-the run with `policy:unsafe_repo_config` when it sets a filter driver (`filter.*`), a diff
-command or textconv (`diff.external`, `diff.<driver>.command`, `diff.<driver>.textconv`), a
-merge driver (`merge.<driver>.driver`), a signing program (`gpg.*`), `core.worktree`,
-`core.sshCommand`, `core.askPass`, `core.gitProxy`, `core.alternateRefsCommand`, an include
-(`include.*`, `includeIf.*`), `extensions.worktreeConfig`, or a URL rewrite (`url.*.insteadOf`),
-or when `.gitattributes` or `.git/info/attributes` names a driver that config defines. Settings
+your repository that could run a repository-defined program, and again right before the run
+branch is created, UFO checks `.git/config` and refuses the run with `policy:unsafe_repo_config`
+when it has a key outside the sections UFO knows (core, user, remote, branch, init, pull, push,
+fetch, merge, diff, rebase, submodule, lfs, extensions, and the other common ones), or one that
+makes git run a program or reach an endpoint the repository chose: config-based hooks
+(`hook.*`; `core.hooksPath` does not turn these off), credential helpers (`credential.*`),
+`http.*`, a filter driver (`filter.*`), a diff command or textconv (`diff.external`,
+`diff.<driver>.command`, `diff.<driver>.textconv`), a merge driver (`merge.<driver>.driver`), a
+signing program (`gpg.*`), `core.worktree`, `core.sshCommand`, `core.askPass`, `core.gitProxy`,
+`core.alternateRefsCommand`, a remote helper or upload program (`remote.<name>.uploadpack`,
+`.receivepack`, `.vcs`, `.proxy`), a bundle URI (`fetch.bundleURI`), a submodule update command,
+an include (`include.*`, `includeIf.*`), `extensions.worktreeConfig`, or a URL rewrite
+(`url.*`); or when `.gitattributes` or `.git/info/attributes` names a driver that config
+defines. git runs with only `PATH`, `HOME`, `USER`, `LOGNAME`, `LANG`, `LC_*`, `TMPDIR`, `TZ`,
+`XDG_CONFIG_HOME`, and the `GIT_CONFIG_GLOBAL`/`SYSTEM`/`NOSYSTEM` variables from the process
+that runs it. Settings
 UFO overrides anyway (`core.hooksPath`, `core.fsmonitor`) are allowed. Kept commits reach your
 repository only as `ufo/run-<run-id>`, through a fetch from arm A (fast-forward only, no tags, no
 `FETCH_HEAD`, no submodules, no maintenance), after the same check.

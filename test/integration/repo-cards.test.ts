@@ -108,7 +108,7 @@ describe("paths protected by the config", { timeout: TIMEOUT_MS }, () => {
     git(toy.scratch, "pull", "--quiet");
     const review = await approveIn(made.context);
     expect(review).toContain(
-      "Script tables these commands run through (protected from patches): package.json",
+      "Script tables these commands run through (protected from patches): **/package.json, **/.yarnrc.yml",
     );
     expect(review).toContain('package.json script bench: "node -e');
     const run = await startRun(made.context);

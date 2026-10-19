@@ -12,19 +12,27 @@ afterEach(async () => {
 });
 
 describe("scriptTablesFor", () => {
-  it("names the tables the commands dispatch through", () => {
+  it("protects the tables and runner configs the commands dispatch through, at any depth", () => {
     expect(scriptTablesFor(["node bench.mjs", "echo cmake"])).toEqual([]);
-    expect(scriptTablesFor(["npm run bench"])).toEqual(["package.json"]);
-    expect(scriptTablesFor(["cd app && make test"])).toEqual([
-      "Makefile",
-      "makefile",
-      "GNUmakefile",
+    expect(scriptTablesFor(["npm run bench"])).toEqual([
+      "**/package.json",
+      "**/.yarnrc.yml",
+      "**/.yarnrc",
+      "**/bunfig.toml",
+      "**/.pnpmfile.cjs",
+      "**/pnpm-workspace.yaml",
     ]);
-    expect(scriptTablesFor(["just bench", "pdm run test"])).toEqual([
-      "justfile",
-      "Justfile",
-      ".justfile",
-      "pyproject.toml",
+    expect(scriptTablesFor(["cd app && /usr/bin/make test"])).toContain("**/Makefile");
+    expect(scriptTablesFor(["./gradlew test"])).toContain("**/gradle/wrapper");
+    expect(scriptTablesFor(["./mvnw -q verify"])).toContain("**/pom.xml");
+    expect(scriptTablesFor(["node --run bench"])).toContain("**/package.json");
+    expect(scriptTablesFor(["uv run pytest"])).toEqual(["**/pyproject.toml"]);
+    // `task` matches too: protecting a Taskfile that does not exist costs nothing (fail closed).
+    expect(scriptTablesFor(["deno task bench"])).toEqual([
+      "**/Taskfile.yml",
+      "**/Taskfile.yaml",
+      "**/deno.json",
+      "**/deno.jsonc",
     ]);
   });
 });

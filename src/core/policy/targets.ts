@@ -11,7 +11,10 @@ export interface ResolvedAddress {
 /** Resolves a hostname to every address it has. Injected so tests never touch DNS. */
 export type Resolver = (hostname: string) => Promise<readonly ResolvedAddress[]>;
 
-/** A target resolved once. The load tool connects to `address`, never to `host` again. */
+/**
+ * A target resolved once, at run start; `address` is the first address it resolved to. In M1 it
+ * reaches the workload as `UFO_TARGET_ADDR`; packs that own the load tool (M4) connect to it.
+ */
 export interface PinnedTarget {
   readonly host: string;
   readonly address: string;

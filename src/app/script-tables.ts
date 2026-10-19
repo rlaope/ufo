@@ -12,28 +12,58 @@ interface Runner {
   readonly files: readonly string[];
 }
 
-const START = String.raw`(?:^|[\s;&|(])`;
+// A runner word at the start of a command or after `;`, `&&`, `|`, `(`, optionally with a path
+// in front of it (`/usr/bin/make`, `./gradlew`, `node_modules/.bin/vitest` is not a runner).
+const START = String.raw`(?:^|[\s;&|(])(?:\S*/)?`;
+const END = String.raw`(?:\s|$)`;
 
+const runner = (words: string, files: readonly string[]): Runner => ({
+  pattern: new RegExp(`${START}(?:${words})${END}`),
+  files,
+});
+
+/**
+ * Each runner with the files that decide what it runs: the script table and the runner's own
+ * config. Protected at any depth (a `**` glob in front), so a table in a subdirectory (`npm --prefix`, `make -C`,
+ * `cd sub && ...`, workspaces) is covered too.
+ */
 const RUNNERS: readonly Runner[] = [
-  { pattern: new RegExp(`${START}(?:npm|pnpm|yarn|bun)\\s+\\S`), files: ["package.json"] },
-  {
-    pattern: new RegExp(`${START}g?make(?:\\s|$)`),
-    files: ["Makefile", "makefile", "GNUmakefile"],
-  },
-  { pattern: new RegExp(`${START}just(?:\\s|$)`), files: ["justfile", "Justfile", ".justfile"] },
-  { pattern: new RegExp(`${START}task(?:\\s|$)`), files: ["Taskfile.yml", "Taskfile.yaml"] },
-  {
-    pattern: new RegExp(`${START}(?:poe|pdm\\s+run|hatch\\s+run)(?:\\s|$)`),
-    files: ["pyproject.toml"],
-  },
+  runner(String.raw`npm|pnpm|yarn|bun|npx|node\s+--run`, [
+    "package.json",
+    ".yarnrc.yml",
+    ".yarnrc",
+    "bunfig.toml",
+    ".pnpmfile.cjs",
+    "pnpm-workspace.yaml",
+  ]),
+  runner("g?make", ["Makefile", "makefile", "GNUmakefile", "*.mk"]),
+  runner("just", ["justfile", "Justfile", ".justfile"]),
+  runner("task", ["Taskfile.yml", "Taskfile.yaml"]),
+  runner(String.raw`deno\s+task`, ["deno.json", "deno.jsonc"]),
+  runner("cargo", ["Cargo.toml", ".cargo/config", ".cargo/config.toml"]),
+  runner("gradle|gradlew", [
+    "build.gradle",
+    "build.gradle.kts",
+    "settings.gradle",
+    "settings.gradle.kts",
+    "gradle.properties",
+    "gradle/wrapper",
+    "buildSrc",
+  ]),
+  runner("mvn|mvnw", ["pom.xml", ".mvn"]),
+  runner(String.raw`poe|pdm\s+run|hatch\s+run|uv\s+run|poetry\s+run|rye\s+run`, ["pyproject.toml"]),
+  runner("nox", ["noxfile.py"]),
+  runner("rake", ["Rakefile"]),
+  runner(String.raw`composer\s+run`, ["composer.json"]),
+  runner("go", ["go.mod", "go.work"]),
 ];
 
 /** Repository files whose scripts the given command lines run. */
 export function scriptTablesFor(commands: readonly string[]): string[] {
   const files = new Set<string>();
-  for (const runner of RUNNERS) {
-    if (commands.some((command) => runner.pattern.test(command))) {
-      for (const file of runner.files) files.add(file);
+  for (const { pattern, files: tables } of RUNNERS) {
+    if (commands.some((command) => pattern.test(command))) {
+      for (const file of tables) files.add(`**/${file}`);
     }
   }
   return [...files];
