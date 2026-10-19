@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
+  appendFileSync,
   chmodSync,
   existsSync,
   mkdirSync,
@@ -21,6 +22,8 @@ import {
   createRunArms,
   diffFromFiles,
   GitError,
+  git,
+  gitProcessEnv,
   headOfA,
   listChangeIds,
   type Run,
@@ -578,6 +581,17 @@ describe("checkRepoConfig (F3 preflight)", () => {
     ["remote.origin.uploadpack", "/bin/true"],
     ["submodule.lib.update", "!true"],
     ["unknownsection.key", "1"],
+    // Security review (round 3) N1-a/b/c: recursion into submodules, git-lfs programs and
+    // endpoints, and promisor remotes.
+    ["submodule.recurse", "true"],
+    ["submodule.propagateBranches", "true"],
+    ["lfs.customtransfer.x.path", "/bin/true"],
+    ["lfs.extension.x.clean", "cat"],
+    ["lfs.url", "https://example.invalid/lfs"],
+    ["remote.origin.lfsurl", "https://example.invalid/lfs"],
+    ["extensions.partialClone", "origin"],
+    ["remote.origin.promisor", "true"],
+    ["remote.origin.partialCloneFilter", "blob:none"],
   ])(
     "refuses a repository whose config sets %s, before anything is created",
     async (key, value) => {
@@ -618,7 +632,44 @@ describe("checkRepoConfig (F3 preflight)", () => {
     gitIn(repo, "config", "core.fsmonitor", "true");
     gitIn(repo, "config", "diff.x.binary", "true");
     gitIn(repo, "config", "remote.origin.url", "https://example.invalid/toy.git");
+    // What `git lfs` itself writes into a repository's config.
+    gitIn(repo, "config", "lfs.repositoryformatversion", "0");
+    gitIn(repo, "config", "lfs.https://example.invalid/toy.git/info/lfs.access", "basic");
     await expect(checkRepoConfig(repo, head(repo))).resolves.toBeUndefined();
+  });
+
+  it("does not recurse into submodules, whose config it never checks, when it writes the run branch", async () => {
+    const lib = newRepo();
+    const repo = newRepo();
+    gitIn(repo, "-c", "protocol.file.allow=always", "submodule", "add", "--quiet", lib, "lib");
+    gitIn(repo, "commit", "--quiet", "--message", "lib");
+    const marker = path.join(path.dirname(repo), `submodule-hook-ran-${randomUUID()}`);
+    gitIn(path.join(repo, "lib"), "config", "hook.mark.command", `touch ${marker}`);
+    gitIn(path.join(repo, "lib"), "config", "hook.mark.event", "reference-transaction");
+    // The user's global config asks for recursion (the repository's own config cannot).
+    const global = process.env.GIT_CONFIG_GLOBAL as string;
+    const saved = readFileSync(global, "utf8");
+    appendFileSync(global, "[submodule]\n\trecurse = true\n\tpropagateBranches = true\n");
+    try {
+      const runId = nextRunId();
+      const { run } = await createRunArms(repo, runId, { home });
+      expect(gitIn(repo, "branch", "--list", runBranch(runId)).trim()).not.toBe("");
+      expect(existsSync(marker)).toBe(false);
+      await removeRun(run, { deleteBranch: true });
+    } finally {
+      writeFileSync(global, saved);
+    }
+  });
+
+  it("runs git with absolute PATH entries only, and never fetches a missing object lazily", async () => {
+    expect(
+      gitProcessEnv({ PATH: ["/usr/bin", ".", "", "bin", "/bin"].join(path.delimiter) }),
+    ).toEqual({
+      PATH: ["/usr/bin", "/bin"].join(path.delimiter),
+    });
+    const repo = newRepo();
+    const env = await git(["-c", "alias.env=!env", "env"], repo);
+    expect(env).toMatch(/^GIT_NO_LAZY_FETCH=1$/m);
   });
 
   it("refuses attributes that name a driver the repository's config defines", async () => {

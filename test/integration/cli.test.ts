@@ -1,11 +1,12 @@
 import { execFileSync, spawnSync } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { measure } from "../../src/app/index.js";
 import { main } from "../../src/cli/main.js";
-import { readMachineLock } from "../../src/core/jobs/index.js";
+import { readMachineLock, readRun } from "../../src/core/jobs/index.js";
 import {
   approveToy,
   git,
@@ -54,7 +55,7 @@ function built(target: Toy, args: string[], input = "") {
 }
 
 /** `ufo <args>` in-process, with the toy's app context. */
-async function ufo(args: string[], target: Toy = toy) {
+async function ufo(args: string[], target: Toy = toy, signals?: EventEmitter) {
   let stdout = "";
   let stderr = "";
   const { cwd, ...context } = target.context;
@@ -67,6 +68,7 @@ async function ufo(args: string[], target: Toy = toy) {
     },
     cwd,
     context,
+    ...(signals === undefined ? {} : { signals }),
   });
   return { code, stdout, stderr };
 }
@@ -187,6 +189,42 @@ describe("ufo CLI", { timeout: TIMEOUT_MS }, () => {
     );
     expect(await readMachineLock({ home: toy.home })).toBeUndefined();
     expect(userState(toy.repo)).toEqual(before);
+  });
+});
+
+/** Signals as a Ctrl-C delivers them, right after `ufo` starts listening for one. */
+function ctrlC(): EventEmitter {
+  const signals = new EventEmitter();
+  signals.on("newListener", (event) => {
+    if (event === "SIGINT") setImmediate(() => signals.emit("SIGINT"));
+  });
+  return signals;
+}
+
+// Code review (round 3) #2: Ctrl-C on `ufo run` or `ufo measure` cancels the run instead of
+// leaving it running behind the command with the machine lock held.
+describe("Ctrl-C", { timeout: TIMEOUT_MS }, () => {
+  it("cancels the run of ufo measure and ufo run, and releases the machine lock", async () => {
+    const own = makeToy({ config: lightWorkload() });
+    try {
+      await approveToy(own);
+      for (const command of ["measure", "run"]) {
+        const result = await ufo([command], own, ctrlC());
+        expect(result.code, result.stderr).toBe(1);
+        const line = result.stderr.match(
+          new RegExp(
+            `^ufo ${command}: interrupted: interrupted; (?:measure )?run (\\S+) was cancelled$`,
+            "m",
+          ),
+        );
+        expect(line, result.stderr).not.toBeNull();
+        expect((await readRun(own.runDir(line?.[1] as string))).status).toBe("cancelled");
+        expect(await readMachineLock({ home: own.home })).toBeUndefined();
+        if (command === "measure") noRunLeftover(own);
+      }
+    } finally {
+      await own.cleanup();
+    }
   });
 });
 

@@ -95,6 +95,25 @@ describe("ufo run to the end", { timeout: TIMEOUT_MS }, () => {
     expect((await onlyRun(toy)).record.status).toBe("cancelled");
   });
 
+  it("cancels the run on any other error it cannot resume, and says so", async () => {
+    toy = makeToy({ config: lightWorkload() });
+    await approveIn(toy.context);
+    // Like a progress line written to output that was closed: not a job failure.
+    const closed = new Error("progress output closed");
+    const lines: string[] = [];
+    await expect(
+      runToEnd(toy.context, {
+        onProgress: (line) => {
+          lines.push(line);
+          if (line.startsWith("toy.")) throw closed;
+        },
+      }),
+    ).rejects.toBe(closed);
+    const { runId, record } = await onlyRun(toy);
+    expect(record.status).toBe("cancelled");
+    expect(lines.at(-1)).toBe(`run ${runId} was cancelled`);
+  });
+
   it("records a measure whose baseline failed as a failed run", async () => {
     toy = makeToy({ config: lightWorkload(`node -e "process.exit(1)"`) });
     await approveIn(toy.context);

@@ -33,7 +33,8 @@ export type AppErrorCode =
   | "measurement_failed"
   | "ledger_mismatch"
   | "cancel_pending"
-  | "arms_missing";
+  | "arms_missing"
+  | "interrupted";
 
 const EXIT_BY_CODE: Record<AppErrorCode, ExitCode> = {
   usage: EXIT_USAGE,
@@ -51,6 +52,7 @@ const EXIT_BY_CODE: Record<AppErrorCode, ExitCode> = {
   ledger_mismatch: EXIT_REFUSED,
   cancel_pending: EXIT_REFUSED,
   arms_missing: EXIT_REFUSED,
+  interrupted: EXIT_REFUSED,
 };
 
 /** An expected failure of an app workflow, with the exit code the CLI reports for it. */

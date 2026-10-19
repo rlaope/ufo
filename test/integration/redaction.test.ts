@@ -1,8 +1,9 @@
 import { readdirSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
+  cancelRun,
   finishRun,
   getJob,
   getRun,
@@ -143,6 +144,23 @@ describe("redaction of command output", { timeout: TIMEOUT_MS }, () => {
     for (const [name, text] of views) {
       expect(text, name).not.toContain(FAKE_KEY);
       expect(text, name).not.toContain(home);
+    }
+  });
+
+  // Code review (round 2) #10: the start result names the home as `~`, like every view.
+  it("names the home as ~ in the start result", async () => {
+    const homedir = vi.spyOn(os, "homedir").mockReturnValue(toy.root);
+    let run: Awaited<ReturnType<typeof startRun>>;
+    try {
+      run = await startRun(toy.context);
+    } finally {
+      homedir.mockRestore();
+    }
+    try {
+      expect(run.arms.a).toBe(`~/ufo-home/arms/${toy.repoId}/${run.runId}/a`);
+      expect(JSON.stringify(run)).not.toContain(toy.root);
+    } finally {
+      await cancelRun(toy.context, { runId: run.runId });
     }
   });
 });

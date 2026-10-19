@@ -36,6 +36,33 @@ export interface CliIo {
   cwd?: string;
   /** App context besides `cwd` (UFO home, card directories, worker); tests pass their own. */
   context?: Omit<AppContext, "cwd">;
+  /** Where SIGINT and SIGTERM arrive; `process` unless a test passes its own. */
+  signals?: Pick<NodeJS.EventEmitter, "once" | "off">;
+}
+
+/**
+ * Runs `work` with a signal that the first Ctrl-C (or SIGTERM) aborts, so `ufo run` and
+ * `ufo measure` cancel their run instead of leaving it running with the machine lock held. A
+ * second one ends the process as usual.
+ */
+async function interruptible<T>(
+  signals: Pick<NodeJS.EventEmitter, "once" | "off">,
+  work: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const controller = new AbortController();
+  const abort = () => {
+    signals.off("SIGINT", abort);
+    signals.off("SIGTERM", abort);
+    controller.abort();
+  };
+  signals.once("SIGINT", abort);
+  signals.once("SIGTERM", abort);
+  try {
+    return await work(controller.signal);
+  } finally {
+    signals.off("SIGINT", abort);
+    signals.off("SIGTERM", abort);
+  }
 }
 
 const USAGE = `Usage: ufo <command> [options]
@@ -139,13 +166,18 @@ async function execute(
       return { result, text: formatApprove(result) };
     }
     case "measure": {
-      const result = await measure(context, {
-        onProgress: (job) => progress(`baseline: ${job.progress?.message ?? job.status}`),
-      });
+      const result = await interruptible(io.signals ?? process, (signal) =>
+        measure(context, {
+          signal,
+          onProgress: (job) => progress(`baseline: ${job.progress?.message ?? job.status}`),
+        }),
+      );
       return { result, text: formatMeasure(result) };
     }
     case "run": {
-      const result = await runToEnd(context, { onProgress: progress });
+      const result = await interruptible(io.signals ?? process, (signal) =>
+        runToEnd(context, { onProgress: progress, signal }),
+      );
       return { result: result.report, text: formatReport(result.report) };
     }
     case "status": {
@@ -178,11 +210,12 @@ async function execute(
   }
 }
 
-/** Runs one `ufo` invocation and returns its exit code (docs/cli.md). */
 /** What to do next, for refusals whose message leaves it to the caller. */
 const HINTS: Readonly<Record<string, string>> = {
   "policy:budget_exceeded": "run ufo extend-budget in a terminal to continue",
 };
+
+/** Runs one `ufo` invocation and returns its exit code (docs/cli.md). */
 
 export async function main(argv: readonly string[], io: CliIo): Promise<number> {
   const [first, ...rest] = argv;

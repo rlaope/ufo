@@ -60,7 +60,7 @@ evidence bundle does; expand it before you open a path from a script.
 | Code | Meaning | `error.code` values |
 |---|---|---|
 | 0 | Success. | |
-| 1 | A policy refused the request, the human declined, or the run needs `ufo resume` first. | `policy:<rule>` (see below), `approval_declined`, `opt_in_mismatch`, `config_exists`, `run_not_active`, `run_in_progress`, `worker_not_running`, `measurement_failed`, `ledger_mismatch`, `cancel_pending`, `arms_missing`, `unsafe_state` |
+| 1 | A policy refused the request, the human declined, or the run needs `ufo resume` first. | `policy:<rule>` (see below), `approval_declined`, `opt_in_mismatch`, `config_exists`, `run_not_active`, `run_in_progress`, `worker_not_running`, `measurement_failed`, `ledger_mismatch`, `cancel_pending`, `arms_missing`, `interrupted`, `unsafe_state` |
 | 2 | Usage or configuration error, or nothing to act on. | `usage`, `not_a_repo`, `config_missing`, `config_invalid`, `cards_invalid`, `no_run`, `unsafe_home` |
 | 3 | UFO itself failed. | `internal` |
 
@@ -69,6 +69,10 @@ cancels the run and exits 1 with `measurement_failed`; the worker log (`logs/wor
 run state) has the detail. When the baseline is refused for noise it finishes the run at once (the
 report is kept, no recipe is tried) and exits 1 with `measurement_failed`. `ufo measure` reports a
 failed baseline as `measurement_failed` (exit 1), and the run it used ends `failed`.
+
+Ctrl-C (or SIGTERM) during `ufo run` or `ufo measure` cancels the run: UFO stops its worker,
+removes the arms (and, for `measure`, the branch), releases the machine lock, and exits 1 with
+`interrupted`. A second Ctrl-C ends the process at once; `ufo cancel` then finishes the cleanup.
 
 Policy rules (`policy:<rule>`): `protected_path`, `out_of_scope`, `test_set_shrunk`,
 `unapproved_config`, `config_changed`, `opt_in_required`, `target_not_allowed`,
@@ -374,11 +378,16 @@ makes git run a program or reach an endpoint the repository chose: config-based 
 signing program (`gpg.*`), `core.worktree`, `core.sshCommand`, `core.askPass`, `core.gitProxy`,
 `core.alternateRefsCommand`, a remote helper or upload program (`remote.<name>.uploadpack`,
 `.receivepack`, `.vcs`, `.proxy`), a bundle URI (`fetch.bundleURI`), a submodule update command,
-an include (`include.*`, `includeIf.*`), `extensions.worktreeConfig`, or a URL rewrite
-(`url.*`); or when `.gitattributes` or `.git/info/attributes` names a driver that config
-defines. git runs with only `PATH`, `HOME`, `USER`, `LOGNAME`, `LANG`, `LC_*`, `TMPDIR`, `TZ`,
-`XDG_CONFIG_HOME`, and the `GIT_CONFIG_GLOBAL`/`SYSTEM`/`NOSYSTEM` variables from the process
-that runs it. Settings
+recursion into submodules (`submodule.recurse`, `submodule.propagateBranches`), an include
+(`include.*`, `includeIf.*`), `extensions.worktreeConfig`, a URL rewrite (`url.*`), a promisor
+remote (`extensions.partialClone`, `remote.<name>.promisor`, `.partialCloneFilter`; a partial
+clone is refused), or any `lfs.*` key besides `lfs.repositoryformatversion` and
+`lfs.<url>.access`/`.locksverify`, and `remote.<name>.lfsurl` (git-lfs programs and endpoints);
+or when `.gitattributes` or `.git/info/attributes` names a driver that config defines. git runs
+with only `PATH` (its absolute entries), `HOME`, `USER`, `LOGNAME`, `LANG`, `LC_*`, `TMPDIR`,
+`TZ`, `XDG_CONFIG_HOME`, and the `GIT_CONFIG_GLOBAL`/`SYSTEM`/`NOSYSTEM` variables from the
+process that runs it, never recurses into submodules, and never fetches a missing object
+(`GIT_NO_LAZY_FETCH`). Settings
 UFO overrides anyway (`core.hooksPath`, `core.fsmonitor`) are allowed. Kept commits reach your
 repository only as `ufo/run-<run-id>`, through a fetch from arm A (fast-forward only, no tags, no
 `FETCH_HEAD`, no submodules, no maintenance), after the same check.

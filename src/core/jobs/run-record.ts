@@ -93,15 +93,21 @@ export async function createRunState(
   home: string,
   init: RunInit,
   now: Date = new Date(),
+  startTimeOf: (pid: number) => Promise<string | undefined> = readProcessStartTime,
 ): Promise<{ runDir: string; run: RunRecord }> {
   const at = now.toISOString();
-  const startTime = await readProcessStartTime(process.pid);
+  const startTime = await startTimeOf(process.pid);
+  if (startTime === undefined) {
+    // Without it, a start in progress could not be told from one cut short (`abandonedStart`),
+    // and another start or a cancel would end it while it creates the arms.
+    throw new Error("could not read this process's start time (ps); no run was created");
+  }
   const run = RunRecordSchema.parse({
     ...init,
     status: "running",
     createdAt: at,
     updatedAt: at,
-    ...(startTime === undefined ? {} : { starter: { pid: process.pid, startTime } }),
+    starter: { pid: process.pid, startTime },
   });
   const runDir = runDirFor(home, run.repoId, run.runId);
   await ensureTrustedDir(home, runsRoot(home, run.repoId));

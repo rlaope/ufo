@@ -73,25 +73,40 @@ const ALLOWED_SECTIONS: ReadonlySet<string> = new Set([
 /**
  * Keys inside allowed sections that still make git run a program the repository chose, reach a
  * network endpoint, or point git at other files: diff and merge drivers, an alternate work tree,
- * SSH and proxy commands, remote helper programs, bundle URIs, submodule update commands, and
- * per-worktree config. Refused sections (`hook`, `credential`, `http`, `filter`, `url`, `gpg`,
- * `include`, `includeif`, `uploadpack`, and any unknown one) need no entry here.
+ * SSH and proxy commands, remote helper programs, bundle URIs, submodule update commands,
+ * recursion into submodules (whose own config is never checked), per-worktree config, and a
+ * promisor remote that missing objects would be fetched from. Refused sections (`hook`,
+ * `credential`, `http`, `filter`, `url`, `gpg`, `include`, `includeif`, `uploadpack`, and any
+ * unknown one) need no entry here.
  */
 const UNSAFE_KEYS: readonly RegExp[] = [
   /^diff\.external$/,
   /^diff\..+\.(?:command|textconv)$/,
   /^merge\..+\.driver$/,
   /^core\.(?:worktree|sshcommand|alternaterefscommand|askpass|gitproxy)$/,
-  /^extensions\.worktreeconfig$/,
-  /^remote\..+\.(?:uploadpack|receivepack|vcs|proxy|proxyauthmethod)$/,
+  /^extensions\.(?:worktreeconfig|partialclone)$/,
+  /^remote\..+\.(?:uploadpack|receivepack|vcs|proxy|proxyauthmethod|promisor|partialclonefilter|lfsurl|lfspushurl)$/,
   /^(?:fetch|transfer)\.bundleuri$/,
   /^submodule\..+\.update$/,
+  /^submodule\.(?:recurse|propagatebranches)$/,
 ];
 
-function unsafeKey(key: string): boolean {
+/**
+ * Sections where only these keys pass. git-lfs, which a global filter may run in the user's
+ * repository, reads programs (`lfs.extension.*`, `lfs.customtransfer.*`) and endpoints
+ * (`lfs.url`) from repository config; what `git lfs` itself writes there is harmless.
+ */
+const SECTION_KEYS: ReadonlyMap<string, readonly RegExp[]> = new Map([
+  ["lfs", [/^lfs\.repositoryformatversion$/, /^lfs\..+\.(?:access|locksverify)$/]],
+]);
+
+export function unsafeKey(key: string): boolean {
   const lower = key.toLowerCase();
   const section = lower.split(".")[0] ?? "";
-  return !ALLOWED_SECTIONS.has(section) || UNSAFE_KEYS.some((pattern) => pattern.test(lower));
+  if (!ALLOWED_SECTIONS.has(section)) return true;
+  const only = SECTION_KEYS.get(section);
+  if (only !== undefined && !only.some((pattern) => pattern.test(lower))) return true;
+  return UNSAFE_KEYS.some((pattern) => pattern.test(lower));
 }
 
 /** Attributes that select a driver by name. */

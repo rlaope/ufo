@@ -154,6 +154,7 @@ export async function handleChange(
       decision: outcome.decision,
       cardId: input.cardId,
       attempted: outcome.attempted,
+      cleanupDue: outcome.cleanup !== undefined,
       samples: outcome.samples ?? [],
       oracleResults: outcome.oracleResults ?? [],
       commands: outcome.commands ?? [],
@@ -230,20 +231,27 @@ async function completeRecorded(
 ): Promise<ChangeResult> {
   const result = { changeId: input.changeId, cardId: input.cardId, decision: recorded.decision };
   if (recorded.decision.outcome !== "keep") {
-    // A drop recorded right before a crash: its cleanup (the card's reset hook) may never have
-    // run. Run it now unless the ledger says how it went.
+    // A measured drop recorded right before a crash: its cleanup (the card's reset hook) may
+    // never have run. Run it now unless the ledger says how it went, and only while the run's
+    // cards are still the approved ones, as for any command a card runs.
     const settled = events.some(
       (e) =>
         e.changeId === input.changeId &&
         (e.type === EVENTS.resetDone || e.type === EVENTS.resetFailed),
     );
     const resolved = resolveCard(open.catalog, input.cardId, open.config.cards);
-    if (recorded.attempted && !settled && !("violation" in resolved)) {
+    if (recorded.cleanupDue && !settled && !("violation" in resolved)) {
+      const unapproved = await approvalViolation(open);
       const session = newSession(open, context, options.machine);
       const armB: ArmSpec = { arm: "b", dir: open.git.armB, sha: await headOfA(open.git) };
-      await cleanUpDrop(context, input.changeId, () =>
-        dropChange(open, resolved.card, session, armB),
-      );
+      await cleanUpDrop(context, input.changeId, async () => {
+        if (unapproved !== undefined) {
+          throw new Error(
+            `not running the reset hook of ${resolved.card.id}: policy:${unapproved.rule}: ${unapproved.detail}`,
+          );
+        }
+        await dropChange(open, resolved.card, session, armB);
+      });
     }
     return toJson(result);
   }

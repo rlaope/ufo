@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -82,6 +82,7 @@ async function forgedKeep(
       decision: { changeId, ...KEEP },
       cardId,
       attempted: true,
+      cleanupDue: false,
       samples: [],
       oracleResults: [],
       commands: [],
@@ -173,24 +174,23 @@ describe("a change job interrupted twice", { timeout: TIMEOUT_MS }, () => {
   });
 });
 
-// Code review (round 2) #4: a drop recorded right before a crash has its cleanup (the card's reset
-// hook) run when the job runs again.
+// Code review (round 2) #4: a measured drop recorded right before a crash has its cleanup (the
+// card's reset hook) run when the job runs again; a drop that never measured has none to run
+// (review round 3 #1), and the hook runs only while the run's cards are still approved.
 describe("a drop recorded right before a crash", { timeout: TIMEOUT_MS }, () => {
-  it("runs the card's reset hook when the job runs again", async () => {
-    await approveToy(toy);
-    const run = await startRun(toy.context);
-    const runDir = toy.runDir(run.runId);
-    expect((await waitDone(toy, run.runId, run.baselineJobId)).status).toBe("succeeded");
-    await stopWorker(runDir);
-
+  /** A recipe job of toy.no-delay whose drop is already in the ledger. */
+  async function forgedDrop(runDir: string, cleanupDue: boolean) {
     const changeId = randomUUID();
     await appendLedger(runDir, {
       type: "decision",
       changeId,
       data: {
-        decision: { changeId, outcome: "drop", reason: "no_effect" },
+        decision: cleanupDue
+          ? { changeId, outcome: "drop", reason: "no_effect" }
+          : { changeId, outcome: "drop", reason: "patch_failed" },
         cardId: "toy.no-delay",
         attempted: true,
+        cleanupDue,
         samples: [],
         oracleResults: [],
         commands: [],
@@ -206,12 +206,65 @@ describe("a drop recorded right before a crash", { timeout: TIMEOUT_MS }, () => 
         source: "recipe",
       },
     });
+    return { changeId, job };
+  }
+
+  async function stoppedRun() {
+    await approveToy(toy);
+    const run = await startRun(toy.context);
+    const runDir = toy.runDir(run.runId);
+    expect((await waitDone(toy, run.runId, run.baselineJobId)).status).toBe("succeeded");
+    await stopWorker(runDir);
+    return { run, runDir };
+  }
+
+  const resetRan = (runDir: string) =>
+    readFileSync(path.join(runDir, LOGS_DIR, "commands.log"), "utf8").includes(
+      "card toy.no-delay reset",
+    );
+
+  it("runs the card's reset hook when the job runs again", async () => {
+    const { run, runDir } = await stoppedRun();
+    const { changeId, job } = await forgedDrop(runDir, true);
     await resumeRun(toy.context, { runId: run.runId });
     expect((await waitDone(toy, run.runId, job.jobId)).status).toBe("succeeded");
     const events = await readLedger(runDir);
     expect(events.some((e) => e.type === "reset_done" && e.changeId === changeId)).toBe(true);
-    const log = readFileSync(path.join(runDir, LOGS_DIR, "commands.log"), "utf8");
-    expect(log).toContain("card toy.no-delay reset");
+    expect(resetRan(runDir)).toBe(true);
     await cancelRun(toy.context, { runId: run.runId });
+  });
+
+  it("runs no reset hook for a drop that never measured", async () => {
+    const { run, runDir } = await stoppedRun();
+    const { changeId, job } = await forgedDrop(runDir, false);
+    await resumeRun(toy.context, { runId: run.runId });
+    expect((await waitDone(toy, run.runId, job.jobId)).status).toBe("succeeded");
+    const events = await readLedger(runDir);
+    expect(events.some((e) => e.changeId === changeId && e.type.startsWith("reset_"))).toBe(false);
+    expect(resetRan(runDir)).toBe(false);
+    await cancelRun(toy.context, { runId: run.runId });
+  });
+
+  it("refuses the reset hook once the run's ufo.yaml is no longer the approved one", async () => {
+    const { run, runDir } = await stoppedRun();
+    const { changeId, job } = await forgedDrop(runDir, true);
+    const config = path.join(toy.repo, "ufo.yaml");
+    const original = readFileSync(config, "utf8");
+    writeFileSync(config, `${original}# edited after the start\n`);
+    try {
+      await approveToy(toy);
+      await resumeRun(toy.context, { runId: run.runId });
+      const done = await waitDone(toy, run.runId, job.jobId);
+      expect(done.status).toBe("failed");
+      expect(done.error?.message).toContain(
+        "not running the reset hook of toy.no-delay: policy:config_changed",
+      );
+      const events = await readLedger(runDir);
+      expect(events.some((e) => e.type === "reset_failed" && e.changeId === changeId)).toBe(true);
+      expect(resetRan(runDir)).toBe(false);
+      await cancelRun(toy.context, { runId: run.runId });
+    } finally {
+      writeFileSync(config, original);
+    }
   });
 });

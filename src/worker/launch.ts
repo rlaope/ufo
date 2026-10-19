@@ -106,8 +106,12 @@ export async function launchWorker(
   const startTime = await readProcessStartTime(pid);
   if (startTime === undefined) {
     // Without a start time, resume and cancel could not tell this worker from a later process
-    // that reused its PID, so it is not left running.
-    child.kill("SIGKILL");
+    // that reused its PID, so it is not left running, nor anything it started.
+    try {
+      process.kill(-pid, "SIGKILL");
+    } catch {
+      // It already exited.
+    }
     throw new Error("could not read the worker's start time (ps); the worker was stopped");
   }
   const worker: WorkerRecord = { pid, startTime, launchedAt: new Date().toISOString() };

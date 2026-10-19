@@ -19,6 +19,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   appendLedger,
   createRunState,
+  endRun,
   enqueueJob,
   JOBS_DIR,
   LEDGER_FILE,
@@ -211,6 +212,20 @@ describe("run record", () => {
     expect((await stat(runDir)).mode & 0o777).toBe(0o700);
     expect((await stat(path.join(runDir, JOBS_DIR))).mode & 0o777).toBe(0o700);
     expect((await stat(path.join(runDir, RUN_FILE))).mode & 0o777).toBe(0o600);
+  });
+
+  it("refuses to create run state when its own start time cannot be read", async () => {
+    await expect(
+      createRunState(root, { runId: "run-1", repoId: "repo" }, new Date(), async () => undefined),
+    ).rejects.toThrow("could not read this process's start time");
+    await expect(stat(runDirFor(root, "repo", "run-1"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("ends a run only out of running, so a cancel and a finish never overwrite each other", async () => {
+    const { runDir } = await createRunState(root, { runId: "run-1", repoId: "repo" });
+    expect(await endRun(runDir, "finished")).toBe(true);
+    expect(await endRun(runDir, "cancelled")).toBe(false);
+    expect((await readRun(runDir)).status).toBe("finished");
   });
 
   it("refuses planted symlinks instead of following them (F7)", async () => {

@@ -123,22 +123,28 @@ async function exists(target: string): Promise<boolean> {
  * Ends a start that was cut short (see `abandonedStart`): removes the arms it may have created
  * and the run branch if it got that far, records the run as failed, and releases the machine
  * lock. Its run state has no app state, so it is handled from the run id and the repository.
+ * Under the run's control lock, so two starts' cleanups or a cancel and a start end it once;
+ * returns whether this call did.
  */
-async function endAbandonedStart(home: string, repo: Repo, runId: string): Promise<void> {
+async function endAbandonedStart(home: string, repo: Repo, runId: string): Promise<boolean> {
   const runDir = runDirFor(home, repo.repoId, runId);
-  const layout = runLayout(home, repo.repoId, runId);
-  const branchHead = await runGit(
-    ["rev-parse", "--verify", "--quiet", `refs/heads/${layout.branch}^{commit}`],
-    repo.root,
-  );
-  const branchSha = branchHead.code === 0 ? branchHead.stdout.trim() : undefined;
-  await removeRun(
-    { runId, repoId: repo.repoId, repoRoot: repo.root, baseSha: branchSha ?? "", ...layout },
-    { deleteBranch: branchSha !== undefined },
-  );
-  await endRun(runDir, "failed");
-  await appendLedger(runDir, { type: EVENTS.startAbandoned, data: { runId } });
-  await releaseMachineLock({ runId, home });
+  return withControlLock(runDir, async () => {
+    if (!(await abandonedStart(await readRun(runDir)))) return false;
+    const layout = runLayout(home, repo.repoId, runId);
+    const branchHead = await runGit(
+      ["rev-parse", "--verify", "--quiet", `refs/heads/${layout.branch}^{commit}`],
+      repo.root,
+    );
+    const branchSha = branchHead.code === 0 ? branchHead.stdout.trim() : undefined;
+    await removeRun(
+      { runId, repoId: repo.repoId, repoRoot: repo.root, baseSha: branchSha ?? "", ...layout },
+      { deleteBranch: branchSha !== undefined },
+    );
+    if (!(await endRun(runDir, "failed"))) return false;
+    await appendLedger(runDir, { type: EVENTS.startAbandoned, data: { runId } });
+    await releaseMachineLock({ runId, home });
+    return true;
+  });
 }
 
 /**
@@ -249,12 +255,13 @@ async function startRunFor(
       bundleId: BundleIdSchema.parse(`ufo-${runId}`),
     };
     await writeAppState(runDir, state);
-    await updateRun(runDir, (record) => ({ ...record, started: true }));
     await appendLedger(runDir, {
       type: "run_started",
       data: { configHash: loaded.hash, baseSha: run.baseSha, purpose },
     });
     const job = await enqueueJob(runDir, { kind: JOB_KINDS.baseline, input: {} });
+    // Started once there is something to resume: a crash before this is a start cut short.
+    await updateRun(runDir, (record) => ({ ...record, started: true }));
     await withControlLock(runDir, () => ensureWorker(context, runDir, home, state));
     const warnings = [
       ...cleanupWarnings,
@@ -275,10 +282,11 @@ async function startRunFor(
     };
   } catch (error) {
     await killRunProcesses(runDir, killOptions(context)).catch(() => undefined);
-    await rm(runDir, { recursive: true, force: true });
+    // The arms and the branch first: without the run state, nothing would find them again.
     if (created !== undefined) {
       await removeRun(created.run, { deleteBranch: true }).catch(() => undefined);
     }
+    await rm(runDir, { recursive: true, force: true });
     await releaseMachineLock({ runId, home });
     throw error;
   }
@@ -499,7 +507,12 @@ export async function cancelRun(
       throw new AppError("run_in_progress", `run ${located.runId} is still starting`);
     }
     const kill = await killRunProcesses(located.runDir, killOptions(context));
-    await endAbandonedStart(located.home, located.repo, located.runId);
+    if (!(await endAbandonedStart(located.home, located.repo, located.runId))) {
+      throw new AppError(
+        "run_not_active",
+        `run ${located.runId} ended before the cancel took effect`,
+      );
+    }
     return {
       runId: located.runId,
       cancelledJobs: [],
@@ -558,6 +571,26 @@ async function cancelLocked(context: AppContext, active: ActiveRun): Promise<Can
   };
 }
 
+/**
+ * `work`, or `interrupted` as soon as `signal` aborts (Ctrl-C on the CLI). The work itself goes
+ * on until the caller has ended the run; what it does after that is not reported.
+ */
+function untilAborted<T>(work: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (signal === undefined) return work;
+  work.catch(() => undefined);
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(new AppError("interrupted", "interrupted"));
+    if (signal.aborted) {
+      abort();
+      return;
+    }
+    signal.addEventListener("abort", abort, { once: true });
+    work.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+  });
+}
+
+const isInterrupted = (error: unknown) => error instanceof AppError && error.code === "interrupted";
+
 export interface MeasureResult {
   runId: string;
   baseline: BaselineResult;
@@ -565,17 +598,31 @@ export interface MeasureResult {
 
 /**
  * `ufo measure`: the baseline alone (oracle snapshot, five samples, noise floor) at the current
- * HEAD, through a short-lived run whose branch and arms are removed afterwards.
+ * HEAD, through a short-lived run whose branch and arms are removed afterwards. Once `signal`
+ * aborts, the run is cancelled and cleaned up the same way, and the call fails `interrupted`.
  */
 export async function measure(
   context: AppContext,
-  options: StartRunOptions & { readonly onProgress?: (job: JobRecord) => void } = {},
+  options: StartRunOptions & {
+    readonly onProgress?: (job: JobRecord) => void;
+    readonly signal?: AbortSignal;
+  } = {},
 ): Promise<MeasureResult> {
   const started = await startRunFor(context, options, "measure");
   let job: JobRecord | undefined;
+  let interrupted = false;
   try {
-    job = await waitForJobDone(context, started.runId, started.baselineJobId, options.onProgress);
+    job = await untilAborted(
+      waitForJobDone(context, started.runId, started.baselineJobId, options.onProgress),
+      options.signal,
+    );
   } catch (error) {
+    if (isInterrupted(error)) {
+      interrupted = true;
+      throw new AppError("interrupted", `interrupted; measure run ${started.runId} was cancelled`, {
+        cause: error,
+      });
+    }
     // The measure run is closed below, so there is nothing to resume.
     if (error instanceof AppError && error.code === "worker_not_running") {
       throw new AppError(
@@ -590,7 +637,10 @@ export async function measure(
     await killRunProcesses(started.runDir, killOptions(context));
     // The status first, as everywhere: a crash in the cleanup below leaves an ended run whose
     // arms and branch the next start removes.
-    await endRun(started.runDir, job?.status === "succeeded" ? "finished" : "failed");
+    await endRun(
+      started.runDir,
+      interrupted ? "cancelled" : job?.status === "succeeded" ? "finished" : "failed",
+    );
     const open = await openRun(home, started.runDir);
     await removeRun(open.git, { deleteBranch: true }).catch(async (error: unknown) => {
       await appendLedger(started.runDir, {
@@ -620,18 +670,24 @@ export interface RunToEndResult {
  * `ufo run` without an agent: start, baseline, every enabled recipe once, finish. A run never
  * stays `running` behind it: when a job fails the run is cancelled, and a baseline refused for
  * noise finishes the run at once (every change would be refused the same way), with a report.
+ * Once `signal` aborts, the run is cancelled and the call fails `interrupted`.
  */
 export async function runToEnd(
   context: AppContext,
-  options: { readonly onProgress?: (line: string) => void } = {},
+  options: { readonly onProgress?: (line: string) => void; readonly signal?: AbortSignal } = {},
 ): Promise<RunToEndResult> {
   const say = options.onProgress ?? (() => undefined);
+  const { signal } = options;
   const started = await startRun(context, { hostAgent: "none" });
   say(`run ${started.runId} on ${started.branch}`);
   for (const warning of started.warnings) say(`warning: ${warning}`);
   let ended: Awaited<ReturnType<typeof recipesToEnd>>;
   try {
-    ended = await recipesToEnd(context, started, say);
+    // Nothing more is printed for the jobs once interrupted.
+    const quiet = (line: string) => {
+      if (signal?.aborted !== true) say(line);
+    };
+    ended = await untilAborted(recipesToEnd(context, started, quiet), signal);
   } catch (error) {
     // A worker that stopped can be resumed. Anything else ends the run, so it never stays
     // `running` behind `ufo run`.
@@ -646,6 +702,7 @@ export async function runToEnd(
     if (error instanceof JobFailed) {
       throw new AppError("measurement_failed", `${error.message}; ${how}`, { cause: error });
     }
+    if (isInterrupted(error)) throw new AppError("interrupted", `interrupted; ${how}`);
     say(how);
     throw error;
   }

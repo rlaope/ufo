@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import path from "node:path";
 import { MAX_NOTE_LENGTH } from "../../domain/index.js";
 import { oneLine } from "../text.js";
 
@@ -29,13 +30,22 @@ export function gitProcessEnv(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     if (value === undefined) continue;
     if (GIT_ENV_NAMES.includes(key) || key.startsWith("LC_")) env[key] = value;
   }
+  // A relative (or empty) PATH entry would be looked up from git's working directory: the
+  // repository or an arm.
+  if (env.PATH !== undefined) {
+    env.PATH = env.PATH.split(path.delimiter)
+      .filter((entry) => path.isAbsolute(entry))
+      .join(path.delimiter);
+  }
   return env;
 }
 
 // Hooks, fsmonitor, signing programs, and pagers run commands outside the approved command
-// set; automatic gc and maintenance would rewrite a repository behind UFO's back. Repository
-// drivers (filters, textconv, merge drivers) are refused by `checkRepoConfig` before UFO runs
-// git in the user's repository, and the arms are clones without the repository's config.
+// set; automatic gc and maintenance would rewrite a repository behind UFO's back. Recursion into
+// submodules would run git with each submodule's own config, which nothing checks; config given
+// here reaches those child processes too. Repository drivers (filters, textconv, merge drivers)
+// are refused by `checkRepoConfig` before UFO runs git in the user's repository, and the arms are
+// clones without the repository's config.
 const BASE_ARGS = [
   "--no-pager",
   "-c",
@@ -52,6 +62,10 @@ const BASE_ARGS = [
   "maintenance.auto=false",
   "-c",
   "protocol.ext.allow=never",
+  "-c",
+  "submodule.recurse=false",
+  "-c",
+  "submodule.propagateBranches=false",
 ];
 
 const TIMEOUT_MS = 120_000;
@@ -109,6 +123,8 @@ export function runGit(args: readonly string[], cwd: string, input?: string): Pr
     GIT_OPTIONAL_LOCKS: "0",
     GIT_TERMINAL_PROMPT: "0",
     GIT_NO_REPLACE_OBJECTS: "1",
+    // A missing object is an error, never a fetch from a remote the repository chose.
+    GIT_NO_LAZY_FETCH: "1",
     GIT_PAGER: "cat",
   };
   return new Promise((resolve, reject) => {

@@ -195,6 +195,20 @@ describe("a start cut short", { timeout: TIMEOUT_MS }, () => {
     expect(existsSync(left.arms)).toBe(false);
   });
 
+  it("is ended once when two cancels race for it", async () => {
+    const left = await cutShortStart(await deadStarter());
+    const results = await Promise.allSettled([
+      cancelRun(toy.context, { runId: left.runId }),
+      cancelRun(toy.context, { runId: left.runId }),
+    ]);
+    expect(results.map((r) => r.status).sort()).toEqual(["fulfilled", "rejected"]);
+    const refused = results.find((r) => r.status === "rejected") as PromiseRejectedResult;
+    expect(refused.reason).toMatchObject({ code: "run_not_active" });
+    const events = await readLedger(left.runDir);
+    expect(events.filter((e) => e.type === "start_abandoned")).toHaveLength(1);
+    expect((await readRun(left.runDir)).status).toBe("failed");
+  });
+
   it("is left alone while its starter still runs", async () => {
     const startTime = await readProcessStartTime(process.pid);
     expect(startTime).toBeDefined();

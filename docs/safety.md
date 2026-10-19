@@ -44,8 +44,10 @@ refuses repository config outside a list of known sections, and keys inside them
 git run a program or reach an endpoint the repository chose (config-based hooks, which
 `core.hooksPath` does not turn off, credential helpers, `http.*`, filter, diff, and merge drivers,
 signing programs, `core.worktree`, SSH and proxy commands, remote helper programs, bundle URIs,
-includes, per-worktree config, URL rewrites; see [cli.md](cli.md)). git itself runs with an
-allowlisted environment. Your repository receives only the
+includes, per-worktree config, URL rewrites, recursion into submodules, git-lfs programs and
+endpoints, promisor remotes; see [cli.md](cli.md)). git itself runs with an allowlisted
+environment, never recurses into submodules (whose own config UFO does not check), and never
+fetches a missing object. Your repository receives only the
 `ufo/run-<run-id>` branch, by a fast-forward fetch from arm A.
 
 **Policy before code.** A change is refused before it is applied when it touches a protected path
@@ -125,13 +127,17 @@ collaborators.
   text as untrusted data.
 - **R7. Your host may not protect `.git`.** Some agent hosts let tools edit `.git` silently.
   UFO trusts nothing there, but such an agent can still change your own branches; review the run
-  branch before you merge it. UFO checks `.git/config` right before each git command it runs in
-  your repository; an edit that lands between that check and the command is not caught.
+  branch before you merge it. UFO checks `.git/config` when a run starts and again right before
+  each write to your repository (the run branch, the fetch into it, its removal); an edit that
+  lands between a check and the command after it is not caught, and the reads in between
+  (`status`, `rev-parse`) run with the config as it is then.
 
 - **R8. Drivers from your own git config.** UFO refuses filter, diff, and merge drivers defined
   in the repository's config, but not those in your global or system config. When the
-  repository's attributes name one of them (git-lfs, git-crypt), it runs in the arms, and may
-  reach the network outside the `targets:` check.
+  repository's attributes name one of them (git-lfs, git-crypt), it runs in the arms, and in your
+  repository during the `git status` that checks for uncommitted changes, and may reach the
+  network outside the `targets:` check (git-lfs also reads an endpoint from a committed
+  `.lfsconfig`).
 
 ## Using UFO safely
 

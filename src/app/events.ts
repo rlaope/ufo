@@ -84,6 +84,8 @@ export const DecisionDataSchema = z.strictObject({
   cardId: IdSchema,
   /** The change got past the policy checks; it counts against the technique cap. */
   attempted: z.boolean(),
+  /** A measured drop: B is reset and the card's reset hook runs after this record. */
+  cleanupDue: z.boolean(),
   samples: z.array(SampleSchema),
   oracleResults: z.array(OracleResultSchema),
   commands: CommandsSchema,

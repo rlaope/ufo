@@ -36,8 +36,9 @@ export async function ensureWorkerFor(
     await ensureWorker(context, active.runDir, active.home, active.open.state);
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
-    // Only jobs still queued, read again under the run lock: a worker that did start may have
-    // claimed one already.
+    // Only jobs still queued, read again under the run lock. A worker that started but could not
+    // be recorded was stopped by `launchWorker`; a job it claimed first stays `running` until
+    // `ufo resume` requeues it.
     await withRunLock(active.runDir, async () => {
       for (const job of jobs) {
         const current = await readJob(active.runDir, job.jobId);
