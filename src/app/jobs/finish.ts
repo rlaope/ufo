@@ -277,7 +277,13 @@ export async function handleFinish(
     status: "finished",
     shas: { ...run.shas, a: finalSha, b: finalSha },
   }));
-  await removeRun(open.git);
+  // The run is finished; arms that cannot be removed now are left for the next start's cleanup.
+  await removeRun(open.git).catch(async (error: unknown) => {
+    await appendLedger(context.runDir, {
+      type: EVENTS.cleanupFailed,
+      data: { message: (error instanceof Error ? error.message : String(error)).slice(0, 4000) },
+    });
+  });
   // A job queued while this one ran would wait forever for a worker of a finished run.
   for (const queued of await listJobs(context.runDir)) {
     if (queued.status !== "queued") continue;

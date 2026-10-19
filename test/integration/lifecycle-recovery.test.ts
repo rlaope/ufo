@@ -1,4 +1,6 @@
-import { existsSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -8,12 +10,17 @@ import {
   getRun,
   resumeRun,
   startRun,
+  status,
   submitChange,
 } from "../../src/app/index.js";
+import { runLayout } from "../../src/core/git/index.js";
 import {
   acquireMachineLock,
+  createRunState,
   listJobs,
+  readLedger,
   readMachineLock,
+  readProcessStartTime,
   readRun,
   releaseMachineLock,
   updateRun,
@@ -24,6 +31,7 @@ import {
   approveToy,
   diffOf,
   dockerAbsent,
+  git,
   lightWorkload,
   makeToy,
   TIMEOUT_MS,
@@ -133,5 +141,93 @@ describe("queueing work no worker can take", { timeout: TIMEOUT_MS }, () => {
     const queued = await submitChange(toy.context, change);
     expect(queued.jobId).toMatch(/^job-/);
     await cancelRun(toy.context, { runId: run.runId });
+  });
+});
+
+// Code review (round 2) HIGH: a start cut short between creating the run state and writing its app
+// state leaves a `running` run without app state, holding the machine lock. It must not block
+// the repository: a later start or a cancel ends it, and the views say what to do.
+describe("a start cut short", { timeout: TIMEOUT_MS }, () => {
+  /** Run state as a start leaves it when its process dies right after creating it. */
+  async function cutShortStart(starter: { pid: number; startTime: string }) {
+    const runId = newRunId();
+    const { runDir } = await createRunState(toy.home, { runId, repoId: toy.repoId });
+    await updateRun(runDir, (record) => ({ ...record, starter }));
+    expect((await acquireMachineLock({ home: toy.home, runId, repoId: toy.repoId })).acquired).toBe(
+      true,
+    );
+    const branch = `ufo/run-${runId}`;
+    git(toy.repo, "branch", branch);
+    const arms = path.dirname(runLayout(toy.home, toy.repoId, runId).armA);
+    mkdirSync(path.join(arms, "a"), { recursive: true });
+    return { runId, runDir, branch, arms };
+  }
+
+  async function deadStarter() {
+    const child = spawn(process.execPath, ["-e", ""], { stdio: "ignore" });
+    await once(child, "exit");
+    return { pid: child.pid as number, startTime: "Thu Jan  1 00:00:00 1970" };
+  }
+
+  it("is ended by the next start, and the views say what to do meanwhile", async () => {
+    const left = await cutShortStart(await deadStarter());
+    const view = await status(toy.context);
+    expect(view.runs.map((r) => r.runId)).toContain(left.runId);
+    await expect(getRun(toy.context, { runId: left.runId })).rejects.toMatchObject({
+      code: "run_not_active",
+      message: expect.stringContaining("did not finish starting"),
+    });
+
+    const run = await startRun(toy.context);
+    expect(run.warnings).toEqual([]);
+    expect((await readRun(left.runDir)).status).toBe("failed");
+    expect(git(toy.repo, "branch", "--list", left.branch).trim()).toBe("");
+    expect(existsSync(left.arms)).toBe(false);
+    expect((await waitDone(toy, run.runId, run.baselineJobId)).status).toBe("succeeded");
+    await cancelRun(toy.context, { runId: run.runId });
+  });
+
+  it("is ended by cancel, which releases the machine lock", async () => {
+    const left = await cutShortStart(await deadStarter());
+    await cancelRun(toy.context, { runId: left.runId });
+    expect((await readRun(left.runDir)).status).toBe("failed");
+    expect(await readMachineLock({ home: toy.home })).toBeUndefined();
+    expect(existsSync(left.arms)).toBe(false);
+  });
+
+  it("is left alone while its starter still runs", async () => {
+    const startTime = await readProcessStartTime(process.pid);
+    expect(startTime).toBeDefined();
+    const left = await cutShortStart({ pid: process.pid, startTime: startTime as string });
+    await expect(cancelRun(toy.context, { runId: left.runId })).rejects.toMatchObject({
+      code: "run_in_progress",
+    });
+    await expect(startRun(toy.context)).rejects.toMatchObject({ code: "run_in_progress" });
+    // Clean up as the starter would have on failure.
+    await updateRun(left.runDir, (record) => ({ ...record, status: "failed" }));
+    await releaseMachineLock({ home: toy.home, runId: left.runId });
+  });
+});
+
+// Code review (round 2) #3: once a run's final status is written, a failure to remove its arms
+// does not fail the command; it is recorded and the next start removes them.
+describe("arms that cannot be removed yet", { timeout: TIMEOUT_MS }, () => {
+  it("leave cancel successful, are recorded, and are removed by the next start", async () => {
+    const run = await startedRun();
+    const parent = path.dirname(path.dirname(run.arms.a));
+    chmodSync(parent, 0o500);
+    try {
+      const result = await cancelRun(toy.context, { runId: run.runId });
+      expect(result.runId).toBe(run.runId);
+      expect((await readRun(toy.runDir(run.runId))).status).toBe("cancelled");
+      const types = (await readLedger(toy.runDir(run.runId))).map((event) => event.type);
+      expect(types).toContain("cleanup_failed");
+      expect(existsSync(run.arms.a)).toBe(true);
+    } finally {
+      chmodSync(parent, 0o700);
+    }
+    const next = await startedRun();
+    expect(existsSync(path.dirname(run.arms.a))).toBe(false);
+    await cancelRun(toy.context, { runId: next.runId });
   });
 });

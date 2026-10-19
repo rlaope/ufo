@@ -123,3 +123,42 @@ describe("change accounting", { timeout: TIMEOUT_MS }, () => {
     expect(await tried()).toBe(1);
   });
 });
+
+// Code review (round 2) #2: a metric whose samples at A have median 0 has no noise floor; a change
+// is refused as inconclusive and uncharged instead of failing its job.
+describe("no noise floor at the current A", { timeout: TIMEOUT_MS }, () => {
+  it("refuses a change as inconclusive when the samples at A have median 0", async () => {
+    const zero = makeToy({
+      config: (yaml) =>
+        lightWorkload()(yaml).replace(
+          /^ {2}command: .*$/m,
+          `  command: 'node -e "console.log(JSON.stringify({ latency_ms: 0, error_rate: 0 }))"'`,
+        ),
+    });
+    try {
+      await approveWithGate(zero.context, {
+        stdin: { isTTY: true },
+        print: () => undefined,
+        confirm: async () => "approve",
+      });
+      const started = await startRun(zero.context);
+      expect((await waitDone(zero, started.runId, started.baselineJobId)).status).toBe("succeeded");
+      const queued = await submitChange(zero.context, {
+        runId: started.runId,
+        cardId: "toy.fast-path",
+        diff: diffOf(zero, "server.mjs", (s) => s.replace(SLEEP, "")),
+        hypothesis: "Removing the sleep.",
+      });
+      const job = await waitDone(zero, started.runId, queued.jobId);
+      expect(job.status).toBe("succeeded");
+      expect(decisionOf(job)).toMatchObject({
+        outcome: "inconclusive",
+        reason: "policy:noise_floor",
+        detail: expect.stringContaining("no noise floor"),
+      });
+      expect((await getRun(zero.context, { runId: started.runId })).budget.techniquesTried).toBe(0);
+    } finally {
+      await zero.cleanup();
+    }
+  });
+});

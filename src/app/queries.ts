@@ -174,6 +174,16 @@ export async function getRun(
 ): Promise<RunView> {
   const located = await locateRun(context, options.runId);
   const { runDir } = located;
+  const record = await readRun(runDir);
+  if (!record.started) {
+    const ended = record.status !== "running";
+    throw new AppError(
+      "run_not_active",
+      ended
+        ? `run ${located.runId} never finished starting and has ended (${record.status})`
+        : `run ${located.runId} did not finish starting; cancel it to end it`,
+    );
+  }
   const [run, open, events, jobs] = await Promise.all([
     readRun(runDir),
     openRun(located.home, runDir),
@@ -247,8 +257,13 @@ export async function status(
     runs.push({ runId: id, status: run.status, createdAt: run.createdAt });
   }
   const lock = await readMachineLock({ home });
-  const current =
-    ids.length === 0 && options.runId === undefined ? undefined : await getRun(context, options);
+  // A run that never finished starting has no view; it is still listed in `runs`.
+  const latest = options.runId ?? ids.at(-1);
+  const latestStarted =
+    latest !== undefined &&
+    ids.includes(latest) &&
+    (await readRun(runDirFor(home, repo.repoId, latest))).started;
+  const current = latestStarted ? await getRun(context, options) : undefined;
   return redactView(
     toJson({
       repoRoot: repo.root,

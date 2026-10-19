@@ -30,6 +30,10 @@ export const EVENTS = {
   budgetExtended: "budget_extended",
   /** The card's reset hook failed after a recorded drop. */
   resetFailed: "reset_failed",
+  /** Removing an ended run's arms failed; the next start tries again. */
+  cleanupFailed: "cleanup_failed",
+  /** A start cut short was found and ended by a later start or a cancel. */
+  startAbandoned: "start_abandoned",
   finalCheck: "final_check",
   runFinished: "run_finished",
   runCancelled: "run_cancelled",

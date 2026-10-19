@@ -404,7 +404,20 @@ async function noiseRefusal(
   if (open.config.objective.primary.kind !== "stochastic") return undefined;
   const values = currentNoiseValues(events);
   if (values.length < MIN_NOISE_SAMPLES) return undefined;
-  const floor = noiseFloor(values);
+  let floor: number;
+  try {
+    floor = noiseFloor(values);
+  } catch (error) {
+    // A median of 0 (or another value the floor cannot be computed from) refuses the same way the
+    // baseline does: nothing can be decided at this A.
+    if (!(error instanceof DecideInputError)) throw error;
+    return unmeasured(
+      changeId,
+      "inconclusive",
+      "policy:noise_floor",
+      `no noise floor: ${error.message}`,
+    );
+  }
   if (floor <= MAX_NOISE_FLOOR) return undefined;
   const pct = (ratio: number) => `${(ratio * 100).toFixed(1)}%`;
   return unmeasured(

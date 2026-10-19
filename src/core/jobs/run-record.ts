@@ -17,7 +17,7 @@ import {
   runsRoot,
   SAMPLES_DIR,
 } from "./paths.js";
-import { PgidSchema, StartTimeSchema } from "./process.js";
+import { isPidAlive, PgidSchema, readProcessStartTime, StartTimeSchema } from "./process.js";
 
 const IsoSchema = z.iso.datetime({ offset: true });
 
@@ -72,6 +72,10 @@ export const RunRecordSchema = z.strictObject({
     })
     .default({}),
   worker: WorkerRecordSchema.optional(),
+  /** The process that is creating the run, until `started`: a start cut short has no worker. */
+  starter: z.strictObject({ pid: PgidSchema, startTime: StartTimeSchema }).optional(),
+  /** Set once the run's app state is written and its worker can be launched. */
+  started: z.boolean().default(false),
   ports: z.array(PortSchema).max(1000).default([]),
   containerLabels: z.array(ContainerLabelSchema).max(1000).default([]),
 });
@@ -91,7 +95,14 @@ export async function createRunState(
   now: Date = new Date(),
 ): Promise<{ runDir: string; run: RunRecord }> {
   const at = now.toISOString();
-  const run = RunRecordSchema.parse({ ...init, status: "running", createdAt: at, updatedAt: at });
+  const startTime = await readProcessStartTime(process.pid);
+  const run = RunRecordSchema.parse({
+    ...init,
+    status: "running",
+    createdAt: at,
+    updatedAt: at,
+    ...(startTime === undefined ? {} : { starter: { pid: process.pid, startTime } }),
+  });
   const runDir = runDirFor(home, run.repoId, run.runId);
   await ensureTrustedDir(home, runsRoot(home, run.repoId));
   // Not recursive, so an existing run directory is refused rather than reused.
@@ -101,6 +112,18 @@ export async function createRunState(
   }
   await writeJsonAtomic(path.join(runDir, RUN_FILE), run);
   return { runDir, run };
+}
+
+/**
+ * A start that was cut short (the process died between creating the run state and finishing
+ * the start): still `running`, never `started`, and its starter is gone. Nothing will finish it.
+ */
+export async function abandonedStart(run: RunRecord): Promise<boolean> {
+  if (run.status !== "running" || run.started) return false;
+  const { starter } = run;
+  if (starter === undefined || !isPidAlive(starter.pid)) return true;
+  const current = await readProcessStartTime(starter.pid);
+  return current !== undefined && current !== starter.startTime;
 }
 
 export async function readRun(runDir: string): Promise<RunRecord> {

@@ -7,9 +7,11 @@ import {
   publishBranch,
   removeRun,
   resetArms,
+  runGit,
   runLayout,
 } from "../core/git/index.js";
 import {
+  abandonedStart,
   acquireMachineLock,
   appendLedger,
   cancelJob,
@@ -47,7 +49,14 @@ import { type ActiveRun, activeRun, refuseIfFinishing, rethrowAsUsage } from "./
 import { approvalSubject, loadCards } from "./cards.js";
 import { ensureWorkerFor, runRecipes } from "./changes.js";
 import { loadConfig } from "./config.js";
-import { type AppContext, homeFor, listRunIds, type Repo, resolveRepo } from "./context.js";
+import {
+  type AppContext,
+  homeFor,
+  listRunIds,
+  locateRun,
+  type Repo,
+  resolveRepo,
+} from "./context.js";
 import { captureEnv, captureGitEnv } from "./env.js";
 import { AppError } from "./errors.js";
 import { committedChangeIds, decisionFor, EVENTS } from "./events.js";
@@ -108,18 +117,53 @@ async function exists(target: string): Promise<boolean> {
 }
 
 /**
- * Removes the arms of this repository's ended runs. A run writes its final status before it
- * removes its arms, so a crash in between leaves an ended run with arms on disk; nothing else
- * would ever remove them.
+ * Ends a start that was cut short (see `abandonedStart`): removes the arms it may have created
+ * and the run branch if it got that far, records the run as failed, and releases the machine
+ * lock. Its run state has no app state, so it is handled from the run id and the repository.
  */
-async function sweepEndedRuns(home: string, repo: Repo): Promise<void> {
+async function endAbandonedStart(home: string, repo: Repo, runId: string): Promise<void> {
+  const runDir = runDirFor(home, repo.repoId, runId);
+  const layout = runLayout(home, repo.repoId, runId);
+  const branchHead = await runGit(
+    ["rev-parse", "--verify", "--quiet", `refs/heads/${layout.branch}^{commit}`],
+    repo.root,
+  );
+  const branchSha = branchHead.code === 0 ? branchHead.stdout.trim() : undefined;
+  await removeRun(
+    { runId, repoId: repo.repoId, repoRoot: repo.root, baseSha: branchSha ?? "", ...layout },
+    { deleteBranch: branchSha !== undefined },
+  );
+  await updateRun(runDir, (run) => ({ ...run, status: "failed" }));
+  await appendLedger(runDir, { type: EVENTS.startAbandoned, data: { runId } });
+  await releaseMachineLock({ runId, home });
+}
+
+/**
+ * Before a start: ends this repository's starts that were cut short, and removes the arms of its
+ * ended runs (a run writes its final status before it removes its arms, so a crash in between
+ * leaves arms on disk that nothing else would remove). Cleanup that fails is reported as a
+ * warning and never blocks the start.
+ */
+async function cleanUpRuns(home: string, repo: Repo): Promise<string[]> {
+  const warnings: string[] = [];
   for (const id of await listRunIds(home, repo)) {
-    const runDir = runDirFor(home, repo.repoId, id);
-    if ((await readRun(runDir)).status === "running") continue;
-    if (!(await exists(runLayout(home, repo.repoId, id).dir))) continue;
-    const open = await openRun(home, runDir);
-    await removeRun(open.git, { deleteBranch: open.state.purpose === "measure" });
+    try {
+      const runDir = runDirFor(home, repo.repoId, id);
+      const run = await readRun(runDir);
+      if (await abandonedStart(run)) {
+        await endAbandonedStart(home, repo, id);
+        continue;
+      }
+      if (run.status === "running") continue;
+      if (!(await exists(runLayout(home, repo.repoId, id).dir))) continue;
+      const open = await openRun(home, runDir);
+      await removeRun(open.git, { deleteBranch: open.state.purpose === "measure" });
+    } catch (error) {
+      const why = error instanceof Error ? error.message : String(error);
+      warnings.push(`could not clean up run ${id}: ${why}`);
+    }
   }
+  return warnings;
 }
 
 async function startRunFor(
@@ -157,8 +201,8 @@ async function startRunFor(
   } catch (error) {
     rethrowAsUsage(error);
   }
+  const cleanupWarnings = await cleanUpRuns(home, repo);
   await refuseActiveRuns(home, repo);
-  await sweepEndedRuns(home, repo);
 
   const runId = newRunId();
   // The run's state exists before it takes the machine lock, so another start that finds the
@@ -202,15 +246,19 @@ async function startRunFor(
       bundleId: BundleIdSchema.parse(`ufo-${runId}`),
     };
     await writeAppState(runDir, state);
+    await updateRun(runDir, (record) => ({ ...record, started: true }));
     await appendLedger(runDir, {
       type: "run_started",
       data: { configHash: loaded.hash, baseSha: run.baseSha, purpose },
     });
     const job = await enqueueJob(runDir, { kind: JOB_KINDS.baseline, input: {} });
     await withControlLock(runDir, () => ensureWorker(context, runDir, home, state));
-    const warnings = created.userTreeDirty
-      ? ["the working tree has uncommitted changes; they are not part of the run"]
-      : [];
+    const warnings = [
+      ...cleanupWarnings,
+      ...(created.userTreeDirty
+        ? ["the working tree has uncommitted changes; they are not part of the run"]
+        : []),
+    ];
     return {
       runId,
       runDir,
@@ -438,6 +486,22 @@ export async function cancelRun(
   context: AppContext,
   options: { readonly runId?: string } = {},
 ): Promise<CancelResult> {
+  const located = await locateRun(context, options.runId);
+  const record = await readRun(located.runDir);
+  if (record.status === "running" && !record.started) {
+    // A start that never finished has no app state and no worker: end it from its ids.
+    if (!(await abandonedStart(record))) {
+      throw new AppError("run_in_progress", `run ${located.runId} is still starting`);
+    }
+    const kill = await killRunProcesses(located.runDir, killOptions(context));
+    await endAbandonedStart(located.home, located.repo, located.runId);
+    return {
+      runId: located.runId,
+      cancelledJobs: [],
+      processes: killSummary(kill),
+      observationsKept: (await readLedger(located.runDir)).length,
+    };
+  }
   const active = await activeRun(context, options.runId);
   return withControlLock(active.runDir, () => cancelLocked(context, active));
 }
@@ -467,8 +531,16 @@ async function cancelLocked(context: AppContext, active: ActiveRun): Promise<Can
     data: jsonData({ cancelledJobs, processes: killSummary(kill) }),
   });
   // The arms are deleted whole, so whatever a job left in them needs no reset first, and an arm
-  // that is already gone is not an error.
-  await removeRun(open.git, { deleteBranch: open.state.purpose === "measure" });
+  // that is already gone is not an error. The run is cancelled either way: arms that cannot be
+  // removed now are left for the next start's cleanup.
+  await removeRun(open.git, { deleteBranch: open.state.purpose === "measure" }).catch(
+    async (error: unknown) => {
+      await appendLedger(runDir, {
+        type: EVENTS.cleanupFailed,
+        data: { message: (error instanceof Error ? error.message : String(error)).slice(0, 4000) },
+      });
+    },
+  );
   await releaseMachineLock({ runId: active.runId, home: active.home });
   return {
     runId: active.runId,

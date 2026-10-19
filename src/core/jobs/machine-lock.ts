@@ -10,7 +10,7 @@ import {
   readTextNoFollow,
 } from "./atomic-file.js";
 import { machineLockPath, RUN_FILE, RunIdSchema, runDirFor } from "./paths.js";
-import { RunRecordSchema } from "./run-record.js";
+import { abandonedStart, RunRecordSchema } from "./run-record.js";
 
 /**
  * The machine lock names the run that holds it, not a process: a run holds it from `startRun`
@@ -149,5 +149,7 @@ async function inspect(home: string, file: string): Promise<LockState> {
   if (value === undefined) return { kind: "stale", holder };
   const run = RunRecordSchema.safeParse(value);
   if (!run.success) return { kind: "held", holder };
-  return run.data.status === "running" ? { kind: "held", holder } : { kind: "stale", holder };
+  if (run.data.status !== "running") return { kind: "stale", holder };
+  // A start cut short holds the lock with nothing left to release it.
+  return (await abandonedStart(run.data)) ? { kind: "stale", holder } : { kind: "held", holder };
 }
