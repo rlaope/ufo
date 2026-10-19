@@ -2,7 +2,7 @@ import { readdir } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { IdSchema } from "../../domain/index.js";
-import { readJsonIfExists, writeJsonAtomic } from "./atomic-file.js";
+import { assertRealDir, readJsonIfExists, writeJsonAtomic } from "./atomic-file.js";
 import { JOBS_DIR } from "./paths.js";
 import { PidSchema } from "./process.js";
 import { withRunLock } from "./run-record.js";
@@ -95,7 +95,9 @@ export async function writeJob(runDir: string, job: JobRecord): Promise<void> {
 
 /** All jobs in sequence order. Temp files of in-flight writes are skipped. */
 export async function listJobs(runDir: string): Promise<JobRecord[]> {
-  const names = await readdir(path.join(runDir, JOBS_DIR));
+  const dir = path.join(runDir, JOBS_DIR);
+  await assertRealDir(dir);
+  const names = await readdir(dir);
   const ids = names
     .filter((name) => name.endsWith(".json"))
     .map((name) => name.slice(0, -".json".length))

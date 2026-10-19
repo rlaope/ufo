@@ -1,11 +1,10 @@
-import { access } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 import {
   CANCEL_FILE,
+  existsNoFollow,
   HEARTBEAT_FILE,
-  isErrno,
   type JobProgress,
   type JobRecord,
   listJobs,
@@ -23,6 +22,11 @@ export interface JobContext {
   signal: AbortSignal;
   /** Records progress on the job; `get_job` callers see it. Ignored once the job finished. */
   setProgress: (progress: JobProgress) => void;
+  /**
+   * Makes the worker exit once this job is finished, without waiting `idleExitMs`, e.g. after the
+   * job that finishes the run. Queued jobs stay queued for the next worker.
+   */
+  exitAfterJob: () => void;
 }
 
 /** Runs one job. The return value, which must be JSON, becomes the job's `result`. */
@@ -102,9 +106,13 @@ export async function runWorker(options: RunWorkerOptions): Promise<WorkerSummar
       if (job === undefined || cancelled) break;
       const controller = new AbortController();
       current = { jobId: job.jobId, controller };
-      await runJob(runDir, job, handlers, controller);
+      const { exitRequested } = await runJob(runDir, job, handlers, controller);
       current = undefined;
       processed++;
+      if (exitRequested && !cancelled) {
+        await markExited(runDir);
+        break;
+      }
     }
     if (cancelled) {
       for (const job of await listJobs(runDir)) {
@@ -124,14 +132,8 @@ export async function requestCancel(runDir: string): Promise<void> {
   await writeJsonAtomic(path.join(runDir, CANCEL_FILE), { requestedAt: new Date().toISOString() });
 }
 
-export async function isCancelRequested(runDir: string): Promise<boolean> {
-  try {
-    await access(path.join(runDir, CANCEL_FILE));
-    return true;
-  } catch (error) {
-    if (isErrno(error, "ENOENT")) return false;
-    throw error;
-  }
+export function isCancelRequested(runDir: string): Promise<boolean> {
+  return existsNoFollow(path.join(runDir, CANCEL_FILE));
 }
 
 export async function readHeartbeat(runDir: string): Promise<Heartbeat | undefined> {
@@ -189,7 +191,7 @@ async function runJob(
   queued: JobRecord,
   handlers: RunWorkerOptions["handlers"],
   controller: AbortController,
-): Promise<void> {
+): Promise<{ exitRequested: boolean }> {
   const now = () => new Date().toISOString();
   let latest: JobRecord = {
     ...queued,
@@ -203,6 +205,7 @@ async function runJob(
   // overwrite the terminal status.
   let writes = Promise.resolve();
   let finished = false;
+  let exitRequested = false;
   const context: JobContext = {
     runDir,
     signal: controller.signal,
@@ -211,6 +214,9 @@ async function runJob(
       latest = { ...latest, progress, updatedAt: now() };
       const snapshot = latest;
       writes = writes.then(() => writeJob(runDir, snapshot)).catch(() => {});
+    },
+    exitAfterJob: () => {
+      exitRequested = true;
     },
   };
   let outcome: Outcome;
@@ -228,6 +234,7 @@ async function runJob(
   finished = true;
   await writes;
   await finishJob(runDir, latest, outcome);
+  return { exitRequested };
 }
 
 async function finishJob(runDir: string, job: JobRecord, outcome: Outcome): Promise<void> {

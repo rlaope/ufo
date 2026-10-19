@@ -29,9 +29,13 @@ const { runDir } = parseWorkerArgv(argv);
 const heartbeatIndex = argv.indexOf("--heartbeat-ms");
 const heartbeatMs = heartbeatIndex === -1 ? 2000 : Number(argv[heartbeatIndex + 1]);
 
+// Callers await other work first, so the signal may already be aborted: an abort event that
+// already fired never fires again.
 function untilAborted(signal) {
   return new Promise((_, reject) => {
-    signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+    const abort = () => reject(new Error("aborted"));
+    if (signal.aborted) abort();
+    else signal.addEventListener("abort", abort, { once: true });
   });
 }
 

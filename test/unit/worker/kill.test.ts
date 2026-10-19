@@ -5,8 +5,9 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  createRun,
+  createRunState,
   isProcessGroupAlive,
+  readProcessStartTime,
   readRun,
   updateRun,
 } from "../../../src/core/jobs/index.js";
@@ -18,6 +19,7 @@ import {
   trackContainerLabel,
   trackPort,
   untrackChildGroup,
+  workerArgv,
 } from "../../../src/worker/index.js";
 
 const RUN_ID = "run-kill";
@@ -31,7 +33,7 @@ const leftovers: number[] = [];
 
 beforeEach(async () => {
   root = await mkdtemp(path.join(os.tmpdir(), "ufo-kill-"));
-  ({ runDir } = await createRun(root, { runId: RUN_ID, repoId: "repo" }));
+  ({ runDir } = await createRunState(root, { runId: RUN_ID, repoId: "repo" }));
 });
 
 afterEach(async () => {
@@ -59,8 +61,8 @@ function fakeDocker(containers: Record<string, string[]>) {
   return { exec, calls };
 }
 
-function spawnGroup(): number {
-  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+function spawnGroup(...args: string[]): number {
+  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)", ...args], {
     detached: true,
     stdio: "ignore",
   });
@@ -117,8 +119,8 @@ describe("killRunProcesses", () => {
     await updateRun(runDir, (run) => ({
       ...run,
       childGroups: [
-        { pgid: process.pid },
-        { pgid: exited.pid as number },
+        { pgid: process.pid, startTime: "Thu Jan  1 00:00:00 1970" },
+        { pgid: exited.pid as number, startTime: "Thu Jan  1 00:00:00 1970" },
         { pgid: reused, startTime: "Thu Jan  1 00:00:00 1970" },
       ],
     }));
@@ -130,6 +132,56 @@ describe("killRunProcesses", () => {
       { pgid: reused, reason: "pid_reused" },
     ]);
     expect(isProcessGroupAlive(reused)).toBe(true);
+  });
+
+  it("signals a recorded worker only while it still runs this run's worker command (F6)", async () => {
+    // A live process with the recorded start time, but not `worker --run-dir <runDir>`.
+    const impostor = spawnGroup();
+    const startTime = await readProcessStartTime(impostor);
+    if (startTime === undefined) throw new Error("no start time");
+    const launchedAt = new Date().toISOString();
+    await updateRun(runDir, (run) => ({
+      ...run,
+      worker: { pid: impostor, startTime, launchedAt },
+    }));
+    const refused = await killRunProcesses(runDir, { exec: fakeDocker({}).exec });
+    expect(refused.terminated).toEqual([]);
+    expect(refused.skipped).toEqual([{ pgid: impostor, reason: "not_ufo_worker" }]);
+    expect(isProcessGroupAlive(impostor)).toBe(true);
+
+    // The same check passes for a process that runs this run's worker command line.
+    const worker = spawnGroup(...workerArgv(runDir));
+    const workerStart = await readProcessStartTime(worker);
+    if (workerStart === undefined) throw new Error("no start time");
+    await updateRun(runDir, (run) => ({
+      ...run,
+      worker: { pid: worker, startTime: workerStart, launchedAt },
+    }));
+    const report = await killRunProcesses(runDir, { exec: fakeDocker({}).exec, graceMs: 2000 });
+    expect(report.terminated).toEqual([worker]);
+    expect(isProcessGroupAlive(worker)).toBe(false);
+  });
+
+  it("filters recorded container labels to this run's own when it kills (F6)", async () => {
+    // run.json names another run's label, as edited state could.
+    await updateRun(runDir, (run) => ({
+      ...run,
+      containerLabels: [runContainerLabel("run-other"), `${runContainerLabel(RUN_ID)}.a`],
+    }));
+    const { exec, calls } = fakeDocker({
+      [runContainerLabel("run-other")]: [OTHER_RUNS_CONTAINER],
+      [`${runContainerLabel(RUN_ID)}.a`]: [ID_1],
+    });
+    const report = await killRunProcesses(runDir, { exec });
+    expect(report.containers).toEqual({ dockerAvailable: true, removed: [ID_1] });
+    expect(calls).not.toContainEqual([
+      "docker",
+      "ps",
+      "-aq",
+      "--filter",
+      `label=${runContainerLabel("run-other")}`,
+    ]);
+    expect(calls.flat()).not.toContain(OTHER_RUNS_CONTAINER);
   });
 
   it("terminates a tracked group that exits on SIGTERM", async () => {

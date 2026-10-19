@@ -1,0 +1,10 @@
+id: toy.cache-items
+domain: toy
+title: Serve a cached, possibly stale items payload
+kind: guided
+riskClass: lossy
+signals:
+  - The items payload is rebuilt on every request
+traps:
+  - A cached payload can be stale, so results may differ from the baseline
+verifiedIn: unverified

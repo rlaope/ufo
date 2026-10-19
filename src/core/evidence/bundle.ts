@@ -11,6 +11,7 @@ import {
   SCHEMA_VERSION,
   Sha256HexSchema,
 } from "../../domain/index.js";
+import { assertRealDir } from "../jobs/atomic-file.js";
 import { BUNDLES_DIR } from "../jobs/paths.js";
 import { type RedactOptions, redact } from "./redact.js";
 
@@ -65,12 +66,17 @@ export async function writeBundle(
   for (const change of redacted.changes) files.set(diffPath(change.changeId), change.diff);
 
   const dir = path.join(runDir, BUNDLES_DIR, redacted.bundleId);
+  // The bundles directory must be a real one inside the run state: a planted symlink would move
+  // the export, and the removal of an earlier one, outside it.
+  await assertRealDir(runDir);
+  await mkdir(path.dirname(dir), { recursive: true, mode: 0o700 });
+  await assertRealDir(path.dirname(dir));
   const temp = `${dir}.${randomBytes(4).toString("hex")}.tmp`;
-  await mkdir(path.join(temp, DIFFS_DIR), { recursive: true });
+  await mkdir(path.join(temp, DIFFS_DIR), { recursive: true, mode: 0o700 });
   try {
     const entries: BundleManifest["files"] = [];
     for (const [relative, text] of [...files].sort(([x], [y]) => x.localeCompare(y))) {
-      await writeFile(path.join(temp, relative), text);
+      await writeFile(path.join(temp, relative), text, { flag: "wx", mode: 0o600 });
       entries.push({ path: relative, sha256: sha256(text), bytes: Buffer.byteLength(text) });
     }
     const manifest = BundleManifestSchema.parse({
@@ -78,7 +84,10 @@ export async function writeBundle(
       bundleId: redacted.bundleId,
       files: entries,
     });
-    await writeFile(path.join(temp, MANIFEST_FILE), `${JSON.stringify(manifest, null, 2)}\n`);
+    await writeFile(path.join(temp, MANIFEST_FILE), `${JSON.stringify(manifest, null, 2)}\n`, {
+      flag: "wx",
+      mode: 0o600,
+    });
     await rm(dir, { recursive: true, force: true });
     await rename(temp, dir);
     return { dir, manifest };

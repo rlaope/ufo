@@ -5,7 +5,9 @@ import {
   IdSchema,
   labelSchema,
   MAX_ID_LENGTH,
+  MAX_LABEL_LENGTH,
   NoteListSchema,
+  RepoPathSchema,
   uniqueArray,
   VersionMapSchema,
 } from "./primitives.js";
@@ -24,6 +26,9 @@ const MAX_PARAMS = 16;
 const MAX_COMMAND_TEMPLATES = 8;
 const MAX_ENUM_VALUES = 32;
 const MAX_VERIFIED_IN = 64;
+const MAX_EDITS = 16;
+/** Text a `replace_text` edit finds or inserts. Larger rewrites are guided changes, not recipes. */
+export const MAX_EDIT_TEXT_LENGTH = 10_000;
 
 /** Enum values are substituted into commands, so they carry no shell metacharacters. */
 const ParamTokenSchema = z
@@ -88,6 +93,48 @@ export const CommandTemplateSchema = z.strictObject({
 });
 export type CommandTemplate = z.infer<typeof CommandTemplateSchema>;
 
+const EditTextSchema = z
+  .string()
+  .max(MAX_EDIT_TEXT_LENGTH)
+  .refine((text) => !text.includes("\0"), "must not contain NUL bytes");
+
+/**
+ * Sets `key=value` in a properties-style file: the one line `key=...` is rewritten, or the line
+ * is appended when the key is absent. `value` may hold `{{param}}` placeholders.
+ */
+const SetPropertyEditSchema = z.strictObject({
+  op: z.literal("set_property"),
+  file: RepoPathSchema,
+  key: z
+    .string()
+    .min(1)
+    .max(MAX_ID_LENGTH)
+    .regex(/^[^\s=:#!\p{Cc}]+$/u, "must be a property key without whitespace, =, :, # or !"),
+  value: z
+    .string()
+    .max(MAX_LABEL_LENGTH)
+    .regex(/^[^\p{Cc}]*$/u, "must be a single line"),
+});
+
+/**
+ * Replaces the exact text `find` with `replace`. `find` must occur exactly once in the file, so
+ * the edit cannot land somewhere the card's author did not mean. `replace` may hold
+ * `{{param}}` placeholders.
+ */
+const ReplaceTextEditSchema = z.strictObject({
+  op: z.literal("replace_text"),
+  file: RepoPathSchema,
+  find: EditTextSchema.min(1),
+  replace: EditTextSchema,
+});
+
+/** A declarative edit of a recipe card. UFO computes the diff itself from the arm A tree. */
+export const RecipeEditSchema = z.discriminatedUnion("op", [
+  SetPropertyEditSchema,
+  ReplaceTextEditSchema,
+]);
+export type RecipeEdit = z.infer<typeof RecipeEditSchema>;
+
 /** Overrides the memory guardrail for this card; takes effect only once approved with `ufo.yaml`. */
 export const MemoryBudgetSchema = z.strictObject({
   maxRatio: z.number().min(1).max(100),
@@ -108,6 +155,8 @@ export const TechniqueCardSchema = z
       (t) => t.id,
       "command template ids",
     ).default([]),
+    /** Recipe cards only: edits UFO applies with default parameters during `ufo run`. */
+    edits: z.array(RecipeEditSchema).max(MAX_EDITS).default([]),
     memoryBudget: MemoryBudgetSchema.optional(),
     preconditions: NoteListSchema.default([]),
     /** Profiler evidence that points at this card. A card nothing points at is never chosen. */
@@ -122,14 +171,34 @@ export const TechniqueCardSchema = z
     ]),
   })
   .superRefine((card, ctx) => {
-    if (card.kind === "recipe" && card.commandTemplates.length === 0) {
+    if (card.kind === "recipe" && card.commandTemplates.length === 0 && card.edits.length === 0) {
       ctx.addIssue({
         code: "custom",
-        message: "a recipe card needs at least one command template",
+        message: "a recipe card needs at least one command template or edit",
         path: ["commandTemplates"],
       });
     }
+    if (card.kind === "guided" && card.edits.length > 0) {
+      ctx.addIssue({
+        code: "custom",
+        message: "only recipe cards have edits; a guided change is written by the agent",
+        path: ["edits"],
+      });
+    }
     const declared = new Set(card.params.map((p) => p.name));
+    card.edits.forEach((edit, index) => {
+      const text = edit.op === "set_property" ? edit.value : edit.replace;
+      for (const match of text.matchAll(PLACEHOLDER)) {
+        const name = match[1] ?? "";
+        if (!declared.has(name)) {
+          ctx.addIssue({
+            code: "custom",
+            message: `placeholder {{${name}}} is not a param declared on the card`,
+            path: ["edits", index, edit.op === "set_property" ? "value" : "replace"],
+          });
+        }
+      }
+    });
     card.commandTemplates.forEach((template, index) => {
       const used = new Set(Array.from(template.run.matchAll(PLACEHOLDER), (m) => m[1]));
       for (const name of used) {

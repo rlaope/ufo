@@ -1,0 +1,30 @@
+version: 1
+objective:
+  primary:
+    name: latency_ms
+    unit: ms
+    direction: lower_is_better
+    kind: stochastic
+    replicationUnit: load_run
+  scenario: toy-http GET /items, 30 sequential requests on loopback
+  guardrails:
+    - kind: error_rate
+  minEffect: 0.03
+  budget:
+    wallClockMinutes: 30
+    maxTechniques: 10
+workload:
+  setup: node --check server.mjs
+  command: node bench/latency.mjs
+oracles:
+  - name: unit-tests
+    kind: test_pass_set
+    command: node --test --test-reporter=./test/reporter/ufo.mjs test/server.test.mjs
+  - name: smoke
+    kind: smoke
+    command: node bench/smoke.mjs
+cards:
+  - generic.code-change
+  - toy.fast-path
+  - toy.cache-items
+  - toy.no-delay

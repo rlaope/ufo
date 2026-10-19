@@ -1,7 +1,6 @@
-import { open, readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
-import { isErrno } from "./atomic-file.js";
+import { isErrno, OPEN_READ_APPEND, openNoFollow, readTextNoFollow } from "./atomic-file.js";
 import { LEDGER_FILE } from "./paths.js";
 import { withRunLock } from "./run-record.js";
 
@@ -32,14 +31,15 @@ export async function appendLedger(runDir: string, input: LedgerEventInput): Pro
   const event = LedgerEventSchema.parse({ at: new Date().toISOString(), ...input });
   const file = path.join(runDir, LEDGER_FILE);
   await withRunLock(runDir, async () => {
-    const handle = await open(file, "a+");
+    const handle = await openNoFollow(file, OPEN_READ_APPEND);
     try {
       const { size } = await handle.stat();
       if (size > 0) {
         const last = Buffer.alloc(1);
         await handle.read(last, 0, 1, size - 1);
         if (last[0] !== 0x0a) {
-          const content = await readFile(file);
+          const content = Buffer.alloc(size);
+          await handle.read(content, 0, size, 0);
           await handle.truncate(content.lastIndexOf(0x0a) + 1);
         }
       }
@@ -56,7 +56,7 @@ export async function appendLedger(runDir: string, input: LedgerEventInput): Pro
 export async function readLedger(runDir: string): Promise<LedgerEvent[]> {
   let text: string;
   try {
-    text = await readFile(path.join(runDir, LEDGER_FILE), "utf8");
+    text = await readTextNoFollow(path.join(runDir, LEDGER_FILE));
   } catch (error) {
     if (isErrno(error, "ENOENT")) return [];
     throw error;

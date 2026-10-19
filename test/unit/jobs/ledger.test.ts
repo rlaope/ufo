@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   appendLedger,
   COMMITTED_EVENT,
-  createRun,
+  createRunState,
   findLastChangeEvent,
   LEDGER_FILE,
   readLedger,
@@ -21,7 +21,7 @@ let runDir: string;
 
 beforeEach(async () => {
   root = await mkdtemp(path.join(os.tmpdir(), "ufo-ledger-"));
-  ({ runDir } = await createRun(root, { runId: "run-ledger", repoId: "repo" }));
+  ({ runDir } = await createRunState(root, { runId: "run-ledger", repoId: "repo" }));
 });
 
 afterEach(async () => {

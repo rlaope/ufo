@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { ObjectiveSchema } from "./objective.js";
 import { OracleSpecSchema } from "./oracle.js";
-import { OptInListSchema, TargetListSchema } from "./policy.js";
+import { EnvNameListSchema, OptInListSchema, TargetListSchema } from "./policy.js";
 import { CommandLineSchema, IdSchema, uniqueArray } from "./primitives.js";
 import { SCHEMA_VERSION } from "./version.js";
 
@@ -38,5 +38,10 @@ export const UfoConfigSchema = z.strictObject({
   cards: uniqueArray(IdSchema, MAX_CARDS, (c) => c, "card ids").default([]),
   /** Requested here, granted only when `ufo approve` confirms them. */
   optIns: OptInListSchema.default([]),
+  /**
+   * Environment variables passed to every command besides the defaults (PATH, HOME, LANG,
+   * LC_*, TMPDIR, USER, SHELL, TERM). Their values are captured when the run starts.
+   */
+  env: EnvNameListSchema.default([]),
 });
 export type UfoConfig = z.infer<typeof UfoConfigSchema>;

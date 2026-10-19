@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdir, open } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -8,6 +8,8 @@ import {
   ContainerLabelSchema,
   isPidAlive,
   LOGS_DIR,
+  OPEN_APPEND,
+  openNoFollow,
   PgidSchema,
   PortSchema,
   type RunRecord,
@@ -49,6 +51,7 @@ export interface LaunchWorkerOptions {
   entry?: string;
   /** Appended after `worker --run-dir <runDir>`. */
   extraArgs?: readonly string[];
+  /** The worker's whole environment; nothing else is inherited. Defaults to `process.env`. */
   env?: NodeJS.ProcessEnv;
 }
 
@@ -62,9 +65,14 @@ export async function launchWorker(
   options: LaunchWorkerOptions = {},
 ): Promise<WorkerRecord> {
   const logs = path.join(runDir, LOGS_DIR);
-  await mkdir(logs, { recursive: true });
-  const out = await open(path.join(logs, WORKER_OUT_LOG), "a");
-  const err = await open(path.join(logs, WORKER_ERR_LOG), "a");
+  await mkdir(logs, { recursive: true, mode: 0o700 });
+  const out = await openNoFollow(path.join(logs, WORKER_OUT_LOG), OPEN_APPEND);
+  const err = await openNoFollow(path.join(logs, WORKER_ERR_LOG), OPEN_APPEND).catch(
+    async (error: unknown) => {
+      await out.close();
+      throw error;
+    },
+  );
   let child: ReturnType<typeof spawn>;
   let started: Promise<unknown>;
   try {
@@ -90,11 +98,13 @@ export async function launchWorker(
   if (pid === undefined) throw new Error("the worker process has no pid");
   child.unref();
   const startTime = await readProcessStartTime(pid);
-  const worker: WorkerRecord = {
-    pid,
-    ...(startTime === undefined ? {} : { startTime }),
-    launchedAt: new Date().toISOString(),
-  };
+  if (startTime === undefined) {
+    // Without a start time, resume and cancel could not tell this worker from a later process
+    // that reused its PID, so it is not left running.
+    child.kill("SIGKILL");
+    throw new Error("could not read the worker's start time (ps); the worker was stopped");
+  }
+  const worker: WorkerRecord = { pid, startTime, launchedAt: new Date().toISOString() };
   await updateRun(runDir, (run) => ({ ...run, worker }));
   return worker;
 }
@@ -105,16 +115,20 @@ export async function isWorkerAlive(run: RunRecord): Promise<boolean> {
   if (worker === undefined || worker.exitedAt !== undefined || !isPidAlive(worker.pid)) {
     return false;
   }
-  if (worker.startTime === undefined) return true;
   const current = await readProcessStartTime(worker.pid);
   return current === undefined ? isPidAlive(worker.pid) : current === worker.startTime;
 }
 
-/** Records a child process group the worker started, so resume and cancel can stop it. */
+/**
+ * Records a child process group the worker started, with its leader's start time, so resume and
+ * cancel can stop it and nothing signals a later process that reused the id. Throws when the
+ * start time cannot be read (the leader already exited, or no `ps`).
+ */
 export async function trackChildGroup(runDir: string, pgid: number): Promise<ChildGroup> {
   PgidSchema.parse(pgid);
   const startTime = await readProcessStartTime(pgid);
-  const group: ChildGroup = { pgid, ...(startTime === undefined ? {} : { startTime }) };
+  if (startTime === undefined) throw new Error(`no start time for process group ${pgid}`);
+  const group: ChildGroup = { pgid, startTime };
   await updateRun(runDir, (run) => ({
     ...run,
     childGroups: [...run.childGroups.filter((g) => g.pgid !== pgid), group],

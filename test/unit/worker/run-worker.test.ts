@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  createRun,
+  createRunState,
   enqueueJob,
   listJobs,
   readJob,
@@ -22,7 +22,7 @@ let runDir: string;
 
 beforeEach(async () => {
   root = await mkdtemp(path.join(os.tmpdir(), "ufo-loop-"));
-  ({ runDir } = await createRun(root, { runId: "run-loop", repoId: "repo" }));
+  ({ runDir } = await createRunState(root, { runId: "run-loop", repoId: "repo" }));
 });
 
 afterEach(async () => {
@@ -111,7 +111,7 @@ describe("runWorker", () => {
   it("picks up a job enqueued while it waits, then marks itself exited", async () => {
     await updateRun(runDir, (run) => ({
       ...run,
-      worker: { pid: process.pid, launchedAt: new Date().toISOString() },
+      worker: { pid: process.pid, startTime: "test", launchedAt: new Date().toISOString() },
     }));
     setTimeout(() => {
       void enqueueJob(runDir, { kind: "noop", input: null });
@@ -126,6 +126,36 @@ describe("runWorker", () => {
     expect((await readRun(runDir)).worker?.exitedAt).toBeDefined();
   });
 
+  it("exits right after a job that asks for it and leaves later jobs queued", async () => {
+    await updateRun(runDir, (run) => ({
+      ...run,
+      worker: { pid: process.pid, startTime: "test", launchedAt: new Date().toISOString() },
+    }));
+    const finish = await enqueueJob(runDir, { kind: "finish", input: null });
+    const later = await enqueueJob(runDir, { kind: "noop", input: null });
+    const started = Date.now();
+    const summary = await runWorker({
+      runDir,
+      heartbeatMs: 20,
+      idleExitMs: 60_000,
+      handlers: {
+        finish: (_job, context) => {
+          context.exitAfterJob();
+          return { done: true };
+        },
+        noop: () => null,
+      },
+    });
+    expect(summary).toEqual({ processed: 1, cancelled: false });
+    expect(Date.now() - started).toBeLessThan(10_000);
+    expect(await readJob(runDir, finish.jobId)).toMatchObject({
+      status: "succeeded",
+      result: { done: true },
+    });
+    expect((await readJob(runDir, later.jobId)).status).toBe("queued");
+    expect((await readRun(runDir)).worker?.exitedAt).toBeDefined();
+  });
+
   it("aborts the running job on cancel and cancels the rest", async () => {
     const running = await enqueueJob(runDir, { kind: "wait", input: null });
     const queued = await enqueueJob(runDir, { kind: "wait", input: null });
@@ -135,8 +165,12 @@ describe("runWorker", () => {
       handlers: {
         wait: async (_job, context) => {
           await requestCancel(runDir);
+          // A worker tick can abort the signal while requestCancel is still writing, before a
+          // listener exists; an abort event that already fired never fires again.
           await new Promise((_, reject) => {
-            context.signal.addEventListener("abort", () => reject(new Error("aborted")));
+            const abort = () => reject(new Error("aborted"));
+            if (context.signal.aborted) abort();
+            else context.signal.addEventListener("abort", abort, { once: true });
           });
         },
       },

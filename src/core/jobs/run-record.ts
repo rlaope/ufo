@@ -1,11 +1,13 @@
-import { mkdir, open, readFile, rm, stat } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import path from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 import { GitShaSchema } from "../../domain/index.js";
-import { isErrno, readJsonIfExists, writeJsonAtomic } from "./atomic-file.js";
+import { ensureTrustedDir } from "../paths.js";
+import { readJsonIfExists, writeJsonAtomic } from "./atomic-file.js";
+import { withLockFile } from "./lock-file.js";
 import {
   ARTIFACTS_DIR,
+  CONTROL_LOCK_FILE,
   JOBS_DIR,
   LOGS_DIR,
   RUN_FILE,
@@ -15,21 +17,20 @@ import {
   runsRoot,
   SAMPLES_DIR,
 } from "./paths.js";
-import { isPidAlive, PgidSchema, StartTimeSchema } from "./process.js";
+import { PgidSchema, StartTimeSchema } from "./process.js";
 
 const IsoSchema = z.iso.datetime({ offset: true });
-const AbsolutePathSchema = z
-  .string()
-  .max(4096)
-  .refine((p) => path.isAbsolute(p), "must be an absolute path");
 
 export const RunStatusSchema = z.enum(["running", "finished", "cancelled", "failed"]);
 export type RunStatus = z.infer<typeof RunStatusSchema>;
 
-/** The detached worker. It leads its own process group, so its PID is also its group id. */
+/**
+ * The detached worker. It leads its own process group, so its PID is also its group id. The
+ * start time identifies the process before anything signals it (PID reuse).
+ */
 export const WorkerRecordSchema = z.strictObject({
   pid: PgidSchema,
-  startTime: StartTimeSchema.optional(),
+  startTime: StartTimeSchema,
   launchedAt: IsoSchema,
   /** Set by the worker when it exits normally (no jobs left, or cancelled). */
   exitedAt: IsoSchema.optional(),
@@ -40,7 +41,7 @@ export type WorkerRecord = z.infer<typeof WorkerRecordSchema>;
 export const ChildGroupSchema = z.strictObject({
   pgid: PgidSchema,
   /** Start time of the group leader when it was tracked; guards against PID reuse on kill. */
-  startTime: StartTimeSchema.optional(),
+  startTime: StartTimeSchema,
 });
 export type ChildGroup = z.infer<typeof ChildGroupSchema>;
 
@@ -54,7 +55,7 @@ export const ContainerLabelSchema = z
 
 export const RunRecordSchema = z.strictObject({
   runId: RunIdSchema,
-  /** Identifies the target repository; also names its worktree directory under `$UFO_HOME`. */
+  /** Identifies the target repository; also names its state and arms directories. */
   repoId: z
     .string()
     .max(128)
@@ -62,14 +63,7 @@ export const RunRecordSchema = z.strictObject({
   status: RunStatusSchema,
   createdAt: IsoSchema,
   updatedAt: IsoSchema,
-  /** The run branch, `ufo/run-<ts>`. */
-  branch: z
-    .string()
-    .min(1)
-    .max(255)
-    .regex(/^[^\p{Cc}\s]+$/u)
-    .optional(),
-  /** Recorded SHAs: resume resets each worktree to its arm's SHA. */
+  /** Recorded SHAs of the arms, for status views. Resume resets A to its own HEAD. */
   shas: z
     .strictObject({
       baseline: GitShaSchema.optional(),
@@ -77,7 +71,6 @@ export const RunRecordSchema = z.strictObject({
       b: GitShaSchema.optional(),
     })
     .default({}),
-  arms: z.strictObject({ a: AbsolutePathSchema, b: AbsolutePathSchema }).optional(),
   worker: WorkerRecordSchema.optional(),
   childGroups: z.array(ChildGroupSchema).max(10_000).default([]),
   ports: z.array(PortSchema).max(1000).default([]),
@@ -86,24 +79,26 @@ export const RunRecordSchema = z.strictObject({
 export type RunRecord = z.infer<typeof RunRecordSchema>;
 
 export type RunInit = Pick<z.input<typeof RunRecordSchema>, "runId" | "repoId"> &
-  Partial<Pick<z.input<typeof RunRecordSchema>, "branch" | "shas" | "arms">>;
+  Partial<Pick<z.input<typeof RunRecordSchema>, "shas">>;
 
 /**
- * Creates `<commonDir>/ufo/runs/<runId>/` with its `run.json` and empty `jobs/`, `samples/`,
- * `artifacts/`, and `logs/` directories. Fails if the run directory already exists.
+ * Creates `$UFO_HOME/private/runs/<repoId>/<runId>/` (mode 0700) with its `run.json` and empty
+ * `jobs/`, `samples/`, `artifacts/`, and `logs/` directories. `home` is the trusted home's real
+ * path. Fails if the run directory already exists.
  */
-export async function createRun(
-  commonDir: string,
+export async function createRunState(
+  home: string,
   init: RunInit,
   now: Date = new Date(),
 ): Promise<{ runDir: string; run: RunRecord }> {
   const at = now.toISOString();
   const run = RunRecordSchema.parse({ ...init, status: "running", createdAt: at, updatedAt: at });
-  const runDir = runDirFor(commonDir, run.runId);
-  await mkdir(runsRoot(commonDir), { recursive: true });
-  await mkdir(runDir);
+  const runDir = runDirFor(home, run.repoId, run.runId);
+  await ensureTrustedDir(home, runsRoot(home, run.repoId));
+  // Not recursive, so an existing run directory is refused rather than reused.
+  await mkdir(runDir, { mode: 0o700 });
   for (const dir of [JOBS_DIR, SAMPLES_DIR, ARTIFACTS_DIR, LOGS_DIR]) {
-    await mkdir(path.join(runDir, dir));
+    await mkdir(path.join(runDir, dir), { mode: 0o700 });
   }
   await writeJsonAtomic(path.join(runDir, RUN_FILE), run);
   return { runDir, run };
@@ -130,57 +125,23 @@ export function updateRun(
   return withRunLock(runDir, async () => replaceRun(runDir, mutate(await readRun(runDir))));
 }
 
-const RUN_LOCK_TIMEOUT_MS = 10_000;
-const RUN_LOCK_RETRY_MS = 10;
-/** A lock file whose holder never wrote its PID (crash right after create) is stale after this. */
-const RUN_LOCK_UNREADABLE_STALE_MS = 2000;
-
 /**
- * Runs `fn` while holding `run.lock`, a file created with `wx` that holds the holder's PID.
- * The worker, the CLI, and the MCP server all mutate one run directory, and critical sections
- * are a few file operations long. A lock whose holder PID is dead is taken over.
- *
- * Limitation: two processes that both find the same stale lock at the same instant can both
- * take it over. A stale run lock only exists after a process died inside a critical section.
+ * Runs `fn` while holding `run.lock`. The worker, the CLI, and the MCP server all mutate one run
+ * directory, and these critical sections are a few file operations long.
  */
-export async function withRunLock<T>(runDir: string, fn: () => Promise<T>): Promise<T> {
-  const lockFile = path.join(runDir, RUN_LOCK_FILE);
-  const deadline = Date.now() + RUN_LOCK_TIMEOUT_MS;
-  for (;;) {
-    try {
-      const handle = await open(lockFile, "wx");
-      try {
-        await handle.writeFile(String(process.pid));
-      } finally {
-        await handle.close();
-      }
-      break;
-    } catch (error) {
-      if (!isErrno(error, "EEXIST")) throw error;
-    }
-    if (await isRunLockStale(lockFile)) {
-      await rm(lockFile, { force: true });
-      continue;
-    }
-    if (Date.now() > deadline) throw new Error(`timed out waiting for ${lockFile}`);
-    await delay(RUN_LOCK_RETRY_MS);
-  }
-  try {
-    return await fn();
-  } finally {
-    await rm(lockFile, { force: true });
-  }
+export function withRunLock<T>(runDir: string, fn: () => Promise<T>): Promise<T> {
+  return withLockFile(path.join(runDir, RUN_LOCK_FILE), { timeoutMs: 10_000, retryMs: 10 }, fn);
 }
 
-async function isRunLockStale(lockFile: string): Promise<boolean> {
-  try {
-    const pid = Number((await readFile(lockFile, "utf8")).trim());
-    if (Number.isInteger(pid) && pid > 0) return !isPidAlive(pid);
-    const { mtimeMs } = await stat(lockFile);
-    return Date.now() - mtimeMs > RUN_LOCK_UNREADABLE_STALE_MS;
-  } catch (error) {
-    // Released between our create attempt and this read: try again.
-    if (isErrno(error, "ENOENT")) return false;
-    throw error;
-  }
+/**
+ * Runs `fn` while holding `control.lock`: launching a worker, resume, cancel, finish, and the
+ * calls that queue work take turns, so two of them never act on one run at once. Never taken
+ * inside `withRunLock`.
+ */
+export function withControlLock<T>(runDir: string, fn: () => Promise<T>): Promise<T> {
+  return withLockFile(
+    path.join(runDir, CONTROL_LOCK_FILE),
+    { timeoutMs: 120_000, retryMs: 25 },
+    fn,
+  );
 }

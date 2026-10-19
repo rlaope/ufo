@@ -28,6 +28,7 @@
   },
   "files": [
     "dist",
+    "src/techniques/**/*.yaml",
     "skills",
     "README.md",
     "LICENSE"
@@ -39,10 +40,11 @@
     "format": "biome format --write .",
     "test": "vitest run",
     "test:unit": "vitest run test/unit",
-    "test:integration": "vitest run test/integration --passWithNoTests"
+    "test:integration": "vitest run test/integration"
   },
   "dependencies": {
     "picomatch": "^4.0.7",
+    "yaml": "^2.9.1",
     "zod": "^4.6.7"
   },
   "devDependencies": {

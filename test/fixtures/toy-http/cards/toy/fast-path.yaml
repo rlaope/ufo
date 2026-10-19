@@ -1,0 +1,8 @@
+id: toy.fast-path
+domain: toy
+title: Remove a fixed delay from the request path
+kind: guided
+riskClass: lossless
+signals:
+  - Request latency is dominated by a fixed sleep in the handler
+verifiedIn: unverified

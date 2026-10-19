@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -65,6 +65,23 @@ async function exportedFiles(dir: string): Promise<Map<string, string>> {
 }
 
 describe("writeBundle", () => {
+  it("writes 0600 files and refuses a planted bundles symlink instead of following it (F7)", async () => {
+    const { dir } = await writeBundle(runDir, plantedBundle());
+    expect((await stat(path.join(dir, BUNDLE_FILE))).mode & 0o777).toBe(0o600);
+    await rm(path.join(runDir, "bundles"), { recursive: true });
+    const outside = await mkdtemp(path.join(os.tmpdir(), "ufo-bundle-outside-"));
+    try {
+      await mkdir(path.join(outside, "kept"));
+      await symlink(outside, path.join(runDir, "bundles"));
+      await expect(writeBundle(runDir, plantedBundle())).rejects.toMatchObject({
+        code: "unsafe_state",
+      });
+      expect(await readdir(outside)).toEqual(["kept"]);
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
   it("exports no planted secret, auth header, connection password, or home path (AC 10)", async () => {
     const { dir } = await writeBundle(runDir, plantedBundle());
     const files = await exportedFiles(dir);

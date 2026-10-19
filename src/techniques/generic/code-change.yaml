@@ -1,0 +1,17 @@
+# A behavior-preserving code change the agent writes itself. The measurement, the test pass set,
+# and the configured oracles decide whether it is kept; nothing about this card lets a change
+# through on its own.
+id: generic.code-change
+domain: generic
+title: Plain behavior-preserving code change
+kind: guided
+riskClass: lossless
+signals:
+  - Profiler or measurement evidence points at code in the target that a behavior-preserving edit can make faster
+verification:
+  - Every oracle in ufo.yaml runs on the candidate, and the baseline test pass set must still pass
+  - The primary metric is measured in interleaved A/B pairs; UFO keeps or drops the change
+traps:
+  - A change that alters results is not lossless; use a lossy card that needs the lossy opt-in
+  - Tests, benchmarks, workload drivers, CI files, and ufo.yaml are protected paths
+verifiedIn: unverified

@@ -6,7 +6,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  createRun,
+  createRunState,
   enqueueJob,
   isPidAlive,
   isProcessGroupAlive,
@@ -35,7 +35,7 @@ const leftovers: number[] = [];
 
 beforeEach(async () => {
   root = await mkdtemp(path.join(os.tmpdir(), "ufo-worker-"));
-  ({ runDir } = await createRun(root, { runId: "run-worker", repoId: "repo" }));
+  ({ runDir } = await createRunState(root, { runId: "run-worker", repoId: "repo" }));
 });
 
 afterEach(async () => {

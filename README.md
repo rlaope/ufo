@@ -15,7 +15,7 @@ UFO is one npm package that bundles a CLI, an MCP server, and agent skills. It p
 
 1. **Init.** You and your agent draft `ufo.yaml`: one primary metric, the workload that measures it, correctness oracles, guardrails, and the technique cards to try.
 2. **Approve.** You run `ufo approve` in a terminal. It prints every command UFO will run and records a hash of the file. Agents cannot approve, and a changed file needs approval again.
-3. **Baseline.** UFO creates a run branch and two worktrees outside your repository: arm A (the current best) and arm B (A plus one candidate). It runs the oracles and measures arm A to learn the noise floor.
+3. **Baseline.** UFO creates a run branch and two clones of your repository under its own home directory: arm A (the current best) and arm B (A plus one candidate). It runs the oracles and measures arm A to learn the noise floor.
 4. **Profile.** The domain pack's profiler records evidence: a flame graph, a query log, a bundle analysis, a token trace.
 5. **Propose.** The agent reads the evidence, picks a technique card that matches it, and submits one patch.
 6. **Decide.** UFO checks the patch against policy, applies it to arm B, builds, runs the oracles, and measures A against B in interleaved pairs.
@@ -57,7 +57,7 @@ Other targets, such as native hot loops, mobile apps, GPU kernels, and serverles
 
 ## Safety
 
-- UFO works in its own worktrees. Your branch and working tree are never touched, and UFO never pushes.
+- UFO works in its own clones and keeps its state in its own home directory, outside your repository. Your branch and working tree are never touched, and UFO never pushes. See [docs/safety.md](docs/safety.md) for the threat model.
 - Approval is human-only: `ufo approve` requires an interactive terminal, and no MCP tool can approve or widen opt-ins. UFO runs only the approved commands and never calls `sudo`.
 - Patches that touch tests, workload or oracle specs, `ufo.yaml`, CI test steps, `.env*` files, or secrets are rejected before they are applied. So is any patch that shrinks the test set.
 - Lossy techniques and upgrades are off unless you opt in when approving.

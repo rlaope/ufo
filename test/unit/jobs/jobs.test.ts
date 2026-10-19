@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clampWaitS,
-  createRun,
+  createRunState,
   enqueueJob,
   JOBS_DIR,
   listJobs,
@@ -19,7 +19,7 @@ let runDir: string;
 
 beforeEach(async () => {
   root = await mkdtemp(path.join(os.tmpdir(), "ufo-jobs-"));
-  ({ runDir } = await createRun(root, { runId: "run-jobs", repoId: "repo" }));
+  ({ runDir } = await createRunState(root, { runId: "run-jobs", repoId: "repo" }));
 });
 
 afterEach(async () => {

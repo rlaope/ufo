@@ -1,75 +1,67 @@
-import { mkdir, open, readFile, rm, stat } from "node:fs/promises";
+import { rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
-import { isErrno, writeJsonAtomic } from "./atomic-file.js";
-import { MACHINE_LOCK_FILE, RunIdSchema, ufoHome } from "./paths.js";
-import { isPidAlive, PidSchema, readProcessStartTime, StartTimeSchema } from "./process.js";
+import { ensureTrustedDir, privateRoot, TrustError } from "../paths.js";
+import {
+  isErrno,
+  OPEN_CREATE_EXCLUSIVE,
+  openNoFollow,
+  readJsonIfExists,
+  readTextNoFollow,
+} from "./atomic-file.js";
+import { machineLockPath, RUN_FILE, RunIdSchema, runDirFor } from "./paths.js";
+import { RunRecordSchema } from "./run-record.js";
 
+/**
+ * The machine lock names the run that holds it, not a process: a run holds it from `startRun`
+ * until it finishes, is cancelled, or fails to start, whether or not a worker is alive.
+ */
 export const MachineLockSchema = z.strictObject({
-  pid: PidSchema,
-  /** Absent when the platform cannot report process start times. */
-  startTime: StartTimeSchema.optional(),
   runId: RunIdSchema,
+  repoId: RunRecordSchema.shape.repoId,
   acquiredAt: z.iso.datetime({ offset: true }),
 });
 export type MachineLock = z.infer<typeof MachineLockSchema>;
-
-/** Added to results when a holder's start time is unknown, so PID reuse cannot be detected. */
-export const PID_ONLY_LIMITATION =
-  "machine lock: process start time unavailable, so stale-lock detection uses PID liveness " +
-  "only; a lock whose PID was reused by another process is reported as held";
 
 /** A lock file that is still empty or partial this long after creation is abandoned. */
 const UNREADABLE_LOCK_STALE_MS = 2000;
 const MAX_ATTEMPTS = 3;
 
 export type AcquireResult =
-  | { acquired: true; lock: MachineLock; cleared?: MachineLock; limitation?: string }
-  | { acquired: false; holder?: MachineLock; limitation?: string };
+  | { acquired: true; lock: MachineLock; cleared?: MachineLock }
+  | { acquired: false; holder?: MachineLock };
 
 interface LockOptions {
-  /** Defaults to `ufoHome()`. */
-  home?: string;
-}
-
-function lockPath(home: string | undefined): string {
-  return path.join(home ?? ufoHome(), MACHINE_LOCK_FILE);
+  /** The trusted home's real path (see `trustedHome`). */
+  home: string;
 }
 
 /**
- * Takes the machine-wide run lock at `$UFO_HOME/lock` by exclusive create (`wx`). Fails while a
- * live process holds it. A lock is stale, and is cleared, when its PID is dead or when that PID
- * now belongs to a process with a different start time (PID reuse).
+ * Takes the machine-wide run lock at `$UFO_HOME/private/lock` for `runId` by exclusive create.
+ * The run's state must exist first: a lock is stale, and is cleared, only when the run holding
+ * it is no longer `running` or its state is gone. A `running` run holds the lock even while no
+ * worker is alive; `ufo cancel` or `ufo resume` handle it.
  *
  * Limitation: two processes that clear the same stale lock at the same instant can both acquire.
  */
 export async function acquireMachineLock(
-  options: LockOptions & { runId: string; pid?: number },
+  options: LockOptions & { runId: string; repoId: string },
 ): Promise<AcquireResult> {
-  const file = lockPath(options.home);
-  await mkdir(path.dirname(file), { recursive: true });
-  const pid = options.pid ?? process.pid;
-  const startTime = await readProcessStartTime(pid);
+  const file = machineLockPath(options.home);
+  await ensureTrustedDir(options.home, privateRoot(options.home));
   const lock = MachineLockSchema.parse({
-    pid,
-    ...(startTime === undefined ? {} : { startTime }),
     runId: options.runId,
+    repoId: options.repoId,
     acquiredAt: new Date().toISOString(),
   });
-  const ownLimitation = startTime === undefined ? { limitation: PID_ONLY_LIMITATION } : {};
   let cleared: MachineLock | undefined;
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     if (await createExclusive(file, `${JSON.stringify(lock, null, 2)}\n`)) {
-      return { acquired: true, lock, ...(cleared ? { cleared } : {}), ...ownLimitation };
+      return { acquired: true, lock, ...(cleared ? { cleared } : {}) };
     }
-    const state = await inspect(file);
+    const state = await inspect(options.home, file);
     if (state.kind === "held") {
-      const { holder, limitation } = state;
-      return {
-        acquired: false,
-        ...(holder ? { holder } : {}),
-        ...(limitation ? { limitation } : {}),
-      };
+      return { acquired: false, ...(state.holder ? { holder: state.holder } : {}) };
     }
     if (state.kind === "stale") {
       cleared = state.holder ?? cleared;
@@ -83,44 +75,21 @@ export async function acquireMachineLock(
 export async function releaseMachineLock(
   options: LockOptions & { runId: string },
 ): Promise<boolean> {
-  const file = lockPath(options.home);
+  const file = machineLockPath(options.home);
   const holder = await readLock(file);
   if (holder?.runId !== options.runId) return false;
   await rm(file, { force: true });
   return true;
 }
 
-/**
- * Hands the lock held by `runId` to another process, e.g. from the CLI that acquired it to the
- * detached worker it launched.
- */
-export async function transferMachineLock(
-  options: LockOptions & { runId: string; pid: number },
-): Promise<MachineLock> {
-  const file = lockPath(options.home);
-  const holder = await readLock(file);
-  if (holder?.runId !== options.runId) {
-    throw new Error(`the machine lock is not held by run ${options.runId}`);
-  }
-  const startTime = await readProcessStartTime(options.pid);
-  const lock = MachineLockSchema.parse({
-    pid: options.pid,
-    ...(startTime === undefined ? {} : { startTime }),
-    runId: options.runId,
-    acquiredAt: holder.acquiredAt,
-  });
-  await writeJsonAtomic(file, lock);
-  return lock;
-}
-
-export function readMachineLock(options: LockOptions = {}): Promise<MachineLock | undefined> {
-  return readLock(lockPath(options.home));
+export function readMachineLock(options: LockOptions): Promise<MachineLock | undefined> {
+  return readLock(machineLockPath(options.home));
 }
 
 async function createExclusive(file: string, text: string): Promise<boolean> {
-  let handle: Awaited<ReturnType<typeof open>>;
+  let handle: Awaited<ReturnType<typeof openNoFollow>>;
   try {
-    handle = await open(file, "wx");
+    handle = await openNoFollow(file, OPEN_CREATE_EXCLUSIVE);
   } catch (error) {
     if (isErrno(error, "EEXIST")) return false;
     throw error;
@@ -139,7 +108,7 @@ async function createExclusive(file: string, text: string): Promise<boolean> {
 
 async function readLock(file: string): Promise<MachineLock | undefined> {
   try {
-    return MachineLockSchema.parse(JSON.parse(await readFile(file, "utf8")));
+    return MachineLockSchema.parse(JSON.parse(await readTextNoFollow(file)));
   } catch (error) {
     if (isErrno(error, "ENOENT")) return undefined;
     throw error;
@@ -147,16 +116,17 @@ async function readLock(file: string): Promise<MachineLock | undefined> {
 }
 
 type LockState =
-  | { kind: "held"; holder?: MachineLock; limitation?: string }
+  | { kind: "held"; holder?: MachineLock }
   | { kind: "stale"; holder?: MachineLock }
   | { kind: "gone" };
 
-async function inspect(file: string): Promise<LockState> {
+async function inspect(home: string, file: string): Promise<LockState> {
   let holder: MachineLock;
   try {
-    holder = MachineLockSchema.parse(JSON.parse(await readFile(file, "utf8")));
+    holder = MachineLockSchema.parse(JSON.parse(await readTextNoFollow(file)));
   } catch (error) {
     if (isErrno(error, "ENOENT")) return { kind: "gone" };
+    if (error instanceof TrustError) throw error;
     // Empty or partial: another process may be writing it right now.
     try {
       const { mtimeMs } = await stat(file);
@@ -166,16 +136,18 @@ async function inspect(file: string): Promise<LockState> {
       throw statError;
     }
   }
-  if (!isPidAlive(holder.pid)) return { kind: "stale", holder };
-  if (holder.startTime === undefined) {
-    return { kind: "held", holder, limitation: PID_ONLY_LIMITATION };
+  let value: unknown;
+  try {
+    value = await readJsonIfExists(
+      path.join(runDirFor(home, holder.repoId, holder.runId), RUN_FILE),
+    );
+  } catch {
+    // Unreadable state cannot prove the run ended; the lock stays held.
+    return { kind: "held", holder };
   }
-  const current = await readProcessStartTime(holder.pid);
-  if (current === undefined) {
-    // Alive but `ps` cannot see it (e.g. it exited since the liveness check, or ps failed).
-    return isPidAlive(holder.pid)
-      ? { kind: "held", holder, limitation: PID_ONLY_LIMITATION }
-      : { kind: "stale", holder };
-  }
-  return current === holder.startTime ? { kind: "held", holder } : { kind: "stale", holder };
+  // The run's state is gone.
+  if (value === undefined) return { kind: "stale", holder };
+  const run = RunRecordSchema.safeParse(value);
+  if (!run.success) return { kind: "held", holder };
+  return run.data.status === "running" ? { kind: "held", holder } : { kind: "stale", holder };
 }

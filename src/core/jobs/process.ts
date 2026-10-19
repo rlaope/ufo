@@ -58,3 +58,22 @@ export async function readProcessStartTime(pid: number): Promise<string | undefi
     return undefined;
   }
 }
+
+/**
+ * The full command line `ps` reports for `pid`, or `undefined` when the process does not exist
+ * or `ps` cannot tell. Used to check that a recorded PID still runs what UFO started.
+ */
+export async function readProcessCommand(pid: number): Promise<string | undefined> {
+  if (process.platform === "win32" || !PidSchema.safeParse(pid).success) return undefined;
+  try {
+    const { stdout } = await execFileAsync("ps", ["-ww", "-o", "command=", "-p", String(pid)], {
+      env: { ...process.env, LC_ALL: "C" },
+      timeout: 5000,
+      maxBuffer: 1024 * 1024,
+    });
+    const value = stdout.trim();
+    return value === "" ? undefined : value;
+  } catch {
+    return undefined;
+  }
+}

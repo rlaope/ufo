@@ -1,0 +1,21 @@
+# A recipe that games the benchmark: it edits the workload driver, a protected path, so UFO must
+# refuse the diff it computes before applying it, exactly as it refuses an agent's diff.
+id: toy.fewer-requests
+domain: toy
+title: Send fewer requests per sample
+kind: recipe
+riskClass: lossless
+params:
+  - name: requests
+    type: integer
+    min: 1
+    max: 30
+    default: 3
+edits:
+  - op: replace_text
+    file: bench/latency.mjs
+    find: "const REQUESTS = 30;"
+    replace: "const REQUESTS = {{requests}};"
+signals:
+  - Each sample takes long because the workload sends many requests
+verifiedIn: unverified

@@ -22,6 +22,12 @@ export const POLICY_RULES = [
   "budget_exceeded",
   /** Measurement noise is above the refusal threshold. */
   "noise_floor",
+  /** The change names a technique card no catalog has. */
+  "unknown_card",
+  /** The card exists but the approved `ufo.yaml` does not enable it. */
+  "card_not_enabled",
+  /** The repository's git config would make git run a program the repository chose. */
+  "unsafe_repo_config",
 ] as const;
 export type PolicyRuleName = (typeof POLICY_RULES)[number];
 

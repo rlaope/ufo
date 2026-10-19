@@ -32,6 +32,25 @@ export const OptInListSchema = uniqueArray(
 );
 export const TargetListSchema = uniqueArray(TargetSchema, MAX_TARGETS, (t) => t, "targets");
 
+const MAX_ENV_NAMES = 64;
+
+/**
+ * An environment variable a command may see besides UFO's defaults. `UFO_*` names are UFO's
+ * own (`UFO_ARM`, `UFO_PORT`, ...), so `ufo.yaml` cannot list them.
+ */
+export const EnvNameSchema = z
+  .string()
+  .max(128)
+  .regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "must be an environment variable name")
+  .refine((name) => !name.startsWith("UFO_"), "UFO_ names are reserved for UFO's own variables");
+
+export const EnvNameListSchema = uniqueArray(
+  EnvNameSchema,
+  MAX_ENV_NAMES,
+  (name) => name,
+  "environment names",
+);
+
 /** What the worker enforces for one run, derived from the approved `ufo.yaml`. */
 export const PolicySchema = z.strictObject({
   /** Globs, relative to the repository root, that no change may touch. */

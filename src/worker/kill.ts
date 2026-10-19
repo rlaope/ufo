@@ -1,13 +1,16 @@
 import { execFile } from "node:child_process";
+import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 import {
   type ChildGroup,
+  isPidAlive,
   isProcessGroupAlive,
+  readProcessCommand,
   readProcessStartTime,
   readRun,
 } from "../core/jobs/index.js";
-import { runContainerLabel } from "./launch.js";
+import { runContainerLabel, workerArgv } from "./launch.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -23,7 +26,13 @@ export interface KillOptions {
   exec?: Exec;
 }
 
-export type SkipReason = "self" | "not_running" | "pid_reused" | "not_permitted";
+export type SkipReason =
+  | "self"
+  | "not_running"
+  | "pid_reused"
+  | "not_permitted"
+  | "unverified"
+  | "not_ufo_worker";
 
 export interface KillReport {
   /** Groups sent SIGTERM. */
@@ -42,13 +51,17 @@ const SIGKILL_WAIT_MS = 2000;
 /**
  * Stops everything a run started: the worker's process group first (so it cannot start more),
  * then every child group in `run.json` re-read after the worker stopped, then containers labeled
- * `ufo.run=<runId>`. A group whose leader PID now has a different start time was reused by an
- * unrelated process and is skipped. Used by resume and cancel; does not change `run.json`.
+ * `ufo.run=<runId>`. Nothing is signalled on the word of `run.json` alone: a group whose leader
+ * now has a different start time was reused by an unrelated process and is skipped, and the
+ * worker's leader must also still run `worker --run-dir <runDir>`. Container labels are
+ * filtered to this run's own (`ufo.run=<runId>` or `ufo.run=<runId>.<suffix>`), the run id
+ * being the run directory's name. Used by resume and cancel; does not change `run.json`.
  */
 export async function killRunProcesses(
   runDir: string,
   options: KillOptions = {},
 ): Promise<KillReport> {
+  const runId = path.basename(runDir);
   const graceMs = options.graceMs ?? 3000;
   const report: KillReport = {
     terminated: [],
@@ -59,7 +72,8 @@ export async function killRunProcesses(
   };
   const { worker } = await readRun(runDir);
   if (worker !== undefined) {
-    await stopGroups([{ pgid: worker.pid, startTime: worker.startTime }], graceMs, report);
+    const command = workerArgv(runDir).join(" ");
+    await stopGroups([{ pgid: worker.pid, startTime: worker.startTime }], graceMs, report, command);
   }
   const run = await readRun(runDir);
   const seen = new Set(worker === undefined ? [] : [worker.pid]);
@@ -68,10 +82,11 @@ export async function killRunProcesses(
     graceMs,
     report,
   );
-  report.containers = await removeContainers(
-    [runContainerLabel(run.runId), ...run.containerLabels],
-    options.exec ?? defaultExec,
+  const own = runContainerLabel(runId);
+  const labels = [own, ...run.containerLabels].filter(
+    (label) => label === own || label.startsWith(`${own}.`),
   );
+  report.containers = await removeContainers(labels, options.exec ?? defaultExec);
   return report;
 }
 
@@ -79,10 +94,11 @@ async function stopGroups(
   groups: readonly ChildGroup[],
   graceMs: number,
   report: KillReport,
+  leaderCommand?: string,
 ): Promise<void> {
   const signalled: number[] = [];
   for (const { pgid, startTime } of groups) {
-    const reason = (await skipReason(pgid, startTime)) ?? signal(pgid, "SIGTERM");
+    const reason = (await skipReason(pgid, startTime, leaderCommand)) ?? signal(pgid, "SIGTERM");
     if (reason === undefined) {
       signalled.push(pgid);
     } else {
@@ -97,17 +113,26 @@ async function stopGroups(
   report.survivors.push(...(await waitForExit(leftover, SIGKILL_WAIT_MS)));
 }
 
+/**
+ * Why the group must not be signalled. While the leader lives, its start time (and, for the
+ * worker, its command line) identifies the group; a leader whose start time cannot be read is
+ * not trusted. Once only members remain, the id cannot have been reused: a PID is not handed
+ * out while a group with that id exists.
+ */
 async function skipReason(
   pgid: number,
-  startTime: string | undefined,
+  startTime: string,
+  leaderCommand: string | undefined,
 ): Promise<SkipReason | undefined> {
   if (pgid === process.pid) return "self";
   if (!isProcessGroupAlive(pgid)) return "not_running";
-  if (startTime !== undefined) {
-    // While the leader lives, its start time identifies the group. Once only members remain, the
-    // id cannot have been reused: a PID is not handed out while a group with that id exists.
-    const current = await readProcessStartTime(pgid);
-    if (current !== undefined && current !== startTime) return "pid_reused";
+  if (!isPidAlive(pgid)) return undefined;
+  const current = await readProcessStartTime(pgid);
+  if (current === undefined) return isPidAlive(pgid) ? "unverified" : undefined;
+  if (current !== startTime) return "pid_reused";
+  if (leaderCommand !== undefined) {
+    const command = await readProcessCommand(pgid);
+    if (command === undefined || !command.includes(leaderCommand)) return "not_ufo_worker";
   }
   return undefined;
 }

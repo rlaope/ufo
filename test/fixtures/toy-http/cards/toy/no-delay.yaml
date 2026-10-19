@@ -1,0 +1,22 @@
+id: toy.no-delay
+domain: toy
+title: Turn off the configured extra delay
+kind: recipe
+riskClass: lossless
+params:
+  - name: delay_ms
+    type: integer
+    min: 0
+    max: 100
+    default: 0
+edits:
+  - op: set_property
+    file: toy.properties
+    key: items.extra_delay_ms
+    value: "{{delay_ms}}"
+commandTemplates:
+  - id: reset
+    run: node --check server.mjs
+signals:
+  - toy.properties sets a non-zero items.extra_delay_ms
+verifiedIn: unverified

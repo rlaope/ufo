@@ -45,6 +45,51 @@ describe("TechniqueCardSchema", () => {
     });
   });
 
+  it("accepts a recipe card made only of edits with declared placeholders", () => {
+    const parsed = expectAccepts(TechniqueCardSchema, {
+      ...techniqueCard(),
+      params: [{ name: "threads", type: "integer", min: 1, max: 64, default: 8 }],
+      commandTemplates: [],
+      edits: [
+        { op: "set_property", file: "conf/app.properties", key: "pool.size", value: "{{threads}}" },
+        { op: "replace_text", file: "src/server.js", find: "await sleep(5);\n", replace: "" },
+      ],
+    });
+    expect(parsed.edits).toHaveLength(2);
+  });
+
+  it.each([
+    [
+      "guided card with edits",
+      { kind: "guided", edits: [{ op: "replace_text", file: "a.js", find: "x", replace: "y" }] },
+    ],
+    ["recipe without templates or edits", { commandTemplates: [], edits: [] }],
+    [
+      "undeclared edit placeholder",
+      { edits: [{ op: "set_property", file: "a.properties", key: "k", value: "{{nope}}" }] },
+    ],
+    [
+      "property key with =",
+      { edits: [{ op: "set_property", file: "a.properties", key: "a=b", value: "1" }] },
+    ],
+    [
+      "multi-line property value",
+      { edits: [{ op: "set_property", file: "a.properties", key: "k", value: "1\n2" }] },
+    ],
+    ["empty find", { edits: [{ op: "replace_text", file: "a.js", find: "", replace: "y" }] }],
+    [
+      "absolute edit path",
+      { edits: [{ op: "replace_text", file: "/etc/hosts", find: "x", replace: "y" }] },
+    ],
+    [
+      "escaping edit path",
+      { edits: [{ op: "replace_text", file: "../x.js", find: "x", replace: "y" }] },
+    ],
+    ["unknown edit op", { edits: [{ op: "delete_file", file: "a.js" }] }],
+  ])("rejects %s", (_label, patch) => {
+    expectRejects(TechniqueCardSchema, { ...techniqueCard(), ...patch });
+  });
+
   it("rejects an empty object", () => {
     expectRejects(TechniqueCardSchema, {});
   });
