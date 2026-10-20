@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
+  bindRepository,
   captureEnv,
   captureGitEnv,
   describeDefaultEnv,
@@ -197,6 +198,16 @@ describe("trustProcessPath", () => {
         if (cwd === path.join(home, "wt")) expect(repo?.root).toBe(cwd);
         else expect(repo, cwd).toBeUndefined();
       }
+      // Code review F1: a bind that refuses it (ufo mcp) leaves PATH as it was, for later runs.
+      const env: NodeJS.ProcessEnv = {
+        UFO_HOME: path.join(home, ".ufo"),
+        PATH: [installed, "/usr/bin"].join(path.delimiter),
+      };
+      const notes = path.join(home, "notes");
+      await expect(
+        bindRepository({ dir: notes, cwd: notes, env, requireRepo: true }),
+      ).rejects.toMatchObject({ code: "not_a_repo" });
+      expect(env.PATH).toBe([installed, "/usr/bin"].join(path.delimiter));
     } finally {
       homedir.mockRestore();
       rmSync(root, { recursive: true, force: true });
