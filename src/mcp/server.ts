@@ -150,10 +150,11 @@ export function createServer(options: McpServeOptions & { readonly binding: Bind
  */
 export async function serveMcp(options: McpServeOptions): Promise<void> {
   const bind = async (requireRepo: boolean) => {
-    // The working directory is the session's only when it is the bound one (`bindDirectory`).
+    // The working directory is no root of trust for PATH either, wherever the host starts the
+    // server: `/` and your home are never roots (`trustProcessPath`), so a desktop start works.
     const { repo, dropped } = await bindRepository({
       dir: options.dir,
-      cwd: options.dir,
+      cwd: process.cwd(),
       home: options.context?.home,
       requireRepo,
       ...(options.env === undefined ? {} : { env: options.env }),

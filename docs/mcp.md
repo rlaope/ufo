@@ -29,7 +29,8 @@ writes only protocol messages on stdout; diagnostics go to stderr. It exits when
   filtering its `PATH` again for that repository (see PATH). Only the bound directory is the
   session's: the working directory counts only when it is the one bound (Codex, and Claude Code
   without `CLAUDE_PROJECT_DIR`), so a host that starts its servers in `/` still works with
-  `--repo` or `CLAUDE_PROJECT_DIR`. Bound to your home directory or a directory above it, the
+  `--repo` or `CLAUDE_PROJECT_DIR`; the `PATH` filter still leaves out what is inside the
+  working directory, wherever it is (`/` and your home are never left out). Bound to your home directory or a directory above it, the
   server runs no git and answers every tool with `not_a_repo`, naming the setting it came from:
   open a project folder ([safety.md](safety.md) R3b). A folder inside a repository at your home
   (dotfiles) is answered `not_a_repo` the same way, until it is a repository of its own. A work tree that shares a git directory

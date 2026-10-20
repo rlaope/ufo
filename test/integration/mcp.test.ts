@@ -392,6 +392,25 @@ describe("the server's repository and PATH", { timeout: TIMEOUT_MS }, () => {
     });
   });
 
+  // Code review F4: the working directory is no root of trust for PATH, wherever --repo binds.
+  it("runs nothing from the working directory, bound elsewhere", async () => {
+    const toy = toyFor();
+    const elsewhere = path.join(toy.root, "elsewhere");
+    const marker = path.join(toy.root, "planted-ran");
+    plantPrograms(path.join(elsewhere, "bin"), marker);
+    const env = {
+      ...serverEnv(toy),
+      PATH: [path.join(elsewhere, "bin"), process.env.PATH ?? ""].join(path.delimiter),
+    };
+    const client = await connect(
+      toy,
+      {},
+      { args: ["--host", "cursor", "--repo", toy.repo], cwd: elsewhere, env },
+    );
+    expect((await ok(client, "inspect_target")).body).toMatchObject({ repoRoot: toy.repo });
+    expect(existsSync(marker) ? readFileSync(marker, "utf8") : "").toBe("");
+  });
+
   // Security S2-3: a repository found after startup is filtered out of PATH before git runs in
   // it, its git directories included: here a linked worktree's main checkout.
   it("filters PATH again for the repository a later call finds", async () => {
@@ -429,7 +448,7 @@ describe("the server's repository and PATH", { timeout: TIMEOUT_MS }, () => {
 
     const worktree = path.join(toy.root, "worktree");
     git(toy.repo, "worktree", "add", "--quiet", worktree);
-    // Started in "/", as a desktop app may start it: only the bound directory is the session's.
+    // Started in "/", as a desktop app may start it: "/" is no root of trust, nothing is dropped.
     const client = await connect(
       toy,
       {},
