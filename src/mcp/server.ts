@@ -6,6 +6,7 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import {
   type AppContext,
+  bindRepository,
   packageVersion,
   type Repo,
   refuseChangedRepository,
@@ -70,22 +71,44 @@ export interface McpServeOptions {
   readonly log: (line: string) => void;
 }
 
-/** One server instance with every UFO tool registered, acting on the pinned repository. */
-export function createServer(options: McpServeOptions & { readonly repo: Repo }): McpServer {
+/**
+ * The repository the server acts on: pinned when it is first found, at startup or, outside a
+ * repository then, on the first call that finds one; before every call after that, it must
+ * still be the one pinned (security N1).
+ */
+export interface Binding {
+  readonly root: () => string;
+  readonly guard: () => Promise<void>;
+}
+
+export function bindingFor(dir: string, repo: Repo | undefined): Binding {
+  let pinned = repo;
+  return {
+    root: () => pinned?.root ?? dir,
+    guard: async () => {
+      if (pinned === undefined) {
+        pinned = await bindRepository(dir);
+        return;
+      }
+      await refuseChangedRepository(pinned, "ufo mcp");
+    },
+  };
+}
+
+/** One server instance with every UFO tool registered, acting on the bound repository. */
+export function createServer(options: McpServeOptions & { readonly binding: Binding }): McpServer {
   const server = new McpServer(
     { name: "ufo", version: packageVersion() },
     { capabilities: { tools: {} } },
   );
-  const context: AppContext = {
-    ...options.context,
-    cwd: options.repo.root,
-    controlLockWaitMs: MCP_CONTROL_LOCK_WAIT_MS,
-  };
   registerTools(server, {
-    context,
+    context: () => ({
+      ...options.context,
+      cwd: options.binding.root(),
+      controlLockWaitMs: MCP_CONTROL_LOCK_WAIT_MS,
+    }),
     hostAgent: options.host,
-    // Before every call: the repository is still the one pinned at startup.
-    guard: () => refuseChangedRepository(options.repo, "ufo mcp"),
+    guard: options.binding.guard,
   });
   return server;
 }
@@ -101,7 +124,6 @@ export async function serveMcp(options: McpServeOptions): Promise<void> {
     cwd: process.cwd(),
     repoDir: options.dir,
     home: options.context?.home,
-    requireRepo: true,
     ...(options.env === undefined ? {} : { env: options.env }),
   });
   // So a host's log says why a program on its PATH is not found.
@@ -109,13 +131,21 @@ export async function serveMcp(options: McpServeOptions): Promise<void> {
     const shown = dropped.map((entry) => (entry === "" ? '""' : entry)).join(path.delimiter);
     options.log(`ufo mcp: left out of PATH, so nothing there runs: ${shown}`);
   }
-  if (repo === undefined) throw new Error(`${options.dir} is not inside a git working tree`);
-  await refuseForeignGitDir(repo);
+  // A user-scope server starts in every session, a repository or not: outside one it answers
+  // every tool with not_a_repo until the folder is one (code review CR-N8).
+  if (repo === undefined) {
+    options.log(
+      `ufo mcp: ${options.dir} is not inside a git working tree; every tool answers not_a_repo until it is`,
+    );
+  } else {
+    await refuseForeignGitDir(repo);
+  }
+  const binding = bindingFor(options.dir, repo);
   const closed = new Promise<void>((resolve) => {
     process.stdin.once("end", resolve);
     process.stdin.once("close", resolve);
   });
-  serveStdio(() => createServer({ ...options, repo }), {
+  serveStdio(() => createServer({ ...options, binding }), {
     legacy: "serve",
     onerror: (error) => options.log(`ufo mcp: ${error.message}`),
   });

@@ -22,8 +22,8 @@ import {
 import { respond as respondTo } from "./results.js";
 
 export interface ToolDeps {
-  /** The app context of every call, fixed by the process: the bound repository and the rest. */
-  readonly context: AppContext;
+  /** The app context of a call, fixed by the process: the bound repository and the rest. */
+  readonly context: () => AppContext;
   /** The host agent driving the run, from `ufo mcp --host`. */
   readonly hostAgent: string;
   /** Runs before every call's workflow; a failure is the call's result. */
@@ -81,7 +81,7 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
       inputSchema: z.strictObject({}),
       annotations: READ_ONLY,
     },
-    () => respond(() => inspectTarget(deps.context)),
+    () => respond(() => inspectTarget(deps.context())),
   );
 
   server.registerTool(
@@ -92,7 +92,7 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
       inputSchema: z.strictObject({}),
       annotations: READ_ONLY,
     },
-    () => respond(() => checkCapabilities(deps.context)),
+    () => respond(() => checkCapabilities(deps.context())),
   );
 
   server.registerTool(
@@ -107,7 +107,7 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
     },
     (args) =>
       respond(() =>
-        listTechniques(deps.context, args.domain === undefined ? {} : { domain: args.domain }),
+        listTechniques(deps.context(), args.domain === undefined ? {} : { domain: args.domain }),
       ),
   );
 
@@ -120,7 +120,7 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
       inputSchema: z.strictObject({ run_id: runId }),
       annotations: RUNS_WORKLOAD,
     },
-    (args) => respond(() => profileTarget(deps.context, scoped(args))),
+    (args) => respond(() => profileTarget(deps.context(), scoped(args))),
   );
 
   server.registerTool(
@@ -134,7 +134,7 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
     },
     (args) =>
       respond(() =>
-        startRun(deps.context, {
+        startRun(deps.context(), {
           hostAgent: deps.hostAgent,
           ...(args.model_id === undefined ? {} : { modelId: args.model_id }),
         }),
@@ -175,7 +175,7 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
     },
     (args) =>
       respond(() =>
-        submitChange(deps.context, {
+        submitChange(deps.context(), {
           ...scoped(args),
           cardId: args.card_id,
           diff: args.diff,
@@ -206,7 +206,7 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
     },
     (args, ctx) =>
       respond(() =>
-        getJob(deps.context, {
+        getJob(deps.context(), {
           ...scoped(args),
           jobId: args.job_id,
           waitS: args.wait_s ?? 0,
@@ -224,7 +224,7 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
       inputSchema: z.strictObject({ run_id: runId }),
       annotations: READ_ONLY,
     },
-    (args) => respond(() => getRun(deps.context, scoped(args))),
+    (args) => respond(() => getRun(deps.context(), scoped(args))),
   );
 
   server.registerTool(
@@ -238,7 +238,7 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
     },
     (args) =>
       respond(() =>
-        finishRun(deps.context, {
+        finishRun(deps.context(), {
           ...scoped(args),
           ...(args.model_id === undefined ? {} : { modelId: args.model_id }),
         }),
@@ -254,7 +254,7 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
       inputSchema: z.strictObject({ run_id: runId }),
       annotations: { ...QUEUES_WORK, destructiveHint: true },
     },
-    (args) => respond(() => resumeRun(deps.context, scoped(args))),
+    (args) => respond(() => resumeRun(deps.context(), scoped(args))),
   );
 
   server.registerTool(
@@ -266,6 +266,6 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
       inputSchema: z.strictObject({ run_id: runId }),
       annotations: { ...QUEUES_WORK, destructiveHint: true, idempotentHint: true },
     },
-    (args) => respond(() => cancelRun(deps.context, scoped(args))),
+    (args) => respond(() => cancelRun(deps.context(), scoped(args))),
   );
 }

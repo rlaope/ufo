@@ -23,9 +23,12 @@ writes only protocol messages on stdout; diagnostics go to stderr. It exits when
   else for Claude Code `CLAUDE_PROJECT_DIR`, then the working directory; for Codex the working
   directory; Cursor needs `--repo` (setup passes `${workspaceFolder}`). `--repo` must be an
   absolute path; a relative one, or a placeholder the host did not substitute, is refused, never
-  resolved against the working directory. A directory outside any git working tree stops the
-  server at startup (`not_a_repo`, exit 2). Approval is per repository: an unapproved one is
-  refused at `start_run`.
+  resolved against the working directory. Outside any git working tree the server keeps serving,
+  since a user-scope server starts in every session, and answers every tool with `not_a_repo`
+  (hint: open a repository folder) until the folder is a repository; it binds to it then. Once
+  bound, the repository's top level, git directory, common directory, and id are pinned and
+  checked before every call. Approval is per repository: an unapproved one is refused at
+  `start_run`.
 - **Host agent.** `--host` is recorded as the run's host agent; `model_id` (a tool argument) is
   the agent's own model id, recorded as self-reported.
 - **PATH.** Before it runs anything, the server drops from its own `PATH` every relative entry,

@@ -206,6 +206,16 @@ export async function refuseForeignGitDir(repo: Repo): Promise<void> {
 }
 
 /**
+ * The repository at `dir`, to bind a long-lived server to: `not_a_repo` outside one, and a work
+ * tree whose git directory is outside it without naming it back is refused (security N1).
+ */
+export async function bindRepository(dir: string): Promise<Repo> {
+  const repo = await resolveRepo(dir);
+  await refuseForeignGitDir(repo);
+  return repo;
+}
+
+/**
  * Refuses to go on when the repository at `pinned.root` is no longer the one pinned: its git
  * directory, common directory, or id changed, so `.git` now names another repository's
  * (security N1). `since` names what pinned it, for the message.

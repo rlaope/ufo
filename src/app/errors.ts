@@ -95,6 +95,7 @@ export interface Failure {
 /** What to do next, for failures whose message leaves it to the caller. */
 const HINTS: Readonly<Record<string, string>> = {
   busy: "another UFO call is working on this run; try again in a few seconds",
+  not_a_repo: "open a repository folder",
   run_starting: "try again in a few seconds, once the start has finished",
   run_finishing: "wait for the finish job, then read the run's report",
   "policy:budget_exceeded": `to go on, ${personMustRun("ufo extend-budget")}; or finish the run`,

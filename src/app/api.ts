@@ -13,6 +13,7 @@ export type { QueuedChange, SubmitChangeOptions } from "./changes.js";
 export { profileTarget, submitChange } from "./changes.js";
 export type { AppContext, Repo } from "./context.js";
 export {
+  bindRepository,
   CONTROL_LOCK_WAIT_MS,
   refuseChangedRepository,
   refuseForeignGitDir,

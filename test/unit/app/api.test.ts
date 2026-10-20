@@ -112,6 +112,7 @@ describe("the adapter modules", () => {
       "EXIT_USAGE",
       "MAX_WAIT_S",
       "RepoPathSchema",
+      "bindRepository",
       "cancelRun",
       "checkCapabilities",
       "describeFailure",

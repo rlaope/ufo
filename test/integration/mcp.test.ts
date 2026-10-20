@@ -314,6 +314,42 @@ describe("the server's repository and PATH", { timeout: TIMEOUT_MS }, () => {
     }
   });
 
+  // Code review CR-N8: a user-scope server starts in every session; outside a repository it
+  // keeps serving, answers not_a_repo, and binds once the folder is one, pinned from then on.
+  it("serves outside a repository, answering not_a_repo until the folder is one", async () => {
+    const toy = toyFor();
+    const plain = path.join(toy.root, "plain");
+    mkdirSync(plain);
+    const client = await connect(toy, {}, { args: ["--host", "cursor", "--repo", plain] });
+    expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual(TOOLS);
+    for (const name of ["inspect_target", "get_run"]) {
+      expect(await call(client, name), name).toMatchObject({
+        isError: true,
+        body: { code: "not_a_repo", retryable: false, hint: "open a repository folder" },
+      });
+    }
+    git(plain, "init", "--quiet");
+    git(
+      plain,
+      "-c",
+      "user.name=t",
+      "-c",
+      "user.email=t@t.invalid",
+      "commit",
+      "--quiet",
+      "--allow-empty",
+      "-m",
+      "x",
+    );
+    expect((await ok(client, "inspect_target")).body).toMatchObject({ repoRoot: plain });
+    renameSync(path.join(plain, ".git"), path.join(toy.root, "plain.git"));
+    writeFileSync(path.join(plain, ".git"), `gitdir: ${path.join(toy.scratch, ".git")}\n`);
+    expect(await call(client, "inspect_target")).toMatchObject({
+      isError: true,
+      body: { code: "unsafe_state" },
+    });
+  });
+
   // Security N1: at startup, a work tree whose git directory is elsewhere is served only when that
   // git directory names it back, as a linked worktree's does.
   it("refuses at startup a .git that names another repository's git directory", async () => {
@@ -328,8 +364,8 @@ describe("the server's repository and PATH", { timeout: TIMEOUT_MS }, () => {
     );
     expect(started.status).toBe(1);
     expect(started.stdout).toBe("");
-    expect(started.stderr).toBe(
-      `ufo mcp: unsafe_state: the git directory of ${imposter} is ${path.join(toy.scratch, ".git")}, outside it, and does not name it as its work tree\n`,
+    expect(started.stderr.trimEnd().split("\n").at(-1)).toBe(
+      `ufo mcp: unsafe_state: the git directory of ${imposter} is ${path.join(toy.scratch, ".git")}, outside it, and does not name it as its work tree`,
     );
 
     const worktree = path.join(toy.root, "worktree");
