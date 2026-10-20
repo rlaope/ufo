@@ -1,9 +1,16 @@
 import path from "node:path";
 import { resetArms } from "../../core/git/index.js";
-import { ARTIFACTS_DIR, type JobRecord, writeJsonAtomic } from "../../core/jobs/index.js";
+import {
+  ARTIFACTS_DIR,
+  type JobRecord,
+  readLedger,
+  readRun,
+  writeJsonAtomic,
+} from "../../core/jobs/index.js";
 import { PolicyError } from "../../core/policy/index.js";
 import type { JobContext } from "../../worker/index.js";
 import { describeResult, succeeded } from "../commands.js";
+import { budgetStatus, wallClockViolation } from "../events.js";
 import { approvalViolation, openRun, toJson } from "../state.js";
 import { type HandlerOptions, newSession } from "./shared.js";
 
@@ -25,8 +32,9 @@ export interface ProfileResult {
 
 /**
  * `profile_target`: the run's workload once in arm A at its commit, with the run's command
- * environment, timing each step. Decides nothing and is no technique (`profileTarget` keeps it
- * within the wall-clock budget); the result is kept as an artifact in the run state.
+ * environment, timing each step. Decides nothing and is no technique, but runs only within the
+ * wall-clock budget, checked when it is queued and again when it starts; the result is kept as
+ * an artifact in the run state.
  */
 export async function handleProfile(
   job: JobRecord,
@@ -36,6 +44,12 @@ export async function handleProfile(
   const open = await openRun(options.home, context.runDir);
   const unapproved = await approvalViolation(open);
   if (unapproved !== undefined) throw new PolicyError(unapproved);
+  // A profile queued before the wall clock ran out does not run after it (security S2-4).
+  const { createdAt } = await readRun(context.runDir);
+  const spent = wallClockViolation(
+    budgetStatus(await readLedger(context.runDir), open.config.objective.budget, createdAt),
+  );
+  if (spent !== undefined) throw new PolicyError(spent);
   // As every job: A is measured exactly at its commit (security F11).
   const sha = await resetArms(open.git);
   const arm = { arm: "a" as const, dir: open.git.armA, sha };

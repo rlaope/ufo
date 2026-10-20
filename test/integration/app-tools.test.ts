@@ -9,11 +9,14 @@ import {
   getJob,
   getRun,
   inspectTarget,
+  JOB_KINDS,
   listTechniques,
   profileTarget,
+  readAppState,
   startRun,
 } from "../../src/app/index.js";
-import { readRun, updateRun } from "../../src/core/jobs/index.js";
+import { ensureWorker } from "../../src/app/launch.js";
+import { enqueueJob, readRun, updateRun } from "../../src/core/jobs/index.js";
 import {
   approveToy,
   git,
@@ -298,6 +301,15 @@ describe("profiling the target", { timeout: TIMEOUT_MS }, () => {
       }));
       await expect(profileTarget(toy.context, { runId: run.runId })).rejects.toMatchObject({
         violation: { rule: "budget_exceeded", detail: "31 of 30 minutes used" },
+      });
+      // Security S2-4: and one queued before the clock ran out (the queue looks the same) is
+      // refused when it starts.
+      const runDir = toy.runDir(run.runId);
+      const late = await enqueueJob(runDir, { kind: JOB_KINDS.profile, input: {} });
+      await ensureWorker(toy.context, runDir, toy.home, await readAppState(runDir));
+      expect(await waitDone(toy, run.runId, late.jobId)).toMatchObject({
+        status: "failed",
+        error: { message: "policy:budget_exceeded: 31 of 30 minutes used" },
       });
       await updateRun(toy.runDir(run.runId), (record) => ({ ...record, createdAt: started }));
 
