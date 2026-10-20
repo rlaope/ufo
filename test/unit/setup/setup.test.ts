@@ -1,18 +1,19 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { chmod, lstat, mkdir, readdir, readFile, stat, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { PolicyError, violation } from "../../../src/core/policy/index.js";
+import { SetupError, type SetupOptions, setup, terminalConfirm } from "../../../src/setup/index.js";
 import {
-  SetupError,
-  type SetupOptions,
-  setup,
-  uninstall,
-  update,
-} from "../../../src/setup/index.js";
-import { put, type Sandbox, sandbox } from "./sandbox.js";
-
-// AC 11: `setup` twice yields identical config; after setup, a host edit, and uninstall, each
-// file equals the pre-setup file plus the host's edit, with no UFO entry left.
+  fakePackage,
+  NODE,
+  put,
+  type Sandbox,
+  SKILL_TEXT,
+  sandbox,
+  tarball,
+  VERSION,
+} from "./sandbox.js";
 
 let box: Sandbox;
 beforeEach(async () => {
@@ -31,21 +32,13 @@ const options = (extra: Partial<SetupOptions> = {}): SetupOptions => ({
 
 const codexFile = () => path.join(box.home, ".codex", "config.toml");
 const cursorFile = () => path.join(box.home, ".cursor", "mcp.json");
-const claudeFile = () => path.join(box.home, ".claude.json");
 const agentsSkill = () => path.join(box.home, ".agents", "skills", "ufo-optimize");
-const claudeSkill = () => path.join(box.home, ".claude", "skills", "ufo-optimize");
 const setupDir = () => path.join(box.ufoHome, "private", "setup");
+const prefix = (version = VERSION) => path.join(box.ufoHome, "pkg", version);
 const read = (file: string) => readFile(file, "utf8");
-const SKILL = readFile(new URL("../../../skills/ufo-optimize/SKILL.md", import.meta.url), "utf8");
-
-// biome-ignore lint/suspicious/noTemplateCurlyInString: Cursor's variable, not a JS template.
-const WORKSPACE = "${workspaceFolder}";
-
-const CODEX_TABLE = `[mcp_servers.ufo]
-command = "npx"
-args = ["-y", "ufo-agents@1.2.3", "mcp"]
-startup_timeout_sec = 60
-`;
+const record = async () => JSON.parse(await read(path.join(setupDir(), "setup.json")));
+const codexTable = (version = VERSION) =>
+  `[mcp_servers.ufo]\ncommand = "${NODE}"\nargs = ["${box.script(version)}", "mcp", "--host", "codex"]\nstartup_timeout_sec = 60\n`;
 
 async function refusal(promise: Promise<unknown>): Promise<SetupError> {
   try {
@@ -57,7 +50,7 @@ async function refusal(promise: Promise<unknown>): Promise<SetupError> {
   throw new Error("expected a SetupError");
 }
 
-/** Every file under the sandbox home with its content, to show a refusal wrote nothing. */
+/** Every file under the sandbox home and UFO home with its content. */
 async function snapshot(): Promise<Record<string, string>> {
   const files: Record<string, string> = {};
   for (const root of [box.home, box.ufoHome]) {
@@ -71,169 +64,158 @@ async function snapshot(): Promise<Record<string, string>> {
   return files;
 }
 
-describe("AC 11 per host", () => {
-  it("Codex: identical second setup; uninstall keeps the host's edit and drops only UFO's table", async () => {
-    const pre = `# my settings\nmodel = "o3" # default\n\n[mcp_servers.docs]\ncommand = "docs-mcp"\n`;
-    await put(codexFile(), pre);
-
-    const first = await setup(options({ hosts: ["codex"] }));
-    expect(first.changes.map((c) => [c.kind, c.action])).toEqual([
-      ["mcp_server", "add"],
-      ["skill", "install"],
-    ]);
-    const written = await read(codexFile());
-    expect(written).toBe(`${pre}\n${CODEX_TABLE}`);
-    expect(await read(path.join(agentsSkill(), "SKILL.md"))).toBe(await SKILL);
-    expect(await read(path.join(setupDir(), "backups", "codex-config.toml"))).toBe(pre);
-
-    const second = await setup(options({ hosts: ["codex"] }));
-    expect(second.changed).toBe(false);
-    expect(second.changes).toEqual([]);
-    expect(await read(codexFile())).toBe(written);
-
-    // The host rewrites a setting and appends its own server after UFO's table.
-    const edit = (text: string) =>
-      `${text.replace('model = "o3" # default', 'model = "gpt-5"')}\n[mcp_servers.later]\ncommand = "later"\n`;
-    await writeFile(codexFile(), edit(written));
-
-    const removed = await uninstall(options());
-    expect(removed.changes.map((c) => [c.kind, c.action])).toEqual([
-      ["mcp_server", "remove"],
-      ["skill", "remove"],
-    ]);
-    expect(await read(codexFile())).toBe(edit(pre));
-    expect(existsSync(agentsSkill())).toBe(false);
-    expect(await readdir(path.join(setupDir(), "backups"))).toEqual([]);
-    expect(existsSync(path.join(setupDir(), "setup.json"))).toBe(false);
-  });
-
-  it("Cursor: identical second setup; uninstall keeps the host's edits and drops only the ufo member", async () => {
-    const pre = `{\n  "mcpServers": {\n    "docs": { "command": "docs-mcp" }\n  },\n  "theme": "dark"\n}\n`;
-    await put(cursorFile(), pre);
-
-    await setup(options({ hosts: ["cursor"] }));
-    const written = await read(cursorFile());
-    expect(JSON.parse(written)).toEqual({
-      mcpServers: {
-        docs: { command: "docs-mcp" },
-        ufo: {
-          type: "stdio",
-          command: "npx",
-          args: ["-y", "ufo-agents@1.2.3", "mcp", "--repo", WORKSPACE],
-        },
-      },
-      theme: "dark",
-    });
-    expect(
-      written.startsWith(
-        `{\n  "mcpServers": {\n    "docs": { "command": "docs-mcp" },\n    "ufo": {\n      "type": "stdio",`,
-      ),
-    ).toBe(true);
-
-    expect((await setup(options({ hosts: ["cursor"] }))).changed).toBe(false);
-    expect(await read(cursorFile())).toBe(written);
-
-    // The host adds a server after UFO's and changes a setting.
-    const edited = written
-      .replace('"theme": "dark"', '"theme": "light"')
-      .replace(
-        `"${WORKSPACE}"\n      ]\n    }\n`,
-        `"${WORKSPACE}"\n      ]\n    },\n    "later": { "command": "l" }\n`,
-      );
-    expect(edited).not.toBe(written);
-    await writeFile(cursorFile(), edited);
-
-    await uninstall(options());
-    expect(await read(cursorFile())).toBe(
-      pre
-        .replace('"theme": "dark"', '"theme": "light"')
-        .replace(
-          '"docs": { "command": "docs-mcp" }\n',
-          '"docs": { "command": "docs-mcp" },\n    "later": { "command": "l" }\n',
-        ),
-    );
-  });
-
-  it("Claude Code: through its CLI only; uninstall leaves the config as the host left it", async () => {
-    const pre = {
-      numStartups: 3,
-      mcpServers: { docs: { type: "stdio", command: "docs-mcp", args: [] } },
-    };
-    await put(claudeFile(), JSON.stringify(pre, null, 2));
-
-    await setup(options({ hosts: ["claude-code"] }));
-    expect(box.claude.calls).toEqual([
-      ["mcp", "add", "--scope", "user", "ufo", "--", "npx", "-y", "ufo-agents@1.2.3", "mcp"],
-    ]);
-    const written = await read(claudeFile());
-    expect(JSON.parse(written).mcpServers.ufo).toEqual({
-      type: "stdio",
-      command: "npx",
-      args: ["-y", "ufo-agents@1.2.3", "mcp"],
-      env: {},
-    });
-    expect(await read(path.join(claudeSkill(), "SKILL.md"))).toBe(await SKILL);
-    // No backup: Claude Code's config holds live state and is never restored.
-    expect(await readdir(path.join(setupDir(), "backups"))).toEqual([]);
-
-    expect((await setup(options({ hosts: ["claude-code"] }))).changed).toBe(false);
-    expect(box.claude.calls).toHaveLength(1);
-    expect(await read(claudeFile())).toBe(written);
-
-    // Claude Code rewrites its state.
-    const live = JSON.parse(written);
-    live.numStartups = 4;
-    await writeFile(claudeFile(), JSON.stringify(live, null, 2));
-
-    await uninstall(options());
-    expect(box.claude.calls.at(-1)).toEqual(["mcp", "remove", "ufo", "--scope", "user"]);
-    expect(JSON.parse(await read(claudeFile()))).toEqual({ ...pre, numStartups: 4 });
-    expect(existsSync(claudeSkill())).toBe(false);
-  });
-});
-
 describe("ufo setup", () => {
-  it("sets up every host it finds, showing each change as a diff", async () => {
+  it("sets up every host it finds from one installed copy, showing each change", async () => {
     await mkdir(path.join(box.home, ".codex"));
     await mkdir(path.join(box.home, ".cursor"));
     let printed = "";
     const report = await setup(options({ print: (text) => (printed += text) }));
     expect(report.hosts).toEqual(["claude-code", "codex", "cursor"]);
-    expect(report.detected?.map((host) => [host.id, host.found])).toEqual([
-      ["claude-code", true],
-      ["codex", true],
-      ["cursor", true],
-    ]);
     expect(report.changes.map((c) => [c.hosts.join("+"), c.kind, c.action])).toEqual([
+      ["claude-code+codex+cursor", "package", "install"],
       ["claude-code", "mcp_server", "add"],
       ["codex", "mcp_server", "add"],
       ["cursor", "mcp_server", "add"],
       ["claude-code", "skill", "install"],
       ["codex+cursor", "skill", "install"],
     ]);
-    expect(printed).toContain("run claude mcp add --scope user ufo -- npx -y ufo-agents@1.2.3 mcp");
-    expect(printed).toContain("--- /dev/null\n    +++ ~/.codex/config.toml");
+    // The plan names the programs it runs by their absolute paths.
+    expect(printed).toContain(`claude at ${box.bin}/claude (2.1.304 (Claude Code))`);
+    expect(printed).toContain(`run ${box.bin}/claude mcp add --scope user ufo -- ${NODE} `);
+    expect(printed).toContain(`with ${box.bin}/npm (no install scripts`);
     expect(printed).toContain("+[mcp_servers.ufo]");
-    expect(printed).toContain("+++ ~/.cursor/mcp.json");
     expect(report.notes.join(" ")).toContain("Restart Claude Code, Codex, and Cursor");
     expect(report.notes.join(" ")).toContain("list the ufo-optimize skill twice");
-    // A file setup created has no backup; uninstall deletes it.
-    expect(await read(codexFile())).toBe(CODEX_TABLE);
+    expect(await read(codexFile())).toBe(codexTable());
     expect((await stat(cursorFile())).mode & 0o777).toBe(0o600);
-
-    const removed = await uninstall(options());
-    expect(removed.changes.map((c) => c.action)).toEqual([
-      "remove",
-      "restore",
-      "restore",
-      "remove",
-      "remove",
-    ]);
-    expect(existsSync(codexFile())).toBe(false);
-    expect(existsSync(cursorFile())).toBe(false);
-    expect(await snapshot()).toEqual({
-      "home/.claude.json": JSON.stringify({ mcpServers: {} }, null, 2),
+    expect((await stat(prefix())).mode & 0o777).toBe(0o700);
+    expect(await read(path.join(agentsSkill(), "SKILL.md"))).toBe(SKILL_TEXT);
+    expect((await record()).packages).toEqual({
+      [VERSION]: { source: "registry", integrity: fakePackage(VERSION).integrity },
     });
+  });
+
+  it("installs the exact version with npm: no scripts, the public registry, no npm_config_*", async () => {
+    await mkdir(path.join(box.home, ".codex"));
+    await setup(options({ hosts: ["codex"] }));
+    const [npm] = box.fakes.calls.filter((call) => call.program === "npm");
+    expect(npm?.file).toBe(path.join(box.bin, "npm"));
+    expect(npm?.args).toEqual([
+      "install",
+      "--prefix",
+      npm?.cwd,
+      "--ignore-scripts",
+      "--omit=dev",
+      "--no-audit",
+      "--no-fund",
+      "--registry=https://registry.npmjs.org/",
+      `ufo-agents@${VERSION}`,
+    ]);
+    expect(path.dirname(npm?.cwd ?? "")).toBe(path.join(box.ufoHome, "pkg"));
+    expect(Object.keys(npm?.env ?? {}).filter((name) => /^npm_config_/i.test(name))).toEqual([]);
+    expect(await read(path.join(prefix(), "node_modules", "ufo-agents", "package.json"))).toContain(
+      `"version":"${VERSION}"`,
+    );
+  });
+
+  it("refuses an unreleased, inexact, or unpublished version and says to use --package", async () => {
+    await mkdir(path.join(box.home, ".codex"));
+    // The registry has each of them, but only 9.9.9 is refused for being missing from it.
+    box.fakes.registry.set("0.0.0", fakePackage("0.0.0"));
+    box.fakes.registry.set("^1.2.3", fakePackage("1.2.3"));
+    for (const [version, why] of [
+      ["0.0.0", "ufo-agents@0.0.0 is not a released version"],
+      ["^1.2.3", "ufo-agents@^1.2.3 is not a released version"],
+      ["9.9.9", "the npm registry has no ufo-agents@9.9.9 (the name is not published yet)"],
+    ] as const) {
+      if (version === "9.9.9") box.fakes.registry.delete("9.9.9");
+      const error = await refusal(setup(options({ hosts: ["codex"], version })));
+      expect(error.code).toBe("package_unavailable");
+      expect(error.message).toBe(`${why}; install from a tarball with --package <file.tgz>`);
+    }
+    expect(box.fakes.calls.filter((call) => call.program === "npm")).toEqual([]);
+    expect(existsSync(codexFile())).toBe(false);
+  });
+
+  it("refuses a copy whose integrity is not the registry's, and sets nothing up", async () => {
+    await mkdir(path.join(box.home, ".codex"));
+    // Same version and skill, other code: only the integrity tells it from the registry's.
+    box.fakes.npmServes = fakePackage(VERSION, SKILL_TEXT, "// tampered\n");
+    const error = await refusal(setup(options({ hosts: ["codex"] })));
+    expect(error.code).toBe("integrity_mismatch");
+    expect(existsSync(prefix())).toBe(false);
+    expect(existsSync(codexFile())).toBe(false);
+    expect(await readdir(path.join(box.ufoHome, "pkg"))).toEqual([]);
+  });
+
+  it("refuses an installed copy whose skill is not the one this UFO ships", async () => {
+    await mkdir(path.join(box.home, ".codex"));
+    // The registry's own 1.2.3, integrity and all, but with another skill than the running one.
+    box.fakes.registry.set(VERSION, fakePackage(VERSION, `${SKILL_TEXT}Other.\n`));
+    const error = await refusal(setup(options({ hosts: ["codex"] })));
+    expect(error.code).toBe("integrity_mismatch");
+    expect(error.message).toContain("is not the one shown in the plan");
+    expect(existsSync(prefix())).toBe(false);
+  });
+
+  it("installs a local tarball with --package and records its sha512", async () => {
+    await mkdir(path.join(box.home, ".codex"));
+    const pkg = fakePackage("0.0.0");
+    const file = path.join(box.root, "ufo-agents-0.0.0.tgz");
+    await writeFile(file, pkg.tarball);
+    const report = await setup(options({ hosts: ["codex"], package: file }));
+    expect(report.version).toBe("0.0.0");
+    expect(await read(codexFile())).toBe(codexTable("0.0.0"));
+    expect((await record()).packages).toEqual({
+      "0.0.0": { source: "tarball", integrity: pkg.integrity, tarball: file },
+    });
+    expect(box.fakes.calls.find((call) => call.program === "npm")?.args.at(-1)).toBe(file);
+    // The same tarball again changes nothing; a rebuilt one replaces the copy.
+    expect((await setup(options({ hosts: ["codex"], package: file }))).changed).toBe(false);
+    await writeFile(file, fakePackage("0.0.0", `${SKILL_TEXT}More.\n`).tarball);
+    const again = await setup(options({ hosts: ["codex"], package: file }));
+    expect(again.changes.map((c) => [c.kind, c.action])).toEqual([
+      ["package", "replace"],
+      ["skill", "replace"],
+    ]);
+  });
+
+  it("refuses a --package file that is not a ufo-agents tarball", async () => {
+    await mkdir(path.join(box.home, ".codex"));
+    const other = path.join(box.root, "other.tgz");
+    await writeFile(other, tarball({ "package.json": '{"name":"left-pad","version":"1.0.0"}' }));
+    const error = await refusal(setup(options({ hosts: ["codex"], package: other })));
+    expect(error).toMatchObject({ code: "usage" });
+    expect(error.message).toContain("is not a ufo-agents tarball");
+  });
+
+  it("probes only the hosts in scope", async () => {
+    await mkdir(path.join(box.home, ".codex"));
+    const report = await setup(options({ hosts: ["codex"] }));
+    expect(report.detected?.map((host) => host.id)).toEqual(["codex"]);
+    expect(box.fakes.calls.filter((call) => call.program === "claude")).toEqual([]);
+  });
+
+  it("finds claude only outside the working directory and node_modules, and runs it in the home", async () => {
+    const work = box.environment.cwd ?? "";
+    for (const dir of [path.join(work, "bin"), path.join(box.root, "x", "node_modules", ".bin")]) {
+      await mkdir(dir, { recursive: true });
+      await writeFile(path.join(dir, "claude"), "#!/bin/sh\n");
+      await chmod(path.join(dir, "claude"), 0o755);
+    }
+    const PATH = [
+      "relative/bin",
+      "",
+      path.join(work, "bin"),
+      path.join(box.root, "x", "node_modules", ".bin"),
+      box.bin,
+    ].join(path.delimiter);
+    await setup(options({ hosts: ["claude-code"], env: { PATH } }));
+    const claude = box.fakes.calls.filter((call) => call.program === "claude");
+    expect(new Set(claude.map((call) => call.file))).toEqual(
+      new Set([path.join(box.bin, "claude")]),
+    );
+    expect(new Set(claude.map((call) => call.cwd))).toEqual(new Set([box.home]));
   });
 
   it("restores an untouched file from its backup, keeping its mode", async () => {
@@ -241,31 +223,13 @@ describe("ufo setup", () => {
     await put(codexFile(), pre);
     await chmod(codexFile(), 0o640);
     await setup(options({ hosts: ["codex"] }));
-    expect(await read(codexFile())).toBe(`${pre}\n\n${CODEX_TABLE}`);
+    expect(await read(codexFile())).toBe(`${pre}\n\n${codexTable()}`);
     expect((await stat(codexFile())).mode & 0o777).toBe(0o640);
+    const { uninstall } = await import("../../../src/setup/index.js");
     const removed = await uninstall(options());
     expect(removed.changes[0]?.action).toBe("restore");
     expect(await read(codexFile())).toBe(pre);
     expect((await stat(codexFile())).mode & 0o777).toBe(0o640);
-  });
-
-  it("reverses its own edit exactly after a host edit, even where the rule alone could not", async () => {
-    // Without a final newline the table goes in after two line endings; removing it by rule
-    // would leave one behind, so uninstall puts back the recorded edit instead.
-    const pre = '# mine\nmodel = "o3"';
-    await put(codexFile(), pre);
-    await setup(options({ hosts: ["codex"] }));
-    await writeFile(codexFile(), (await read(codexFile())).replace("# mine", "# mine, edited"));
-    await uninstall(options());
-    expect(await read(codexFile())).toBe('# mine, edited\nmodel = "o3"');
-
-    // Whitespace inside an empty mcpServers comes back the same way.
-    const cursorPre = '{\n  "mcpServers": {\n  },\n  "theme": "dark"\n}\n';
-    await put(cursorFile(), cursorPre);
-    await setup(options({ hosts: ["cursor"] }));
-    await writeFile(cursorFile(), (await read(cursorFile())).replace("dark", "light"));
-    await uninstall(options());
-    expect(await read(cursorFile())).toBe(cursorPre.replace("dark", "light"));
   });
 
   it("writes through a symbolic link to the config, which stays a link", async () => {
@@ -275,18 +239,19 @@ describe("ufo setup", () => {
     await symlink(real, codexFile());
     await setup(options({ hosts: ["codex"] }));
     expect((await lstat(codexFile())).isSymbolicLink()).toBe(true);
-    expect(await read(real)).toBe(`a = 1\n\n${CODEX_TABLE}`);
-    await uninstall(options());
-    expect((await lstat(codexFile())).isSymbolicLink()).toBe(true);
-    expect(await read(real)).toBe("a = 1\n");
+    expect(await read(real)).toBe(`a = 1\n\n${codexTable()}`);
   });
 
-  it("refuses a config file that is not UTF-8", async () => {
-    await mkdir(path.join(box.home, ".codex"));
-    await writeFile(codexFile(), Buffer.from([0x61, 0x20, 0x3d, 0x20, 0x22, 0xff, 0x22, 0x0a]));
-    const error = await refusal(setup(options({ hosts: ["codex"] })));
-    expect(error).toMatchObject({ code: "host_config_invalid" });
-    expect(error.message).toContain("is not UTF-8 text");
+  it("shows diffs redacted, in context and removed lines alike", async () => {
+    await put(codexFile(), 'model = "o3"\n[profiles.x]\nAPI_KEY = "sk-abcdefghijklmnopqrstuvwx"\n');
+    let printed = "";
+    const report = await setup(options({ hosts: ["codex"], print: (text) => (printed += text) }));
+    const diff = report.changes.find((c) => c.kind === "mcp_server")?.diff ?? "";
+    expect(diff).toContain(' API_KEY = "<redacted:api_key>"');
+    expect(diff).not.toContain("sk-abcdefghijklmnopqrstuvwx");
+    expect(diff).toContain(`+args = ["${box.script()}", "mcp", "--host", "codex"]`);
+    expect(printed).not.toContain("sk-abcdefghijklmnopqrstuvwx");
+    expect(printed).not.toContain(box.home);
   });
 
   it("refuses a host's ufo server it did not write, and writes nothing anywhere", async () => {
@@ -298,35 +263,43 @@ describe("ufo setup", () => {
     expect(error.message).toContain(
       "~/.cursor/mcp.json already has a ufo server that UFO did not write",
     );
-    expect(box.claude.calls).toEqual([]);
+    expect(box.claudeCalls()).toEqual([]);
+    expect(box.fakes.calls.filter((call) => call.program === "npm")).toEqual([]);
     expect(await snapshot()).toEqual(before);
   });
 
-  it("refuses a config file that does not parse", async () => {
+  it("refuses a config file that does not parse, or is not UTF-8", async () => {
     await put(codexFile(), 'model = "o3\n');
     const error = await refusal(setup(options({ hosts: ["codex"] })));
     expect(error.code).toBe("host_config_invalid");
     expect(error.message).toContain("~/.codex/config.toml is not valid TOML");
     expect(await read(codexFile())).toBe('model = "o3\n');
+    await writeFile(codexFile(), Buffer.from([0x61, 0x20, 0x3d, 0x20, 0x22, 0xff, 0x22, 0x0a]));
+    expect((await refusal(setup(options({ hosts: ["codex"] })))).message).toContain(
+      "is not UTF-8 text",
+    );
   });
 
-  it("refuses a skill directory it did not install", async () => {
+  it("refuses a skill directory it did not install, naming the file that differs", async () => {
     await mkdir(path.join(box.home, ".codex"));
     await put(path.join(agentsSkill(), "SKILL.md"), "---\nname: ufo-optimize\n---\nmine\n");
     const error = await refusal(setup(options({ hosts: ["codex"] })));
     expect(error.code).toBe("entry_conflict");
     expect(error.message).toContain(
-      "~/.agents/skills/ufo-optimize holds a ufo-optimize skill that UFO did not install",
+      "~/.agents/skills/ufo-optimize holds a ufo-optimize skill that UFO did not install (SKILL.md differs)",
     );
     expect(existsSync(codexFile())).toBe(false);
   });
 
   it("leaves an identical entry it did not write alone, then and at uninstall", async () => {
-    await put(codexFile(), CODEX_TABLE);
+    await put(codexFile(), codexTable());
     const report = await setup(options({ hosts: ["codex"] }));
-    expect(report.unchanged[0]?.reason).toContain("not written by UFO; uninstall leaves it");
+    expect(report.unchanged.find((u) => u.kind === "mcp_server")?.reason).toContain(
+      "not written by UFO; uninstall leaves it",
+    );
+    const { uninstall } = await import("../../../src/setup/index.js");
     await uninstall(options());
-    expect(await read(codexFile())).toBe(CODEX_TABLE);
+    expect(await read(codexFile())).toBe(codexTable());
   });
 
   it("asks first, and a declined answer writes nothing", async () => {
@@ -347,7 +320,7 @@ describe("ufo setup", () => {
     expect(asked).toBe('Apply these changes? Type "yes": ');
     expect(error.code).toBe("approval_declined");
     expect(await read(codexFile())).toBe("");
-    expect(existsSync(path.join(setupDir(), "setup.json"))).toBe(false);
+    expect(existsSync(prefix())).toBe(false);
   });
 
   it("refuses to write a file that changed after the plan was shown", async () => {
@@ -370,114 +343,132 @@ describe("ufo setup", () => {
 
   it("refuses a requested host that is not installed, and none at all", async () => {
     expect((await refusal(setup(options({ hosts: ["cursor"] })))).code).toBe("host_not_found");
-    const none = await refusal(
-      setup(options({ run: async () => ({ code: 127, stdout: "", stderr: "" }) })),
-    );
+    const none = await refusal(setup(options({ env: { PATH: path.join(box.root, "empty") } })));
     expect(none.code).toBe("host_not_found");
   });
-});
 
-describe("ufo uninstall", () => {
-  it("refuses a ufo entry that was changed since setup wrote it", async () => {
-    await put(codexFile(), "");
-    await setup(options({ hosts: ["codex"] }));
-    const mine = (await read(codexFile())).replace(
-      "startup_timeout_sec = 60",
-      "startup_timeout_sec = 90",
-    );
-    await writeFile(codexFile(), mine);
-    const error = await refusal(uninstall(options()));
-    expect(error.code).toBe("entry_conflict");
-    expect(error.message).toContain("was changed since setup wrote it");
-    expect(await read(codexFile())).toBe(mine);
-  });
-
-  it("refuses a skill directory changed since setup installed it", async () => {
+  it("asks before going back to an older version, even with --yes", async () => {
     await mkdir(path.join(box.home, ".codex"));
-    await setup(options({ hosts: ["codex"] }));
-    await writeFile(path.join(agentsSkill(), "notes.md"), "mine\n");
-    const error = await refusal(uninstall(options()));
-    expect(error.code).toBe("entry_conflict");
-    expect(error.message).toContain("was changed since setup installed it");
-    expect(existsSync(path.join(agentsSkill(), "notes.md"))).toBe(true);
-  });
-
-  it("keeps the shared skill until the last host that uses it is uninstalled", async () => {
-    await mkdir(path.join(box.home, ".codex"));
-    await mkdir(path.join(box.home, ".cursor"));
-    await setup(options({ hosts: ["codex", "cursor"] }));
-    const codexOnly = await uninstall(options({ hosts: ["codex"] }));
-    expect(codexOnly.unchanged).toContainEqual(
-      expect.objectContaining({ kind: "skill", reason: "kept for Cursor" }),
-    );
-    expect(existsSync(agentsSkill())).toBe(true);
-    await uninstall(options({ hosts: ["cursor"] }));
-    expect(existsSync(agentsSkill())).toBe(false);
-  });
-
-  it("forgets an entry someone else already removed", async () => {
-    await put(codexFile(), "a = 1\n");
-    await setup(options({ hosts: ["codex"] }));
-    await writeFile(codexFile(), "a = 1\nb = 2\n");
-    const report = await uninstall(options());
-    expect(report.unchanged[0]?.reason).toBe("has no ufo server left; nothing to remove");
-    expect(await read(codexFile())).toBe("a = 1\nb = 2\n");
-    expect(existsSync(path.join(setupDir(), "backups", "codex-config.toml"))).toBe(false);
-  });
-
-  it("refuses to restore a backup that is not the file setup backed up", async () => {
-    await put(codexFile(), "a = 1\n");
-    await setup(options({ hosts: ["codex"] }));
+    box.fakes.registry.set("2.0.0", fakePackage("2.0.0"));
+    await setup(options({ hosts: ["codex"], version: "2.0.0" }));
     const written = await read(codexFile());
-    await writeFile(path.join(setupDir(), "backups", "codex-config.toml"), "planted = true\n");
-    const error = await refusal(uninstall(options()));
-    expect(error.code).toBe("unsafe_state");
+    let asked = "";
+    const declined = await refusal(
+      setup(
+        options({
+          hosts: ["codex"],
+          confirm: async (prompt) => {
+            asked = prompt;
+            return "yes";
+          },
+        }),
+      ),
+    );
+    expect(asked).toBe(
+      'ufo-agents@2.0.0 is set up; type "downgrade" to replace it with the older 1.2.3: ',
+    );
+    expect(declined.code).toBe("approval_declined");
     expect(await read(codexFile())).toBe(written);
+    await setup(options({ hosts: ["codex"], confirm: async () => "downgrade" }));
+    expect(await read(codexFile())).toBe(codexTable());
   });
 
-  it("says so when UFO set nothing up", async () => {
-    const report = await uninstall(options());
-    expect(report).toMatchObject({ hosts: [], changes: [], changed: false });
+  it("is busy while another setup holds its lock", async () => {
+    await mkdir(path.join(box.home, ".codex"));
+    await setup(options({ hosts: ["codex"] }));
+    await writeFile(path.join(setupDir(), "setup.lock"), String(process.pid));
+    const error = await refusal(setup(options({ hosts: ["codex"], lockWaitMs: 200 })));
+    expect(error.failure).toMatchObject({
+      code: "busy",
+      exitCode: 1,
+      retryable: true,
+      hint: "wait for it to finish, then run this command again",
+    });
+  });
+
+  it("reports failures redacted: a parse error can quote a host config", () => {
+    const error = new SetupError(
+      "host_config_invalid",
+      'near "ghp_abcdefghijklmnopqrstuvwxyz0123"',
+    );
+    expect(error.failure.message).toBe('near "<redacted:api_key>"');
+  });
+
+  it("says there is no terminal to ask on, and to pass --yes", async () => {
+    const ask = terminalConfirm("setup", async () => {
+      throw new PolicyError(violation("non_tty_approval", "no interactive terminal"));
+    });
+    const error = await refusal(ask("Apply? "));
+    expect(error.failure).toMatchObject({ code: "no_terminal", exitCode: 2 });
+    expect(error.message).toContain("pass --yes");
   });
 });
 
-describe("ufo update", () => {
-  it("re-pins every entry to the installed version; an untouched file still restores exactly", async () => {
-    await put(codexFile(), "a = 1\n");
-    await put(cursorFile(), "{}\n");
-    await setup(options());
-    const report = await update(options({ version: "2.0.0" }));
-    expect(report.changes.map((c) => [c.hosts.join("+"), c.action])).toEqual([
-      ["claude-code", "repin"],
-      ["codex", "repin"],
-      ["cursor", "repin"],
-    ]);
-    expect(await read(codexFile())).toBe(`a = 1\n\n${CODEX_TABLE.replace("1.2.3", "2.0.0")}`);
-    expect(await read(cursorFile())).toContain('"ufo-agents@2.0.0"');
-    expect(box.claude.calls.slice(-2)).toEqual([
-      ["mcp", "remove", "ufo", "--scope", "user"],
-      ["mcp", "add", "--scope", "user", "ufo", "--", "npx", "-y", "ufo-agents@2.0.0", "mcp"],
-    ]);
-    expect((await update(options({ version: "2.0.0" }))).changed).toBe(false);
-    await uninstall(options({ version: "2.0.0" }));
-    expect(await read(codexFile())).toBe("a = 1\n");
-    expect(await read(cursorFile())).toBe("{}\n");
+describe("ufo setup through Claude Code's CLI", () => {
+  const failing = { code: 1, stdout: "", stderr: "boom" };
+
+  it("records the change before it runs claude mcp add", async () => {
+    let recorded: unknown;
+    box.fakes.claudeFail = (args) => {
+      if (args[1] === "add") {
+        recorded = JSON.parse(readFileSync(path.join(setupDir(), "setup.json"), "utf8")).hosts[
+          "claude-code"
+        ];
+      }
+      return undefined;
+    };
+    await setup(options({ hosts: ["claude-code"] }));
+    expect(recorded).toMatchObject({ pending: { version: VERSION } });
+    expect((await record()).hosts["claude-code"].pending).toBeUndefined();
   });
 
-  it("after a host edit, uninstall removes the re-pinned entry instead of restoring the backup", async () => {
-    await put(cursorFile(), '{\n  "mcpServers": {}\n}\n');
-    await setup(options({ hosts: ["cursor"] }));
-    const edited = (await read(cursorFile())).replace(
-      '{\n  "mcpServers"',
-      '{\n  "theme": "light",\n  "mcpServers"',
+  it("owns what Claude Code stored when it adds fields of its own", async () => {
+    box.fakes.claudeAdds = { timeout: 30000 };
+    await setup(options({ hosts: ["claude-code"] }));
+    expect((await setup(options({ hosts: ["claude-code"] }))).changed).toBe(false);
+    await (await import("../../../src/setup/index.js")).uninstall(options());
+    const claudeJson = JSON.parse(await read(path.join(box.home, ".claude.json")));
+    expect(claudeJson.mcpServers).toEqual({});
+  });
+
+  it("records nothing when claude mcp add fails", async () => {
+    box.fakes.claudeFail = (args) => (args[1] === "add" ? failing : undefined);
+    const error = await refusal(setup(options({ hosts: ["claude-code"] })));
+    expect(error.code).toBe("host_cli_failed");
+    expect(error.message).toContain("mcp add --scope user ufo");
+    expect(error.message).toContain("exited 1: boom");
+    expect((await record()).hosts).toEqual({});
+  });
+
+  it("takes out an added server that does not show up as UFO's", async () => {
+    box.fakes.claudeFail = (args) =>
+      args[1] === "add" ? { code: 0, stdout: "", stderr: "" } : undefined;
+    const error = await refusal(setup(options({ hosts: ["claude-code"] })));
+    expect(error.message).toContain("shows no matching ufo server");
+    expect(box.claudeCalls().map((args) => args[1])).toEqual(["add", "remove"]);
+    expect((await record()).hosts).toEqual({});
+  });
+
+  it("puts the previous server back when a re-pin's add fails", async () => {
+    await setup(options({ hosts: ["claude-code"] }));
+    box.fakes.registry.set("2.0.0", fakePackage("2.0.0"));
+    box.fakes.claudeFail = (args) =>
+      args[1] === "add" && args.includes(box.script("2.0.0")) ? failing : undefined;
+    const error = await refusal(setup(options({ hosts: ["claude-code"], version: "2.0.0" })));
+    expect(error.message).toContain("the previous ufo server is back in place");
+    const claudeJson = JSON.parse(await read(path.join(box.home, ".claude.json")));
+    expect(claudeJson.mcpServers.ufo.args[0]).toBe(box.script());
+    expect((await record()).hosts["claude-code"]).toMatchObject({ version: VERSION });
+  });
+
+  it("says the server is gone when a re-pin can add neither the new nor the old one", async () => {
+    await setup(options({ hosts: ["claude-code"] }));
+    box.fakes.registry.set("2.0.0", fakePackage("2.0.0"));
+    box.fakes.claudeFail = (args) => (args[1] === "add" ? failing : undefined);
+    const error = await refusal(setup(options({ hosts: ["claude-code"], version: "2.0.0" })));
+    expect(error.message).toContain(
+      "the previous ufo server was removed and could not be added back: run ufo setup again",
     );
-    await writeFile(cursorFile(), edited);
-    await update(options({ version: "2.0.0" }));
-    await uninstall(options({ version: "2.0.0" }));
-    expect(await read(cursorFile())).toBe('{\n  "theme": "light",\n  "mcpServers": {}\n}\n');
-  });
-
-  it("refuses when UFO set nothing up", async () => {
-    expect((await refusal(update(options()))).code).toBe("not_set_up");
+    expect((await record()).hosts["claude-code"]).toBeUndefined();
   });
 });

@@ -2,23 +2,32 @@ import type { Dirent } from "node:fs";
 import { chmod, mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import { isErrno } from "../core/jobs/index.js";
-import { sha256 } from "./files.js";
+import { isErrno, sha256 } from "./files.js";
 import { SKILL_NAME } from "./hosts.js";
 
 // The skill directory setup installs into each host (Claude Code: ~/.claude/skills; Codex and
 // Cursor: ~/.agents/skills). A directory is compared by the sha256 of each regular file in it,
 // by its path relative to the directory; anything else in it (a link, a socket) never matches.
+// Finder's `.DS_Store` files are not part of a skill and are ignored.
 
 export type FileHashes = Record<string, string>;
 
-/** The skill's files as the package ships them, by relative POSIX path. */
+const IGNORED = new Set([".DS_Store"]);
+
+async function entriesOf(dir: string): Promise<Dirent[]> {
+  const entries = await readdir(dir, { recursive: true, withFileTypes: true });
+  return entries.filter((entry) => !entry.isDirectory() && !IGNORED.has(entry.name));
+}
+
+const relativeName = (dir: string, entry: Dirent) =>
+  path.relative(dir, path.join(entry.parentPath, entry.name)).split(path.sep).join("/");
+
+/** The skill's files in `dir`, by relative POSIX path; it must hold a SKILL.md. */
 export async function readSkillSource(dir: string): Promise<Map<string, Buffer>> {
   const files = new Map<string, Buffer>();
-  for (const entry of await readdir(dir, { recursive: true, withFileTypes: true })) {
+  for (const entry of await entriesOf(dir)) {
     if (!entry.isFile()) continue;
-    const file = path.join(entry.parentPath, entry.name);
-    files.set(path.relative(dir, file).split(path.sep).join("/"), await readFile(file));
+    files.set(relativeName(dir, entry), await readFile(path.join(entry.parentPath, entry.name)));
   }
   if (!files.has("SKILL.md")) throw new Error(`${dir} has no SKILL.md`);
   return files;
@@ -32,23 +41,32 @@ export function hashFiles(files: ReadonlyMap<string, Buffer>): FileHashes {
 export async function readSkillHashes(dir: string): Promise<FileHashes | undefined> {
   let entries: Dirent[];
   try {
-    entries = await readdir(dir, { recursive: true, withFileTypes: true });
+    entries = await entriesOf(dir);
   } catch (error) {
     if (isErrno(error, "ENOENT")) return undefined;
     throw error;
   }
   const hashes: FileHashes = {};
   for (const entry of entries) {
-    if (entry.isDirectory()) continue;
-    const file = path.join(entry.parentPath, entry.name);
-    const name = path.relative(dir, file).split(path.sep).join("/");
-    hashes[name] = entry.isFile() ? sha256(await readFile(file)) : "not a regular file";
+    hashes[relativeName(dir, entry)] = entry.isFile()
+      ? sha256(await readFile(path.join(entry.parentPath, entry.name)))
+      : "not a regular file";
   }
   return hashes;
 }
 
 export function sameFiles(a: FileHashes, b: FileHashes): boolean {
   return isDeepStrictEqual(a, b);
+}
+
+/** The first file that tells `current` from `expected`, e.g. `notes.md was added`. */
+export function firstDifference(current: FileHashes, expected: FileHashes): string | undefined {
+  for (const name of [...new Set([...Object.keys(current), ...Object.keys(expected)])].sort()) {
+    if (!(name in expected)) return `${name} was added`;
+    if (!(name in current)) return `${name} is missing`;
+    if (current[name] !== expected[name]) return `${name} differs`;
+  }
+  return undefined;
 }
 
 /**

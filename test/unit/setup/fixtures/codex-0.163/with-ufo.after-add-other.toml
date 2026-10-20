@@ -1,0 +1,15 @@
+# My Codex settings
+model = "o3" # the default
+
+[mcp_servers.docs]
+command = "docs-mcp"
+args = ["--port", "9000"]
+
+[mcp_servers.ufo]
+command = "/usr/local/bin/node"
+args = ["/home/user/.ufo/pkg/1.2.3/node_modules/ufo-agents/dist/cli/index.js", "mcp", "--host", "codex"]
+startup_timeout_sec = 60.0
+
+[mcp_servers.other]
+command = "other-mcp"
+args = ["--flag"]

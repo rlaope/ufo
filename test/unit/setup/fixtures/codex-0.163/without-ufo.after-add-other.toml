@@ -1,0 +1,10 @@
+# My Codex settings
+model = "o3" # the default
+
+[mcp_servers.docs]
+command = "docs-mcp"
+args = ["--port", "9000"]
+
+[mcp_servers.other]
+command = "other-mcp"
+args = ["--flag"]

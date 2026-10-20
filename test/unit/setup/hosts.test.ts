@@ -2,7 +2,14 @@ import { mkdir, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { unifiedDiff } from "../../../src/setup/diff.js";
-import { detectHosts, hostPaths, parseHostIds, sameEntry } from "../../../src/setup/hosts.js";
+import {
+  detectHosts,
+  findExecutable,
+  HOST_IDS,
+  hostPaths,
+  parseHostIds,
+  sameEntry,
+} from "../../../src/setup/hosts.js";
 import {
   hashFiles,
   installSkill,
@@ -22,26 +29,50 @@ afterEach(async () => {
 const missing = async () => ({ code: 127, stdout: "", stderr: "" });
 
 describe("host detection", () => {
-  const detect = (run = box.claude.run, env: NodeJS.ProcessEnv = { PATH: box.bin }) =>
-    detectHosts({
+  const detect = (
+    run = box.environment.run ?? missing,
+    env: NodeJS.ProcessEnv = { PATH: box.bin },
+    claude: string | undefined = path.join(box.bin, "claude"),
+  ) =>
+    detectHosts(HOST_IDS, {
       paths: hostPaths(box.home, env),
       env,
       run,
       applications: path.join(box.root, "Applications"),
+      claude,
     });
 
   it("finds nothing on an empty machine", async () => {
-    expect((await detect(missing)).map((host) => host.found)).toEqual([false, false, false]);
+    const found = await detect(missing, { PATH: "" }, undefined);
+    expect(found.map((host) => host.found)).toEqual([false, false, false]);
   });
 
-  it("finds Claude Code by its CLI", async () => {
+  it("finds Claude Code by its CLI, named by its absolute path", async () => {
     const [claude] = await detect();
     expect(claude).toEqual({
       id: "claude-code",
       name: "Claude Code",
       found: true,
-      evidence: ["claude --version: 2.1.304 (Claude Code)"],
+      evidence: [`claude at ${path.join(box.bin, "claude")} (2.1.304 (Claude Code))`],
     });
+  });
+
+  it("probes only the hosts asked for", async () => {
+    let ran = 0;
+    const counted = async () => {
+      ran++;
+      return { code: 0, stdout: "x", stderr: "" };
+    };
+    const env = { PATH: box.bin };
+    const found = await detectHosts(["codex"], {
+      paths: hostPaths(box.home, env),
+      env,
+      run: counted,
+      applications: path.join(box.root, "Applications"),
+      claude: path.join(box.bin, "claude"),
+    });
+    expect(found.map((host) => host.id)).toEqual(["codex"]);
+    expect(ran).toBe(0);
   });
 
   it("finds Codex and Cursor by their CLIs on PATH, their apps, and their config directories", async () => {
@@ -59,21 +90,23 @@ describe("host detection", () => {
     await mkdir(path.join(box.home, ".cursor"));
     const [, codex, cursor] = await detect(missing);
     expect(codex?.evidence).toEqual([
-      `codex on PATH (${path.join(box.bin, "codex")})`,
+      `codex at ${path.join(box.bin, "codex")}`,
       "the codex CLI in ChatGPT.app",
       "~/.codex",
     ]);
     expect(cursor?.evidence).toEqual([
-      `cursor-agent on PATH (${path.join(box.bin, "cursor-agent")})`,
+      `cursor-agent at ${path.join(box.bin, "cursor-agent")}`,
       "Cursor.app",
       "~/.cursor",
     ]);
   });
 
-  it("ignores a non-executable file and a relative PATH entry", async () => {
+  it("ignores a non-executable file and relative or empty PATH entries", async () => {
     await writeFile(path.join(box.bin, "agent"), "");
-    const env = { PATH: ["bin", box.bin].join(path.delimiter) };
-    expect((await detect(missing, env))[2]?.found).toBe(false);
+    await mkdir(path.join(box.root, "rel"));
+    const env = { PATH: ["bin", "", box.bin].join(path.delimiter) };
+    expect(await findExecutable("agent", env)).toBeUndefined();
+    expect(await findExecutable("npm", env)).toBe(path.join(box.bin, "npm"));
   });
 });
 

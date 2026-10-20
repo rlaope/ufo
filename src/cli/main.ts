@@ -51,7 +51,7 @@ export interface CliIo {
    * CLAUDE_PROJECT_DIR; `process.env` unless a test passes its own.
    */
   env?: NodeJS.ProcessEnv;
-  /** Home directory, `$UFO_HOME`, and host CLI runner for setup; tests pass their own. */
+  /** Home directory, `$UFO_HOME`, command runner, and registry for setup; tests pass their own. */
   setup?: SetupEnvironment;
 }
 
@@ -105,11 +105,14 @@ Commands:
                         --repo <path>     the repository, an absolute path (required for cursor;
                                           default: $CLAUDE_PROJECT_DIR for claude-code, else the
                                           working directory)
-  setup               Register UFO's MCP server and skill with Claude Code, Codex, and Cursor
+  setup               Install this version of UFO and register its MCP server and skill
+                      with Claude Code, Codex, and Cursor
+  update              Install this version beside the old one and point the hosts at it
+                        --package <file>  install this ufo-agents tarball, not the registry's
   uninstall           Remove exactly what setup added
-  update              Re-pin what setup added to this version of UFO
-                        --host <name>    only claude-code, codex, or cursor (repeatable)
-                        --yes            apply the shown changes without asking
+                      setup, update, and uninstall take:
+                        --host <name>     only claude-code, codex, or cursor (repeatable)
+                        --yes             apply the shown changes without asking
 
 Options:
   --run <id>     The run for status, resume, cancel, report, extend-budget (default: latest)
@@ -147,9 +150,17 @@ const COMMANDS = {
     minutes: { type: "string" },
   },
   mcp: { host: { type: "string" }, repo: { type: "string" } },
-  setup: { host: { type: "string", multiple: true }, yes: { type: "boolean" } },
+  setup: {
+    host: { type: "string", multiple: true },
+    yes: { type: "boolean" },
+    package: { type: "string" },
+  },
   uninstall: { host: { type: "string", multiple: true }, yes: { type: "boolean" } },
-  update: { host: { type: "string", multiple: true }, yes: { type: "boolean" } },
+  update: {
+    host: { type: "string", multiple: true },
+    yes: { type: "boolean" },
+    package: { type: "string" },
+  },
 } as const;
 type Command = keyof typeof COMMANDS;
 
@@ -244,11 +255,14 @@ async function execute(
     case "uninstall":
     case "update": {
       const hosts = Array.isArray(values.host) ? parseHostIds(values.host) : undefined;
+      const tarball = typeof values.package === "string" ? values.package : undefined;
       const result = await SETUP_COMMANDS[command]({
+        cwd: context.cwd,
         ...io.setup,
         print,
         yes: values.yes === true,
         ...(hosts === undefined ? {} : { hosts }),
+        ...(tarball === undefined ? {} : { package: tarball }),
       });
       return { result, text: formatSetupReport(result) };
     }

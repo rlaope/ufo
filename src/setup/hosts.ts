@@ -3,13 +3,12 @@ import { constants } from "node:fs";
 import { access, stat } from "node:fs/promises";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import { oneLine } from "../core/text.js";
 import { SetupError } from "./errors.js";
 
 // The three hosts setup knows (plan M2 B0): where each keeps its MCP servers and skills, how to
 // tell it is installed, and the `ufo` entry UFO writes for it. Every path derives from the
 // environment's `home` (and the host's own config-directory variable), so tests never touch the
-// real home.
+// real home. Programs are found as absolute paths on a PATH the caller already filtered.
 
 export const HOST_IDS = ["claude-code", "codex", "cursor"] as const;
 export type HostId = (typeof HOST_IDS)[number];
@@ -23,37 +22,69 @@ export const HOST_NAMES: Readonly<Record<HostId, string>> = {
 /** The MCP server's name in every host's config. */
 export const SERVER_NAME = "ufo";
 export const SKILL_NAME = "ufo-optimize";
-const PACKAGE_NAME = "ufo-agents";
-/** Codex waits 10 s for a server to start by default; the first `npx` fetch can take longer. */
+/** Codex waits 10 s for a server to start by default; a cold start can take longer. */
 const CODEX_STARTUP_TIMEOUT_SEC = 60;
 /** Cursor's variable for the open workspace, which Cursor substitutes in `args`. */
 // biome-ignore lint/suspicious/noTemplateCurlyInString: Cursor's syntax, not a JS template.
 const CURSOR_WORKSPACE = "${workspaceFolder}";
 
 export interface CommandResult {
-  /** The exit status; 127 when the program is not on PATH. */
+  /** The exit status; 127 when the program could not be started. */
   readonly code: number;
   readonly stdout: string;
   readonly stderr: string;
 }
 
-/** Runs a host's CLI (`claude`). Never rejects for a failed command. */
-export type CommandRunner = (file: string, args: readonly string[]) => Promise<CommandResult>;
+export interface RunOptions {
+  readonly cwd: string;
+  readonly env: NodeJS.ProcessEnv;
+  readonly timeoutMs: number;
+}
 
-/** The production runner: `execFile` with `env`, a 60 s timeout, and no shell. */
-export function processRunner(env: NodeJS.ProcessEnv): CommandRunner {
-  return (file, args) =>
-    new Promise((resolve) => {
-      execFile(file, [...args], { env, timeout: 60_000 }, (error, stdout, stderr) => {
+/** Runs a program given by absolute path, without a shell. Never rejects for a failed command. */
+export type CommandRunner = (
+  file: string,
+  args: readonly string[],
+  options: RunOptions,
+) => Promise<CommandResult>;
+
+export const processRunner: CommandRunner = (file, args, options) =>
+  new Promise((resolve) => {
+    execFile(
+      file,
+      [...args],
+      { cwd: options.cwd, env: options.env, timeout: options.timeoutMs, maxBuffer: 16 << 20 },
+      (error, stdout, stderr) => {
         if (error === null) {
           resolve({ code: 0, stdout, stderr });
           return;
         }
-        const code =
-          typeof error.code === "number" ? error.code : error.code === "ENOENT" ? 127 : 1;
+        const code = typeof error.code === "number" ? error.code : 127;
         resolve({ code, stdout, stderr: stderr || error.message });
-      });
-    });
+      },
+    );
+  });
+
+/**
+ * The first executable regular file `name` in the absolute entries of `env.PATH`, which the
+ * caller filtered like every `ufo` process does (no relative or empty entry, none in the working
+ * directory or the project, none with a `node_modules` segment).
+ */
+export async function findExecutable(
+  name: string,
+  env: NodeJS.ProcessEnv,
+): Promise<string | undefined> {
+  for (const dir of (env.PATH ?? "").split(path.delimiter)) {
+    if (dir === "" || !path.isAbsolute(dir)) continue;
+    const file = path.join(dir, name);
+    try {
+      await access(file, constants.X_OK);
+      if ((await stat(file)).isFile()) return file;
+    } catch {
+      // Not here.
+    }
+  }
+  return undefined;
 }
 
 /** Where setup looks and writes, all derived from one home directory and environment. */
@@ -91,17 +122,27 @@ export function tilde(file: string, home: string): string {
   return relative.startsWith("..") || path.isAbsolute(relative) ? file : `~/${relative}`;
 }
 
-/** The `ufo` entry UFO writes for `host`, pinned to `version`. */
-export function desiredEntry(host: HostId, version: string): Record<string, unknown> {
-  const args = ["-y", `${PACKAGE_NAME}@${version}`, "mcp"];
+/** What a host starts: an absolute node and the installed package's CLI. */
+export interface Launch {
+  readonly node: string;
+  readonly script: string;
+}
+
+/** The `ufo` entry UFO writes for `host`: `ufo mcp --host <host>` from the installed package. */
+export function desiredEntry(host: HostId, launch: Launch): Record<string, unknown> {
+  const args = [launch.script, "mcp", "--host", host];
   switch (host) {
     case "claude-code":
-      return { command: "npx", args };
+      return { command: launch.node, args };
     case "codex":
-      return { command: "npx", args, startup_timeout_sec: CODEX_STARTUP_TIMEOUT_SEC };
+      return { command: launch.node, args, startup_timeout_sec: CODEX_STARTUP_TIMEOUT_SEC };
     case "cursor":
       // No host documents a stdio server's working directory; Cursor substitutes the workspace.
-      return { type: "stdio", command: "npx", args: [...args, "--repo", CURSOR_WORKSPACE] };
+      return {
+        type: "stdio",
+        command: launch.node,
+        args: [...args, "--repo", CURSOR_WORKSPACE],
+      };
   }
 }
 
@@ -138,7 +179,7 @@ export interface DetectedHost {
   readonly evidence: string[];
 }
 
-async function exists(file: string): Promise<boolean> {
+async function present(file: string): Promise<boolean> {
   try {
     await stat(file);
     return true;
@@ -147,72 +188,76 @@ async function exists(file: string): Promise<boolean> {
   }
 }
 
-/** The first executable `name` in `PATH`'s absolute directories. */
-async function onPath(name: string, env: NodeJS.ProcessEnv): Promise<string | undefined> {
-  for (const dir of (env.PATH ?? "").split(path.delimiter)) {
-    if (!path.isAbsolute(dir)) continue;
-    const file = path.join(dir, name);
-    try {
-      await access(file, constants.X_OK);
-      if ((await stat(file)).isFile()) return file;
-    } catch {
-      // Not here.
-    }
-  }
-  return undefined;
-}
-
 export interface DetectOptions {
   readonly paths: HostPaths;
   readonly env: NodeJS.ProcessEnv;
   readonly run: CommandRunner;
   /** macOS application directory; `/Applications` in production. */
   readonly applications: string;
+  /** `claude` on the filtered PATH, if any. */
+  readonly claude: string | undefined;
+}
+
+/** One line of a program's output, at most 80 characters. */
+function firstLine(text: string): string {
+  const line = text.split("\n")[0]?.trim() ?? "";
+  return line.length > 80 ? `${line.slice(0, 77)}...` : line;
+}
+
+async function evidenceFor(host: HostId, options: DetectOptions): Promise<string[]> {
+  const { paths, env, applications } = options;
+  const home = paths.home;
+  const found: string[] = [];
+  const program = async (name: string) => {
+    const file = await findExecutable(name, env);
+    if (file !== undefined) found.push(`${name} at ${tilde(file, home)}`);
+  };
+  const dir = async (label: string, file: string) => {
+    if (await present(file)) found.push(label);
+  };
+  switch (host) {
+    case "claude-code": {
+      if (options.claude === undefined) return found;
+      const version = await options.run(options.claude, ["--version"], {
+        cwd: home,
+        env,
+        timeoutMs: 30_000,
+      });
+      if (version.code === 0) {
+        found.push(`claude at ${tilde(options.claude, home)} (${firstLine(version.stdout)})`);
+      }
+      return found;
+    }
+    case "codex":
+      await program("codex");
+      await dir(
+        "the codex CLI in ChatGPT.app",
+        path.join(applications, "ChatGPT.app/Contents/Resources/codex-cli/bin/codex"),
+      );
+      await dir(tilde(path.dirname(paths.codexConfig), home), path.dirname(paths.codexConfig));
+      return found;
+    case "cursor":
+      await program("agent");
+      await program("cursor-agent");
+      await dir("Cursor.app", path.join(applications, "Cursor.app"));
+      await dir("~/.cursor", path.join(home, ".cursor"));
+      return found;
+  }
 }
 
 /**
- * Which hosts are installed (plan M2 B0). Claude Code: `claude --version` succeeds (setup needs
- * its CLI). Codex: `codex` on PATH, the CLI inside ChatGPT.app, or ~/.codex. Cursor: `agent` or
- * `cursor-agent` on PATH, Cursor.app, or ~/.cursor.
+ * Which of `hosts` are installed (plan M2 B0); only those are probed. Claude Code: its `claude`
+ * answers `--version` (setup needs its CLI). Codex: `codex` on PATH, the CLI inside ChatGPT.app,
+ * or ~/.codex. Cursor: `agent` or `cursor-agent` on PATH, Cursor.app, or ~/.cursor.
  */
-export async function detectHosts(options: DetectOptions): Promise<DetectedHost[]> {
-  const { paths, env, run, applications } = options;
-  const home = paths.home;
-  const found = async (checks: [string, Promise<boolean | string | undefined>][]) => {
-    const evidence: string[] = [];
-    for (const [label, check] of checks) {
-      const result = await check;
-      if (result === true) evidence.push(label);
-      else if (typeof result === "string") evidence.push(`${label} (${tilde(result, home)})`);
-    }
-    return evidence;
-  };
-  const claude = await run("claude", ["--version"]);
-  const claudeEvidence =
-    claude.code === 0 ? [`claude --version: ${oneLine(claude.stdout, 80, "ok")}`] : [];
-  const codexEvidence = await found([
-    ["codex on PATH", onPath("codex", env)],
-    [
-      "the codex CLI in ChatGPT.app",
-      exists(path.join(applications, "ChatGPT.app/Contents/Resources/codex-cli/bin/codex")),
-    ],
-    [tilde(path.dirname(paths.codexConfig), home), exists(path.dirname(paths.codexConfig))],
-  ]);
-  const cursorEvidence = await found([
-    ["agent on PATH", onPath("agent", env)],
-    ["cursor-agent on PATH", onPath("cursor-agent", env)],
-    ["Cursor.app", exists(path.join(applications, "Cursor.app"))],
-    ["~/.cursor", exists(path.join(home, ".cursor"))],
-  ]);
-  const evidence: Record<HostId, string[]> = {
-    "claude-code": claudeEvidence,
-    codex: codexEvidence,
-    cursor: cursorEvidence,
-  };
-  return HOST_IDS.map((id) => ({
-    id,
-    name: HOST_NAMES[id],
-    found: evidence[id].length > 0,
-    evidence: evidence[id],
-  }));
+export async function detectHosts(
+  hosts: readonly HostId[],
+  options: DetectOptions,
+): Promise<DetectedHost[]> {
+  const detected: DetectedHost[] = [];
+  for (const id of hosts) {
+    const evidence = await evidenceFor(id, options);
+    detected.push({ id, name: HOST_NAMES[id], found: evidence.length > 0, evidence });
+  }
+  return detected;
 }

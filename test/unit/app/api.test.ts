@@ -17,11 +17,14 @@ const API_CLI = "src/app/api-cli.ts";
 /**
  * What each adapter may import besides Node built-ins and packages. The CLI starts the MCP
  * server (`ufo mcp`), and `ufo setup`, `uninstall`, and `update` write host config files and run
- * no app workflow. The MCP server imports neither, nor anything human-only.
+ * no app workflow. The MCP server imports neither, nor anything human-only. Setup (code review
+ * step D #9a) reaches the rest of src only through the adapter modules too: api-cli.ts for the
+ * terminal prompt, UFO's home checks, and its lock.
  */
 const ALLOWED: Readonly<Record<string, readonly string[]>> = {
   "src/cli": [API, API_CLI, "src/cli/", "src/mcp/", "src/setup/"],
   "src/mcp": [API, "src/mcp/"],
+  "src/setup": [API, API_CLI, "src/setup/"],
 };
 
 function sourcesUnder(dir: string): string[] {
@@ -75,14 +78,17 @@ describe("the adapter modules", () => {
     const cli = sourcesUnder("src/cli");
     expect(cli.some((file) => specifiers(file).some((s) => target(file, s) === API))).toBe(true);
     expect(sourcesUnder("src/mcp").length).toBeGreaterThan(0);
+    expect(sourcesUnder("src/setup").length).toBeGreaterThan(0);
   });
 
-  it("let only the CLI import the human-only steps and the worker entry", () => {
+  it("let only the CLI and setup, which only the CLI runs, import api-cli.ts", () => {
     const importers = sourcesUnder("src").filter((file) =>
       specifiers(file).some((s) => s.startsWith(".") && target(file, s) === API_CLI),
     );
     expect(importers.length).toBeGreaterThan(0);
-    expect(importers.filter((file) => !file.startsWith("src/cli/"))).toEqual([]);
+    expect(
+      importers.filter((file) => !file.startsWith("src/cli/") && !file.startsWith("src/setup/")),
+    ).toEqual([]);
   });
 
   // Code review (step A) #9: a template-literal import is found, an interpolated one refused.
@@ -137,11 +143,18 @@ describe("the adapter modules", () => {
       "trustProcessPath",
     ]);
     expect(Object.keys(apiCli).sort()).toEqual([
+      "LockTimeoutError",
+      "PRIVATE_DIR",
       "WORKER_COMMAND",
       "approve",
+      "askTerminal",
+      "ensureTrustedDir",
       "extendBudget",
       "init",
       "runAppWorker",
+      "trustedHome",
+      "ufoHome",
+      "withLockFile",
     ]);
   });
 });

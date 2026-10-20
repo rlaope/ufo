@@ -5,10 +5,10 @@ import { eolOf, type SpanEdit, splice } from "./span.js";
 // The scanner checks the file's syntax (TOML 1.0, plus the 1.1 relaxations Codex's parser accepts:
 // newlines and a trailing comma in inline tables, `\e` and `\xHH` escapes, optional seconds) and
 // records where each table header and key/value line is. Values are read only as far as setup
-// compares them: strings, decimal integers, booleans, arrays, inline tables. Floats and dates
-// are checked and kept opaque.
+// compares them: strings, decimal integers and floats (Codex rewrites `60` as `60.0`), booleans,
+// arrays, inline tables. Other numbers and dates are checked and kept opaque.
 
-/** A value setup does not read (float, date, non-decimal integer). */
+/** A value setup does not read (inf, nan, date, non-decimal integer). */
 export class TomlOpaque {
   constructor(readonly raw: string) {}
 }
@@ -39,6 +39,7 @@ export interface TomlTable {
 const BARE_KEY = /[A-Za-z0-9_-]/;
 const SCALAR_CHAR = /[0-9A-Za-z_:.+-]/;
 const DECIMAL = /^[+-]?(?:0|[1-9](?:_?\d)*)$/;
+const FLOAT = /^[+-]?(?:0|[1-9](?:_?\d)*)(?:\.\d(?:_?\d)*)?(?:[eE][+-]?\d(?:_?\d)*)?$/;
 const OTHER_SCALARS = [
   /^0x[0-9A-Fa-f](?:_?[0-9A-Fa-f])*$/,
   /^0o[0-7](?:_?[0-7])*$/,
@@ -260,7 +261,7 @@ export function scanToml(text: string, label: string): TomlTable[] {
     }
     const raw = text.slice(start, i);
     if (raw === "true" || raw === "false") return raw === "true";
-    if (DECIMAL.test(raw)) return Number(raw.replaceAll("_", ""));
+    if (DECIMAL.test(raw) || FLOAT.test(raw)) return Number(raw.replaceAll("_", ""));
     if (OTHER_SCALARS.some((pattern) => pattern.test(raw))) return new TomlOpaque(raw);
     return fail(raw === "" ? "a missing value" : "an invalid value");
   };
@@ -348,9 +349,12 @@ export function locateTomlEntry(
     for (const line of table.keys) {
       const full = [...table.path, ...line.path];
       if (full.length === 1 && full[0] === parent) {
+        const { value } = line;
+        const inline =
+          typeof value === "object" && !Array.isArray(value) && !(value instanceof TomlOpaque);
         throw new SetupError(
           "host_config_invalid",
-          `${label} sets ${parent} as one value (an inline table); add the ufo server by hand`,
+          `${label} sets ${parent} to ${inline ? "an inline table" : "a value that is not a table"}, so a [${parent}.${name}] table cannot be added; add the ufo server by hand`,
         );
       }
       if (startsWith(full, entryPath) && table !== exact[0]) elsewhere = true;

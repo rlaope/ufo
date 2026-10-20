@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
-import { oneLine } from "../core/text.js";
+import { redact } from "../app/api.js";
 import { unifiedDiff } from "./diff.js";
 import { SetupError } from "./errors.js";
 import { readConfig, removeConfig, sha256, writeConfig } from "./files.js";
@@ -10,6 +10,7 @@ import {
   HOST_NAMES,
   type HostId,
   type HostPaths,
+  type Launch,
   SERVER_NAME,
   SKILL_NAME,
   sameEntry,
@@ -21,13 +22,33 @@ import {
   removeJsonEntry,
   replaceJsonEntry,
 } from "./json-edit.js";
-import { hashFiles, installSkill, readSkillHashes, removeSkill, sameFiles } from "./skills.js";
+import {
+  installedIntegrity,
+  installedSkill,
+  installPackage,
+  PACKAGE_NAME,
+  type PackageSource,
+  prefixFor,
+  REGISTRY,
+  removePackage,
+} from "./package.js";
+import {
+  type FileHashes,
+  firstDifference,
+  hashFiles,
+  installSkill,
+  readSkillHashes,
+  removeSkill,
+  sameFiles,
+} from "./skills.js";
 import { repinEdit, type SpanEdit, undoEdit } from "./span.js";
 import {
   type FileState,
+  type HostRecord,
   readBackup,
   removeBackup,
   type SetupRecord,
+  type Store,
   writeBackup,
 } from "./store.js";
 import {
@@ -37,34 +58,39 @@ import {
   replaceTomlEntry,
 } from "./toml-edit.js";
 
-// What setup, uninstall, and update would change, worked out before anything is written. Each
+// What setup, update, and uninstall would change, worked out before anything is written. Each
 // step re-reads its target before it writes and refuses (`changed_during_setup`) when it is no
-// longer what the plan showed.
+// longer what the plan showed, and records the change before it makes it.
 
-export type ChangeAction = "add" | "repin" | "remove" | "restore" | "install" | "replace";
+export type ChangeKind = "package" | "mcp_server" | "skill";
+export type ChangeAction = "install" | "replace" | "add" | "repin" | "remove" | "restore";
 
 export interface ChangeView {
   readonly hosts: HostId[];
-  readonly kind: "mcp_server" | "skill";
+  readonly kind: ChangeKind;
   /** The file or directory, with the home directory as `~`. */
   readonly target: string;
   readonly action: ChangeAction;
+  /** One line, redacted. */
   readonly detail: string;
-  /** The unified diff of a config file edit. */
+  /** The unified diff of a config file edit, redacted. */
   readonly diff?: string;
 }
 
 export interface UnchangedView {
   readonly hosts: HostId[];
-  readonly kind: "mcp_server" | "skill";
+  readonly kind: ChangeKind;
   readonly target: string;
   readonly reason: string;
 }
 
+/** Saves the record now; a step calls it before the write the record describes. */
+export type Save = (record: SetupRecord) => Promise<void>;
+
 export interface Step {
   readonly view: ChangeView;
   /** Makes the change and records it in `record`. */
-  readonly apply: (record: SetupRecord) => Promise<void>;
+  readonly apply: (record: SetupRecord, save: Save) => Promise<void>;
 }
 
 export interface Plan {
@@ -77,14 +103,17 @@ export interface Plan {
 export interface PlanContext {
   readonly paths: HostPaths;
   readonly run: CommandRunner;
-  readonly version: string;
-  /** `$UFO_HOME/private/setup`. */
-  readonly store: string;
-  readonly skill: ReadonlyMap<string, Buffer>;
+  /** The environment host CLIs and npm run with; its PATH is filtered. */
+  readonly env: NodeJS.ProcessEnv;
+  readonly store: Store;
+  /** `claude` and `npm` as absolute paths, when in scope and found. */
+  readonly claude: string | undefined;
+  readonly npm: string | undefined;
+  /** Setup and update: the package to install and how hosts start it. */
+  readonly install?: { readonly source: PackageSource; readonly launch: Launch };
 }
 
-/** `install`: setup and update; `remove`: uninstall. */
-export type Mode = "install" | "remove";
+export type Mode = "setup" | "update" | "remove";
 
 const changed = (label: string) =>
   new SetupError(
@@ -98,6 +127,25 @@ export function hostNames(hosts: readonly HostId[]): string {
   return names.length <= 2
     ? names.join(" and ")
     : `${names.slice(0, -1).join(", ")}, and ${names.at(-1)}`;
+}
+
+/** Text shown to a person or written to --json: redacted, with the home as `~`. */
+function shown(ctx: PlanContext, text: string): string {
+  return redact(text, { homeDir: ctx.paths.home });
+}
+
+function installing(ctx: PlanContext): { source: PackageSource; launch: Launch } {
+  if (ctx.install === undefined) throw new Error("setup and update need a package to install");
+  return ctx.install;
+}
+
+/** Whether `value` is an entry UFO wrote: the recorded one, or one being written. */
+function ownsEntry(owned: HostRecord | undefined, value: unknown): boolean {
+  if (owned === undefined) return false;
+  return (
+    sameEntry(value, owned.entry) ||
+    (owned.pending !== undefined && sameEntry(value, owned.pending.entry))
+  );
 }
 
 interface EntryFormat {
@@ -166,12 +214,13 @@ function conflict(owned: boolean, label: string, what: string): SetupError {
   );
 }
 
-function skillConflict(owned: boolean, label: string): SetupError {
+function skillConflict(owned: boolean, label: string, difference: string | undefined): SetupError {
+  const why = difference === undefined ? "" : ` (${difference})`;
   return new SetupError(
     "entry_conflict",
     owned
-      ? `${label} was changed since setup installed it; restore it or remove it by hand`
-      : `${label} holds a ${SKILL_NAME} skill that UFO did not install; remove or rename it, or leave this host out with --host`,
+      ? `${label} was changed since setup installed it${why}; restore it or remove it by hand`
+      : `${label} holds a ${SKILL_NAME} skill that UFO did not install${why}; remove or rename it, or leave this host out with --host`,
   );
 }
 
@@ -209,44 +258,64 @@ async function planFileHost(
   const owned = hostRecord(ctx, record, host, file);
   const text = await readConfig(file, label);
   const current = text === undefined ? { found: false as const } : format.locate(text, label);
-  const desired = desiredEntry(host, ctx.version);
   const where = { hosts: [host], kind: "mcp_server" as const, target: label };
+  const diff = (after: string | undefined) => shown(ctx, unifiedDiff(label, text, after));
   const unchangedSincePlan = async () => {
     if ((await readConfig(file, label)) !== text) throw changed(label);
   };
+  const forget = async (target: SetupRecord) => {
+    delete target.hosts[host];
+    await removeBackup(ctx.store.dir, host, file);
+  };
 
-  if (mode === "install") {
-    /** Writes `next`, backing the file up first when setup has never written it. */
+  if (mode !== "remove") {
+    const { source, launch } = installing(ctx);
+    const desired = desiredEntry(host, launch);
+    /** Records, then writes, `next`, backing the file up first when setup never wrote it. */
     const write =
       (next: string, edit: SpanEdit | null, parentCreated: boolean) =>
-      async (target: SetupRecord) => {
+      async (target: SetupRecord, save: Save) => {
         await unchangedSincePlan();
-        const prior = target.hosts[host]?.file;
-        if (prior === undefined && text !== undefined) {
-          await writeBackup(ctx.store, host, file, text);
+        const prior = target.hosts[host];
+        const priorFile = prior?.file;
+        if (priorFile === undefined && text !== undefined) {
+          await writeBackup(ctx.store.dir, host, file, text);
         }
-        await writeConfig(file, next);
         const before = text === undefined ? null : sha256(text);
+        const state: FileState = {
+          before: priorFile === undefined ? before : priorFile.before,
+          after: sha256(next),
+          untouched: priorFile === undefined || (priorFile.untouched && before === priorFile.after),
+          edit,
+          parentCreated,
+        };
         target.hosts[host] = {
           path: file,
-          entry: desired,
-          file: {
-            before: prior === undefined ? before : prior.before,
-            after: sha256(next),
-            untouched: prior === undefined || (prior.untouched && before === prior.after),
-            edit,
-            parentCreated,
-          },
+          version: prior?.version ?? source.version,
+          entry: prior?.entry ?? desired,
+          pending: { version: source.version, entry: desired },
+          file: state,
         };
+        await save(target);
+        await writeConfig(file, next);
+        target.hosts[host] = { path: file, version: source.version, entry: desired, file: state };
       };
     if (!current.found) {
+      if (mode === "update" && owned !== undefined) {
+        plan.unchanged.push({
+          ...where,
+          reason: "has no ufo server any more; UFO forgets it (run ufo setup to add it again)",
+        });
+        plan.bookkeeping.push(forget);
+        return;
+      }
       const next = format.insert(text, desired, label);
       plan.steps.push({
         view: {
           ...where,
           action: "add",
           detail: text === undefined ? "create the file with the ufo server" : "add the ufo server",
-          diff: unifiedDiff(label, text, next.text),
+          diff: diff(next.text),
         },
         apply: write(
           next.text,
@@ -262,31 +331,34 @@ async function planFileHost(
         reason:
           owned === undefined
             ? "has this ufo server already, not written by UFO; uninstall leaves it"
-            : `up to date (ufo-agents@${ctx.version})`,
+            : `up to date (${PACKAGE_NAME}@${source.version})`,
       });
+      if (owned !== undefined) {
+        plan.bookkeeping.push(async (target) => {
+          const { pending: _pending, ...rest } = owned;
+          target.hosts[host] = { ...rest, version: source.version, entry: desired };
+        });
+      }
       return;
     }
-    if (
-      owned !== undefined &&
-      current.editable &&
-      text !== undefined &&
-      sameEntry(current.value, owned.entry)
-    ) {
-      const next = format.replace(text, desired, label);
-      plan.steps.push({
-        view: {
-          ...where,
-          action: "repin",
-          detail: `re-pin the ufo server to ufo-agents@${ctx.version}`,
-          diff: unifiedDiff(label, text, next.text),
-        },
-        apply: write(
-          next.text,
-          repinEdit(owned.file?.edit ?? null, next.before, next.after),
-          owned.file?.parentCreated ?? false,
-        ),
-      });
-      return;
+    if (owned !== undefined && current.editable && text !== undefined) {
+      if (ownsEntry(owned, current.value)) {
+        const next = format.replace(text, desired, label);
+        plan.steps.push({
+          view: {
+            ...where,
+            action: "repin",
+            detail: `point the ufo server at ${PACKAGE_NAME}@${source.version}`,
+            diff: diff(next.text),
+          },
+          apply: write(
+            next.text,
+            repinEdit(owned.file?.edit ?? null, next.before, next.after),
+            owned.file?.parentCreated ?? false,
+          ),
+        });
+        return;
+      }
     }
     throw conflict(owned !== undefined, label, "a ufo server");
   }
@@ -296,12 +368,9 @@ async function planFileHost(
     return;
   }
   const state = owned.file;
-  if (state === undefined)
+  if (state === undefined) {
     throw new SetupError("unsafe_state", `the setup record of ${label} has no file state`);
-  const forget = async (target: SetupRecord) => {
-    delete target.hosts[host];
-    await removeBackup(ctx.store, host, file);
-  };
+  }
   /** Writes `next` (`undefined`: removes the file setup created) and forgets the host. */
   const finish = (next: string | undefined) => async (target: SetupRecord) => {
     await unchangedSincePlan();
@@ -316,7 +385,7 @@ async function planFileHost(
   }
   if (state.untouched && sha256(text) === state.after) {
     const original =
-      state.before === null ? undefined : await readBackup(ctx.store, host, file, state.before);
+      state.before === null ? undefined : await readBackup(ctx.store.dir, host, file, state.before);
     plan.steps.push({
       view: {
         ...where,
@@ -325,7 +394,7 @@ async function planFileHost(
           original === undefined
             ? "delete the file setup created (unchanged since)"
             : "restore the backup (the file is unchanged since setup wrote it)",
-        diff: unifiedDiff(label, text, original),
+        diff: diff(original),
       },
       apply: finish(original),
     });
@@ -336,7 +405,7 @@ async function planFileHost(
     plan.bookkeeping.push(forget);
     return;
   }
-  if (!current.editable || !sameEntry(current.value, owned.entry)) {
+  if (!current.editable || !ownsEntry(owned, current.value)) {
     throw conflict(true, label, "the ufo server");
   }
   const next = withoutEntry(text, state, format, label);
@@ -348,7 +417,7 @@ async function planFileHost(
       detail: created
         ? "delete the file setup created (nothing else is left in it)"
         : "remove the ufo server; every other byte stays",
-      diff: unifiedDiff(label, text, created ? undefined : next),
+      diff: diff(created ? undefined : next),
     },
     apply: finish(created ? undefined : next),
   });
@@ -374,6 +443,15 @@ async function claudeEntry(file: string, label: string): Promise<unknown> {
   return (servers as Record<string, unknown>)[SERVER_NAME];
 }
 
+/** Whether a Claude Code entry runs `entry`'s command and arguments, whatever else it holds. */
+function sameCommand(value: unknown, entry: Record<string, unknown>): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  const found = value as Record<string, unknown>;
+  return (
+    isDeepStrictEqual(found.command, entry.command) && isDeepStrictEqual(found.args, entry.args)
+  );
+}
+
 /**
  * Claude Code through its own CLI (`claude mcp add|remove --scope user`): its config holds live
  * app state, so setup reads it but never writes it, backs nothing up, and never restores it.
@@ -389,64 +467,126 @@ async function planClaudeCode(
   const label = tilde(file, ctx.paths.home);
   const owned = hostRecord(ctx, record, host, file);
   const current = await claudeEntry(file, label);
-  const desired = desiredEntry(host, ctx.version);
-  const add = [
+  const claude = ctx.claude;
+  if (claude === undefined) {
+    throw new SetupError(
+      "host_not_found",
+      "Claude Code's claude is not on PATH (outside the project); UFO changes its servers only through it",
+    );
+  }
+  const where = { hosts: [host], kind: "mcp_server" as const, target: label };
+  const addArgs = (entry: Record<string, unknown>) => [
     "mcp",
     "add",
     "--scope",
     "user",
     SERVER_NAME,
     "--",
-    "npx",
-    ...(desired.args as string[]),
+    String(entry.command),
+    ...(entry.args as string[]),
   ];
   const remove = ["mcp", "remove", SERVER_NAME, "--scope", "user"];
-  const where = { hosts: [host], kind: "mcp_server" as const, target: label };
-  const claude = async (args: readonly string[]) => {
-    const result = await ctx.run("claude", args);
-    if (result.code !== 0) {
-      throw new SetupError(
-        "host_cli_failed",
-        `claude ${args.join(" ")} exited ${result.code}: ${oneLine(result.stderr || result.stdout, 300, "no output")}`,
-      );
-    }
+  const line = (args: readonly string[]) => `${claude} ${args.join(" ")}`;
+  const run = (args: readonly string[]) =>
+    ctx.run(claude, args, { cwd: ctx.paths.home, env: ctx.env, timeoutMs: 60_000 });
+  const why = (result: { code: number; stderr: string; stdout: string }) => {
+    const text = (result.stderr || result.stdout).trim().split("\n").at(-1) ?? "";
+    return `exited ${result.code}${text === "" ? "" : `: ${text}`}`;
   };
   const unchangedSincePlan = async () => {
     if (!isDeepStrictEqual(await claudeEntry(file, label), current)) throw changed(label);
   };
-  const install = (repin: boolean) => async (target: SetupRecord) => {
-    await unchangedSincePlan();
-    if (repin) await claude(remove);
-    await claude(add);
-    if (!sameEntry(await claudeEntry(file, label), desired)) {
+
+  if (mode !== "remove") {
+    const { source, launch } = installing(ctx);
+    const desired = desiredEntry(host, launch);
+    const add = addArgs(desired);
+    /**
+     * Records, then runs `claude mcp add` (after `remove` for a re-pin). When the add fails or
+     * does not show up as UFO's, what this step did is undone: the new server is removed and,
+     * for a re-pin, the previous one is added back.
+     */
+    const install = (repin: boolean) => async (target: SetupRecord, save: Save) => {
+      await unchangedSincePlan();
+      const prior = target.hosts[host];
+      target.hosts[host] = {
+        path: file,
+        version: prior?.version ?? source.version,
+        entry: prior?.entry ?? desired,
+        pending: { version: source.version, entry: desired },
+      };
+      await save(target);
+      if (repin) {
+        const removed = await run(remove);
+        if (removed.code !== 0) {
+          if (prior === undefined) delete target.hosts[host];
+          else target.hosts[host] = { path: file, version: prior.version, entry: prior.entry };
+          throw new SetupError("host_cli_failed", `${line(remove)} ${why(removed)}`);
+        }
+      }
+      const added = await run(add);
+      const now = added.code === 0 ? await claudeEntry(file, label) : undefined;
+      if (added.code === 0 && sameCommand(now, desired)) {
+        // What Claude Code stored, extra defaults included, is the entry UFO owns.
+        target.hosts[host] = {
+          path: file,
+          version: source.version,
+          entry: now as Record<string, unknown>,
+        };
+        return;
+      }
+      if (added.code === 0) await run(remove);
+      let restored = "";
+      delete target.hosts[host];
+      if (repin && prior !== undefined) {
+        const again = await run(addArgs(prior.entry));
+        if (again.code === 0 && sameCommand(await claudeEntry(file, label), prior.entry)) {
+          target.hosts[host] = { path: file, version: prior.version, entry: prior.entry };
+          restored = "; the previous ufo server is back in place";
+        } else {
+          restored =
+            "; the previous ufo server was removed and could not be added back: run ufo setup again";
+        }
+      }
       throw new SetupError(
         "host_cli_failed",
-        `claude ${add.join(" ")} succeeded, but ${label} has no matching ufo server (is CLAUDE_CONFIG_DIR set the same way for both?)`,
+        added.code === 0
+          ? `${line(add)} succeeded, but ${label} shows no matching ufo server (is CLAUDE_CONFIG_DIR set the same way for both?); UFO removed it again${restored}`
+          : `${line(add)} ${why(added)}${restored}`,
       );
-    }
-    target.hosts[host] = { path: file, entry: desired };
-  };
-
-  if (mode === "install") {
+    };
     if (current === undefined) {
+      if (mode === "update" && owned !== undefined) {
+        plan.unchanged.push({
+          ...where,
+          reason: "has no ufo server any more; UFO forgets it (run ufo setup to add it again)",
+        });
+        plan.bookkeeping.push(async (target) => {
+          delete target.hosts[host];
+        });
+        return;
+      }
       plan.steps.push({
-        view: { ...where, action: "add", detail: `run claude ${add.join(" ")}` },
+        view: { ...where, action: "add", detail: shown(ctx, `run ${line(add)}`) },
         apply: install(false),
       });
-    } else if (sameEntry(current, desired)) {
+    } else if (
+      sameEntry(current, desired) ||
+      (owned !== undefined && sameCommand(current, desired) && ownsEntry(owned, current))
+    ) {
       plan.unchanged.push({
         ...where,
         reason:
           owned === undefined
             ? "has this ufo server already, not added by UFO; uninstall leaves it"
-            : `up to date (ufo-agents@${ctx.version})`,
+            : `up to date (${PACKAGE_NAME}@${source.version})`,
       });
-    } else if (owned !== undefined && sameEntry(current, owned.entry)) {
+    } else if (ownsEntry(owned, current)) {
       plan.steps.push({
         view: {
           ...where,
           action: "repin",
-          detail: `run claude ${remove.join(" ")}, then claude ${add.join(" ")}`,
+          detail: shown(ctx, `run ${line(remove)}, then ${line(add)}`),
         },
         apply: install(true),
       });
@@ -467,17 +607,17 @@ async function planClaudeCode(
     });
     return;
   }
-  if (!sameEntry(current, owned.entry)) throw conflict(true, label, "the user-scope ufo server");
+  if (!ownsEntry(owned, current)) throw conflict(true, label, "the user-scope ufo server");
   plan.steps.push({
-    view: { ...where, action: "remove", detail: `run claude ${remove.join(" ")}` },
+    view: { ...where, action: "remove", detail: shown(ctx, `run ${line(remove)}`) },
     apply: async (target) => {
       await unchangedSincePlan();
-      await claude(remove);
+      const removed = await run(remove);
+      if (removed.code !== 0) {
+        throw new SetupError("host_cli_failed", `${line(remove)} ${why(removed)}`);
+      }
       if ((await claudeEntry(file, label)) !== undefined) {
-        throw new SetupError(
-          "host_cli_failed",
-          `claude ${remove.join(" ")} left the ufo server in ${label}`,
-        );
+        throw new SetupError("host_cli_failed", `${line(remove)} left the ufo server in ${label}`);
       }
       delete target.hosts[host];
     },
@@ -498,44 +638,39 @@ async function planSkills(
     const dir = ctx.paths.skillDirs[host];
     dirs.set(dir, [...(dirs.get(dir) ?? []), host]);
   }
-  const source = hashFiles(ctx.skill);
   for (const [dir, dirHosts] of dirs) {
     const label = tilde(dir, ctx.paths.home);
     const owned = record.skills[dir];
     const where = { hosts: dirHosts, kind: "skill" as const, target: label };
     const current = await readSkillHashes(dir);
+    const ours = (hashes: FileHashes) =>
+      owned !== undefined &&
+      (sameFiles(hashes, owned.files) ||
+        (owned.pending !== undefined && sameFiles(hashes, owned.pending)));
     const withHosts = (target: SetupRecord) =>
       byHostOrder(new Set([...(target.skills[dir]?.hosts ?? []), ...dirHosts]));
+    const forget = async (target: SetupRecord) => {
+      delete target.skills[dir];
+    };
     const unchangedSincePlan = async () => {
       const now = await readSkillHashes(dir);
-      if (
-        now === undefined
-          ? current !== undefined
-          : current === undefined || !sameFiles(now, current)
-      ) {
-        throw changed(label);
-      }
+      const same =
+        now === undefined || current === undefined ? now === current : sameFiles(now, current);
+      if (!same) throw changed(label);
     };
 
-    if (mode === "install") {
-      if (
-        current === undefined ||
-        (owned !== undefined && !sameFiles(current, source) && sameFiles(current, owned.files))
-      ) {
-        const replace = current !== undefined;
-        plan.steps.push({
-          view: {
-            ...where,
-            action: replace ? "replace" : "install",
-            detail: `${replace ? "update" : "install"} the ${SKILL_NAME} skill (${Object.keys(source).sort().join(", ")})`,
-          },
-          apply: async (target) => {
-            await unchangedSincePlan();
-            await installSkill(dir, ctx.skill, replace);
-            target.skills[dir] = { files: source, hosts: withHosts(target) };
-          },
+    if (mode !== "remove") {
+      const { source } = installing(ctx);
+      const hashes = hashFiles(source.skill);
+      if (current === undefined && mode === "update" && owned !== undefined) {
+        plan.unchanged.push({
+          ...where,
+          reason: "is gone; UFO forgets it (run ufo setup to install it again)",
         });
-      } else if (sameFiles(current, source)) {
+        plan.bookkeeping.push(forget);
+        continue;
+      }
+      if (current !== undefined && sameFiles(current, hashes)) {
         plan.unchanged.push({
           ...where,
           reason:
@@ -544,13 +679,44 @@ async function planSkills(
               : "up to date",
         });
         if (owned !== undefined) {
+          // The files on disk are this version's: that is what UFO owns now.
           plan.bookkeeping.push(async (target) => {
-            target.skills[dir] = { files: owned.files, hosts: withHosts(target) };
+            target.skills[dir] = { files: hashes, hosts: withHosts(target) };
           });
         }
-      } else {
-        throw skillConflict(owned !== undefined, label);
+        continue;
       }
+      if (current !== undefined && !ours(current)) {
+        throw skillConflict(
+          owned !== undefined,
+          label,
+          firstDifference(current, owned?.files ?? hashes),
+        );
+      }
+      const replace = current !== undefined;
+      plan.steps.push({
+        view: {
+          ...where,
+          action: replace ? "replace" : "install",
+          detail: `${replace ? "update" : "install"} the ${SKILL_NAME} skill from ${PACKAGE_NAME}@${source.version} (${Object.keys(hashes).sort().join(", ")})`,
+        },
+        apply: async (target, save) => {
+          await unchangedSincePlan();
+          const files = await installedSkill(
+            prefixFor(ctx.store.pkgRoot, source.version),
+            source.skill,
+          );
+          const prior = target.skills[dir];
+          target.skills[dir] = {
+            files: prior?.files ?? hashes,
+            pending: hashes,
+            hosts: withHosts(target),
+          };
+          await save(target);
+          await installSkill(dir, files, replace);
+          target.skills[dir] = { files: hashes, hosts: withHosts(target) };
+        },
+      });
       continue;
     }
 
@@ -562,30 +728,115 @@ async function planSkills(
     if (remaining.length > 0) {
       plan.unchanged.push({ ...where, reason: `kept for ${hostNames(remaining)}` });
       plan.bookkeeping.push(async (target) => {
-        target.skills[dir] = { files: owned.files, hosts: remaining };
+        target.skills[dir] = { ...owned, hosts: remaining };
       });
       continue;
     }
     if (current === undefined) {
       plan.unchanged.push({ ...where, reason: "is gone; nothing to remove" });
-      plan.bookkeeping.push(async (target) => {
-        delete target.skills[dir];
-      });
+      plan.bookkeeping.push(forget);
       continue;
     }
-    if (!sameFiles(current, owned.files)) throw skillConflict(true, label);
+    if (!ours(current)) throw skillConflict(true, label, firstDifference(current, owned.files));
     plan.steps.push({
       view: { ...where, action: "remove", detail: `remove the ${SKILL_NAME} skill directory` },
       apply: async (target) => {
         await unchangedSincePlan();
         await removeSkill(dir);
-        delete target.skills[dir];
+        await forget(target);
       },
     });
   }
 }
 
-/** Every change for `hosts`: each host's MCP server entry, then the skill directories. */
+/** Setup and update: install the package version hosts will start, unless it is in place. */
+async function planPackage(
+  ctx: PlanContext,
+  hosts: readonly HostId[],
+  record: SetupRecord,
+  plan: Plan,
+): Promise<void> {
+  const { source } = installing(ctx);
+  const prefix = prefixFor(ctx.store.pkgRoot, source.version);
+  const where = {
+    hosts: [...hosts],
+    kind: "package" as const,
+    target: tilde(prefix, ctx.paths.home),
+  };
+  const owned = record.packages[source.version];
+  const installed = await installedIntegrity(prefix, source.version);
+  if (owned?.integrity === source.integrity && installed === source.integrity) {
+    plan.unchanged.push({ ...where, reason: `${PACKAGE_NAME}@${source.version} is installed` });
+    return;
+  }
+  if (ctx.npm === undefined) {
+    throw new SetupError("install_failed", "npm is not on PATH (outside the project)");
+  }
+  const from = source.tarball === undefined ? REGISTRY : source.tarball;
+  plan.steps.push({
+    view: {
+      ...where,
+      action: installed === undefined ? "install" : "replace",
+      detail: shown(
+        ctx,
+        `install ${PACKAGE_NAME}@${source.version} from ${from} with ${ctx.npm} (no install scripts, no npm_config_* settings), then check its version and integrity ${source.integrity}`,
+      ),
+    },
+    apply: async (target, save) => {
+      target.packages[source.version] = {
+        source: source.kind,
+        integrity: source.integrity,
+        ...(source.tarball === undefined ? {} : { tarball: source.tarball }),
+      };
+      await save(target);
+      await installPackage(
+        { pkgRoot: ctx.store.pkgRoot, npm: ctx.npm, env: ctx.env, run: ctx.run },
+        source,
+      );
+    },
+  });
+}
+
+/** Uninstall: remove each installed copy no host left set up still starts. */
+function planPackageRemoval(
+  ctx: PlanContext,
+  hosts: readonly HostId[],
+  record: SetupRecord,
+  plan: Plan,
+): void {
+  const kept = new Map<string, HostId[]>();
+  for (const host of HOST_IDS) {
+    const entry = record.hosts[host];
+    if (entry === undefined || hosts.includes(host)) continue;
+    for (const version of [entry.version, entry.pending?.version]) {
+      if (version !== undefined) kept.set(version, [...(kept.get(version) ?? []), host]);
+    }
+  }
+  for (const version of Object.keys(record.packages).sort()) {
+    const where = {
+      hosts: [...hosts],
+      kind: "package" as const,
+      target: tilde(prefixFor(ctx.store.pkgRoot, version), ctx.paths.home),
+    };
+    const users = kept.get(version);
+    if (users !== undefined) {
+      plan.unchanged.push({ ...where, reason: `kept for ${hostNames(users)}` });
+      continue;
+    }
+    plan.steps.push({
+      view: { ...where, action: "remove", detail: `remove ${PACKAGE_NAME}@${version}` },
+      apply: async (target) => {
+        await removePackage(ctx.store.pkgRoot, version);
+        delete target.packages[version];
+      },
+    });
+  }
+}
+
+/**
+ * Every change for `hosts`, in order: the package (setup, update), each host's MCP server entry,
+ * the skill directories, then (uninstall) the installed copies no one starts any more.
+ */
 export async function planChanges(
   ctx: PlanContext,
   hosts: readonly HostId[],
@@ -593,11 +844,13 @@ export async function planChanges(
   mode: Mode,
 ): Promise<Plan> {
   const plan: Plan = { steps: [], unchanged: [], bookkeeping: [] };
+  if (mode !== "remove") await planPackage(ctx, hosts, record, plan);
   for (const host of hosts) {
     if (host === "claude-code") await planClaudeCode(ctx, record, mode, plan);
     else await planFileHost(ctx, host, record, mode, plan);
   }
   await planSkills(ctx, hosts, record, mode, plan);
+  if (mode === "remove") planPackageRemoval(ctx, hosts, record, plan);
   return plan;
 }
 

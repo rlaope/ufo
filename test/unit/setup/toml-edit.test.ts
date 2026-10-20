@@ -145,6 +145,20 @@ describe("the Codex TOML span edit", () => {
     }
   });
 
+  it("reads the float Codex writes for UFO's timeout as the same number", () => {
+    // codex 0.163 rewrites `startup_timeout_sec = 60` as `60.0` on its own `codex mcp add`.
+    const rewritten = TABLE.replace("startup_timeout_sec = 60", "startup_timeout_sec = 60.0");
+    expect(locate(rewritten)).toMatchObject({ found: true, value: ENTRY });
+    expect(locate(TABLE.replace("= 60\n", "= 6e1\n"))).toMatchObject({ value: ENTRY });
+    expect(locate(TABLE.replace("= 60\n", "= 60.5\n"))).not.toMatchObject({ value: ENTRY });
+  });
+
+  it("says what mcp_servers is when a table cannot be added to it", () => {
+    expect(refusal(() => locate("mcp_servers = 3\n")).message).toBe(
+      "config.toml sets mcp_servers to a value that is not a table, so a [mcp_servers.ufo] table cannot be added; add the ufo server by hand",
+    );
+  });
+
   it("refuses a table defined twice and a servers table that a new table cannot extend", () => {
     expect(refusal(() => locate(`${TABLE}${TABLE}`)).message).toContain("more than once");
     expect(refusal(() => locate('mcp_servers = { docs = { command = "d" } }\n')).message).toContain(
