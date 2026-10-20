@@ -34,6 +34,17 @@ export type SkipReason =
   | "unverified"
   | "not_ufo_worker";
 
+/** Skips that leave nothing of the run running: the group is gone, reused, or this process. */
+const GONE: ReadonlySet<SkipReason> = new Set(["self", "not_running", "pid_reused"]);
+
+/**
+ * Whether nothing the run started is left running after `report`'s stop: no survivor, and no
+ * group skipped while it may still be alive (unverified, not permitted, not the worker).
+ */
+export function nothingLeftRunning(report: Pick<KillReport, "survivors" | "skipped">): boolean {
+  return report.survivors.length === 0 && report.skipped.every((skip) => GONE.has(skip.reason));
+}
+
 export interface KillReport {
   /** Groups sent SIGTERM. */
   terminated: number[];

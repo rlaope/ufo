@@ -448,9 +448,15 @@ export async function clearStaleArmLocks(run: Run): Promise<string[]> {
   for (const arm of [run.armA, run.armB]) {
     await assertArm(arm);
     const gitDir = path.join(arm, ".git");
+    // A `refs` that is not a real directory (a planted symlink) is not walked: the locks it
+    // would lead to are outside the arm.
+    const refs = path.join(gitDir, "refs");
+    const refsInfo = await lstat(refs).catch(() => undefined);
     const locks = [
       ...TOP_LEVEL_LOCKS.map((name) => path.join(gitDir, name)),
-      ...(await refLocks(path.join(gitDir, "refs"))),
+      ...(refsInfo?.isDirectory() === true && !refsInfo.isSymbolicLink()
+        ? await refLocks(refs)
+        : []),
     ];
     for (const lock of locks) {
       if ((await lstat(lock).catch(() => undefined)) === undefined) continue;

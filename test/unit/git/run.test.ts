@@ -846,4 +846,22 @@ describe("clearStaleArmLocks", () => {
     expect(await clearStaleArmLocks(run)).toEqual([]);
     await removeRun(run, { deleteBranch: true });
   });
+
+  // Code review (E1b): a `refs` replaced by a symlink is not walked, so no lock outside the arm is
+  // removed; a directory named like a lock is never removed.
+  it("removes nothing outside the arm through a symlinked refs", async () => {
+    const { run } = await createRunArms(newRepo(), nextRunId(), { home });
+    const outside = path.join(sandbox.root, `outside-${randomUUID()}`);
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(path.join(outside, "keep.lock"), "");
+    const refs = path.join(run.armB, ".git", "refs");
+    rmSync(refs, { recursive: true, force: true });
+    symlinkSync(outside, refs);
+    mkdirSync(path.join(run.armA, ".git", "refs", "heads", "dir.lock"), { recursive: true });
+    expect(await clearStaleArmLocks(run)).toEqual([]);
+    expect(existsSync(path.join(outside, "keep.lock"))).toBe(true);
+    expect(existsSync(path.join(run.armA, ".git", "refs", "heads", "dir.lock"))).toBe(true);
+    rmSync(refs);
+    await removeRun(run, { deleteBranch: true });
+  });
 });

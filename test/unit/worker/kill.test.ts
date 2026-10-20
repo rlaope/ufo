@@ -16,6 +16,7 @@ import {
 import {
   type Exec,
   killRunProcesses,
+  nothingLeftRunning,
   readChildGroups,
   runContainerLabel,
   trackChildGroup,
@@ -265,5 +266,26 @@ describe("container cleanup through docker on PATH", () => {
     const calls = (await readFile(log, "utf8")).trim().split("\n");
     expect(calls).toContain(`ps -aq --filter label=ufo.run=${RUN_ID}`);
     expect(calls).toContain(`rm -f ${ID_1}`);
+  });
+});
+
+// Code review (E1b): resume clears an arm's git locks only when nothing of the run may still run.
+describe("nothingLeftRunning", () => {
+  it("is true only without survivors and with every skipped group gone", () => {
+    expect(nothingLeftRunning({ survivors: [], skipped: [] })).toBe(true);
+    expect(
+      nothingLeftRunning({
+        survivors: [],
+        skipped: [
+          { pgid: 1, reason: "not_running" },
+          { pgid: 2, reason: "pid_reused" },
+          { pgid: 3, reason: "self" },
+        ],
+      }),
+    ).toBe(true);
+    expect(nothingLeftRunning({ survivors: [4], skipped: [] })).toBe(false);
+    for (const reason of ["unverified", "not_permitted", "not_ufo_worker"] as const) {
+      expect(nothingLeftRunning({ survivors: [], skipped: [{ pgid: 5, reason }] })).toBe(false);
+    }
   });
 });
