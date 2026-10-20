@@ -395,19 +395,26 @@ describe("the server's repository and PATH", { timeout: TIMEOUT_MS }, () => {
   // Code review F4: the working directory is no root of trust for PATH, wherever --repo binds.
   it("runs nothing from the working directory, bound elsewhere", async () => {
     const toy = toyFor();
+    // Another project, with a bin directory of its own on PATH.
     const elsewhere = path.join(toy.root, "elsewhere");
     const marker = path.join(toy.root, "planted-ran");
     plantPrograms(path.join(elsewhere, "bin"), marker);
+    git(elsewhere, "init", "--quiet");
     const env = {
       ...serverEnv(toy),
       PATH: [path.join(elsewhere, "bin"), process.env.PATH ?? ""].join(path.delimiter),
     };
-    const client = await connect(
-      toy,
-      {},
+    for (const spawned of [
       { args: ["--host", "cursor", "--repo", toy.repo], cwd: elsewhere, env },
-    );
-    expect((await ok(client, "inspect_target")).body).toMatchObject({ repoRoot: toy.repo });
+      {
+        args: ["--host", "claude-code"],
+        cwd: elsewhere,
+        env: { ...env, CLAUDE_PROJECT_DIR: toy.repo },
+      },
+    ]) {
+      const client = await connect(toy, {}, spawned);
+      expect((await ok(client, "inspect_target")).body).toMatchObject({ repoRoot: toy.repo });
+    }
     expect(existsSync(marker) ? readFileSync(marker, "utf8") : "").toBe("");
   });
 
