@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   cancelRun,
   checkCapabilities,
+  DRAFT_CONFIG,
   finishRun,
   getJob,
   getRun,
@@ -100,7 +101,13 @@ describe("inspecting the target", { timeout: TIMEOUT_MS }, () => {
           valid: false,
           error: "config_missing: no ufo.yaml at the repository root; run ufo init",
         },
+        // Code review R7: the draft to fill in, since the agent may have no ufo on its PATH.
+        draftConfig: DRAFT_CONFIG,
       });
+      writeFileSync(path.join(other.repo, "ufo.yaml"), "version: [\n");
+      const invalid = await inspectTarget(other.context);
+      expect(invalid.config).toMatchObject({ present: true, valid: false });
+      expect(invalid).not.toHaveProperty("draftConfig");
     } finally {
       await other.cleanup();
     }

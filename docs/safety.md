@@ -154,7 +154,8 @@ until it is, `ufo setup` refuses to install from the registry and takes a tarbal
   start and resume results, the MCP server's included, are absolute local paths and are not
   redacted, because the agent reads arm A to write its diffs. With `UFO_HOME` under your home
   directory they name it and your user name, and an agent passes them to its model provider. Every
-  other field of those results is redacted.
+  other field of those results is redacted, except `inspect_target`'s `draftConfig`, UFO's own
+  draft `ufo.yaml`, which holds nothing of yours.
 - **R5. Evidence can be forged by someone with a shell.** A bundle shows what UFO recorded, but a
   process with capability C could have written it. `ufo reproduce` re-measures on your machine and
   is the real check.

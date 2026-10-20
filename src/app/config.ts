@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
-import { hashConfig } from "../core/policy/index.js";
+import { hashConfig, personMustRun } from "../core/policy/index.js";
 import { type UfoConfig, UfoConfigSchema } from "../domain/index.js";
 import { AppError } from "./errors.js";
 
@@ -111,8 +111,11 @@ export async function loadConfig(repoRoot: string): Promise<LoadedConfig> {
   return { path: file, text, hash: hashConfig(bytes), config: parseConfigText(text) };
 }
 
-/** The draft `ufo init` writes. It is valid as written; the workload command is a placeholder. */
-export const DRAFT_CONFIG = `# UFO configuration. Edit it, then run \`ufo approve\` in a terminal.
+/**
+ * The draft `ufo init` writes, and `inspect_target` returns while there is no ufo.yaml. It is
+ * valid as written; the workload command is a placeholder.
+ */
+export const DRAFT_CONFIG = `# UFO configuration. Edit it; then ${personMustRun("ufo approve")}.
 # Reference: docs/cli.md (ufo.yaml reference).
 version: 1
 objective:

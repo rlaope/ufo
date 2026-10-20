@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hintFor } from "../../../src/app/index.js";
+import { DRAFT_CONFIG, hintFor } from "../../../src/app/index.js";
 import { checkOptIn, personMustRun, requireTty } from "../../../src/core/policy/index.js";
 
 // M2 B3b (security M3): an agent reads these messages. Every one that names a human-only step
@@ -10,6 +10,8 @@ const APPROVE = "a person must run `ufo approve` in their own terminal; an agent
 describe("a message naming a human-only step", () => {
   it("says a person must run it in their own terminal, and an agent must not", () => {
     expect(personMustRun("ufo approve")).toBe(APPROVE);
+    // Code review R7: inspect_target hands the agent the draft ufo.yaml.
+    expect(DRAFT_CONFIG.split("\n")[0]).toBe(`# UFO configuration. Edit it; then ${APPROVE}.`);
     expect(checkOptIn("lossy", [])?.detail).toBe(
       "lossy cards need the lossy opt-in; a person must run `ufo approve --allow-lossy` in their own terminal; an agent must not run it",
     );

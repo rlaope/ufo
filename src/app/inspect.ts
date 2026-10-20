@@ -11,7 +11,7 @@ import { checkApproval } from "../core/policy/index.js";
 import type { Objective, TechniqueCard, UfoConfig } from "../domain/index.js";
 import type { Exec } from "../worker/index.js";
 import { approvalSubject, type CardSet, loadCards } from "./cards.js";
-import { type LoadedConfig, loadConfig } from "./config.js";
+import { DRAFT_CONFIG, type LoadedConfig, loadConfig } from "./config.js";
 import { type AppContext, homeFor, type Repo, repoOf } from "./context.js";
 import { captureEnv } from "./env.js";
 import { describeFailure } from "./errors.js";
@@ -72,6 +72,11 @@ export interface TargetInspection {
   /** Files at the repository root that name its stack (`STACK_MARKERS`). */
   stack: string[];
   config: { present: boolean; valid: boolean; error?: string | undefined };
+  /**
+   * While there is no ufo.yaml: the draft `ufo init` writes (`DRAFT_CONFIG`), to fill in and
+   * save as ufo.yaml at the repository root. UFO's own text, so it is not redacted.
+   */
+  draftConfig?: string;
   /** Whether ufo.yaml, its enabled cards, opt-ins, and `env:` names are what was approved. */
   approval?: { approved: boolean; reason?: string | undefined; detail?: string | undefined };
   objective?: Objective | undefined;
@@ -92,11 +97,14 @@ export async function inspectTarget(context: AppContext): Promise<TargetInspecti
   }
   const read = await readConfig(repo, context);
   if ("error" in read) {
-    return redact({
-      repoRoot: repo.root,
-      stack,
-      config: { present: read.present, valid: false, error: read.error },
-    });
+    return {
+      ...redact({
+        repoRoot: repo.root,
+        stack,
+        config: { present: read.present, valid: false, error: read.error },
+      }),
+      ...(read.present ? {} : { draftConfig: DRAFT_CONFIG }),
+    };
   }
   const { loaded, cards } = read;
   const subject = approvalSubject(loaded.hash, loaded.config, cards);

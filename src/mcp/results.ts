@@ -95,12 +95,18 @@ export function withinBudget(value: Record<string, unknown>): Record<string, unk
 
 /**
  * What the agent and its model provider may see: everything redacted except the arm paths,
- * which stay absolute because the agent reads arm A to write its diffs (safety.md R4).
+ * which stay absolute because the agent reads arm A to write its diffs (safety.md R4), and
+ * UFO's own draft ufo.yaml.
  */
 function forAgent(value: object): Record<string, unknown> {
-  const { arms, ...rest } = value as { arms?: unknown };
+  // `draftConfig` is UFO's own text (inspect_target's draft ufo.yaml), with nothing to redact.
+  const { arms, draftConfig, ...rest } = value as { arms?: unknown; draftConfig?: unknown };
   const redacted = redact(rest) as Record<string, unknown>;
-  return arms === undefined ? redacted : { ...redacted, arms };
+  return {
+    ...redacted,
+    ...(arms === undefined ? {} : { arms }),
+    ...(draftConfig === undefined ? {} : { draftConfig }),
+  };
 }
 
 function result(body: Record<string, unknown>, isError: boolean): CallToolResult {
