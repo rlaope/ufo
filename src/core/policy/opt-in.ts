@@ -1,5 +1,5 @@
 import type { OptIn, RiskClass } from "../../domain/index.js";
-import { type PolicyViolation, violation } from "./rules.js";
+import { type PolicyViolation, personMustRun, violation } from "./rules.js";
 
 /** `lossless` and `numeric` cards need no opt-in; `lossy` and `upgrade` need the matching one. */
 export function checkOptIn(
@@ -10,6 +10,6 @@ export function checkOptIn(
   if (approvedOptIns.includes(riskClass)) return undefined;
   return violation(
     "opt_in_required",
-    `${riskClass} cards need the ${riskClass} opt-in (ufo approve --allow-${riskClass})`,
+    `${riskClass} cards need the ${riskClass} opt-in; ${personMustRun(`ufo approve --allow-${riskClass}`)}`,
   );
 }

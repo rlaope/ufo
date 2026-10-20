@@ -8,6 +8,7 @@ import {
   checkApproval,
   hashConfig,
   type PolicyViolation,
+  personMustRun,
   readApproval,
   violation,
 } from "../core/policy/index.js";
@@ -205,7 +206,7 @@ export async function approvalViolation(open: OpenRun): Promise<PolicyViolation 
     refused.subjects.length > 0 ? `technique card ${refused.subjects.join(", ")}` : "ufo.yaml";
   return violation(
     "config_changed",
-    `this run's ${what} is no longer what is approved; approve again and start a new run`,
+    `this run's ${what} is no longer what is approved; ${personMustRun("ufo approve")}, then start a new run`,
     refused.subjects,
   );
 }

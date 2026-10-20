@@ -3,7 +3,7 @@ import { redact } from "../core/evidence/index.js";
 import { GitError } from "../core/git/index.js";
 import { CONTROL_LOCK_FILE, LockTimeoutError } from "../core/jobs/index.js";
 import { TrustError } from "../core/paths.js";
-import { PolicyError } from "../core/policy/index.js";
+import { PolicyError, personMustRun } from "../core/policy/index.js";
 import { CardLoadError } from "../techniques/index.js";
 
 /** Exit codes of every `ufo` command (docs/cli.md). */
@@ -97,7 +97,7 @@ const HINTS: Readonly<Record<string, string>> = {
   busy: "another UFO call is working on this run; try again in a few seconds",
   run_starting: "try again in a few seconds, once the start has finished",
   run_finishing: "wait for the finish job, then read the run's report",
-  "policy:budget_exceeded": "run ufo extend-budget in a terminal to continue",
+  "policy:budget_exceeded": `to go on, ${personMustRun("ufo extend-budget")}; or finish the run`,
 };
 
 /** Failures the same call may get past by trying again later. */

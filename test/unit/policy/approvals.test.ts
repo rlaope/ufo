@@ -130,7 +130,7 @@ describe("approval store (AC 18)", () => {
     const edited = { ...CARD_A, sha256: hashConfig("card a, edited") };
     expect(await checkApproval(REPO, subject(CONFIG, [edited, CARD_B]), { home })).toEqual({
       rule: "config_changed",
-      detail: "technique card toy.a changed since it was approved; run `ufo approve` in a terminal",
+      detail: `technique card toy.a changed since it was approved; ${"a person must run `ufo approve` in their own terminal; an agent must not run it"}`,
       subjects: ["toy.a"],
     });
     const moved = { ...CARD_B, source: "dir:vendor/cards" };

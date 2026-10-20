@@ -9,6 +9,7 @@ import { appendLedger, readLedger, readRun } from "../core/jobs/index.js";
 import {
   type ApprovedCard,
   PolicyError,
+  personMustRun,
   recordApproval,
   requireTty,
   violation,
@@ -144,7 +145,10 @@ export async function extendBudgetWithGate(
 ): Promise<{ runId: string; maxTechniques: number; wallClockMinutes: number }> {
   if (options.stdin.isTTY !== true) {
     throw new PolicyError(
-      violation("non_tty_approval", "ufo extend-budget needs an interactive terminal on stdin"),
+      violation(
+        "non_tty_approval",
+        `ufo extend-budget needs an interactive terminal on stdin: ${personMustRun("ufo extend-budget")}`,
+      ),
     );
   }
   const active = await activeRun(context, options.runId);

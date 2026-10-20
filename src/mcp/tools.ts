@@ -84,7 +84,7 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
     "inspect_target",
     {
       title: "Inspect the target repository",
-      description: `The repository UFO would optimize: its root, the stack files at the root, whether ufo.yaml is present, valid, and approved for this repository, the objective, the enabled cards, and every command the approval covers. Start here. An unapproved ufo.yaml needs the user to run \`ufo approve\` in a terminal; no tool can approve. ${DATA}`,
+      description: `The repository UFO would optimize: its root, the stack files at the root, whether ufo.yaml is present, valid, and approved for this repository, the objective, the enabled cards, and every command the approval covers. Start here. Only a person can approve ufo.yaml: ask the user to run \`ufo approve\` in their own terminal, and never run it yourself; no tool approves. ${DATA}`,
       inputSchema: z.strictObject({ repo }),
       annotations: READ_ONLY,
     },
@@ -139,7 +139,7 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
     {
       title: "Start a run",
       description:
-        "Starts a run from the approved ufo.yaml: creates the branch ufo/run-<id> and two arms (UFO's own clones of the repository; read code in arm A, whose path is returned absolute), and queues the baseline (oracle snapshot, five samples, noise floor). Refuses a ufo.yaml that is not approved or changed since (policy:unapproved_config, policy:config_changed): ask the user to run `ufo approve` in a terminal. Returns at once: poll get_job with baselineJobId.",
+        "Starts a run from the approved ufo.yaml: creates the branch ufo/run-<id> and two arms (UFO's own clones of the repository; read code in arm A, whose path is returned absolute), and queues the baseline (oracle snapshot, five samples, noise floor). Refuses a ufo.yaml that is not approved or changed since (policy:unapproved_config, policy:config_changed): ask the user to run `ufo approve` in their own terminal, and never run it yourself. Returns at once: poll get_job with baselineJobId.",
       inputSchema: z.strictObject({ repo, model_id: modelId }),
       annotations: QUEUES_WORK,
     },

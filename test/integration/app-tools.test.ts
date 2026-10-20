@@ -62,7 +62,8 @@ describe("inspecting the target", { timeout: TIMEOUT_MS }, () => {
         approval: {
           approved: false,
           reason: "policy:unapproved_config",
-          detail: "ufo.yaml has not been approved; run `ufo approve` in a terminal",
+          detail:
+            "ufo.yaml has not been approved; a person must run `ufo approve` in their own terminal; an agent must not run it",
         },
       });
       rmSync(path.join(other.repo, "ufo.yaml"));

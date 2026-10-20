@@ -253,7 +253,8 @@ describe("failures", { timeout: TIMEOUT_MS }, () => {
       isError: true,
       body: {
         code: "policy:unapproved_config",
-        message: "ufo.yaml has not been approved; run `ufo approve` in a terminal",
+        message:
+          "ufo.yaml has not been approved; a person must run `ufo approve` in their own terminal; an agent must not run it",
         retryable: false,
       },
     });

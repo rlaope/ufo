@@ -88,7 +88,7 @@ describe("ufo CLI", { timeout: TIMEOUT_MS }, () => {
       const piped = built(fresh, ["approve"], "approve\n");
       expect(piped).toMatchObject({ code: 1, stdout: "" });
       expect(piped.stderr).toBe(
-        "ufo approve: policy:non_tty_approval: ufo approve needs an interactive terminal on stdin\n",
+        "ufo approve: policy:non_tty_approval: ufo approve needs an interactive terminal on stdin: a person must run `ufo approve` in their own terminal; an agent must not run it\n",
       );
       const json = built(fresh, ["approve", "--allow-lossy", "--json"], "approve\n");
       expect(json.code).toBe(1);
@@ -97,7 +97,8 @@ describe("ufo CLI", { timeout: TIMEOUT_MS }, () => {
         command: "approve",
         error: {
           code: "policy:non_tty_approval",
-          message: "ufo approve needs an interactive terminal on stdin",
+          message:
+            "ufo approve needs an interactive terminal on stdin: a person must run `ufo approve` in their own terminal; an agent must not run it",
         },
       });
       expect(built(fresh, ["approve", "--yes"], "approve\n").code).toBe(2);

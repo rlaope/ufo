@@ -69,7 +69,8 @@ describe("describeFailure", () => {
       code: "policy:budget_exceeded",
       message: "10 of 10 techniques tried",
       retryable: false,
-      hint: "run ufo extend-budget in a terminal to continue",
+      // M2 B3b: a person runs it; an agent that reads the hint asks instead.
+      hint: "to go on, a person must run `ufo extend-budget` in their own terminal; an agent must not run it; or finish the run",
     });
   });
 

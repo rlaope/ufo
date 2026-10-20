@@ -18,7 +18,7 @@ import {
   readTextNoFollow,
 } from "../jobs/atomic-file.js";
 import { approvalsRoot, assertTrustedDir, ensureTrustedDir, ufoHome } from "../paths.js";
-import { PolicyError, type PolicyViolation, preview, violation } from "./rules.js";
+import { PolicyError, type PolicyViolation, personMustRun, preview, violation } from "./rules.js";
 
 const APPROVAL_VERSION = 3;
 const MAX_APPROVED_CARDS = 256;
@@ -208,14 +208,14 @@ export async function checkApproval(
   if (approval === undefined) {
     return violation(
       "unapproved_config",
-      "ufo.yaml has not been approved; run `ufo approve` in a terminal",
+      `ufo.yaml has not been approved; ${personMustRun("ufo approve")}`,
     );
   }
   if (approval.digest === approvalDigest(subject)) return undefined;
   if (approval.configHash !== subject.configHash) {
     return violation(
       "config_changed",
-      "ufo.yaml changed since it was approved; run `ufo approve` in a terminal",
+      `ufo.yaml changed since it was approved; ${personMustRun("ufo approve")}`,
     );
   }
   const sameList = (x: readonly string[], y: readonly string[]) =>
@@ -223,7 +223,7 @@ export async function checkApproval(
   if (!sameList(approval.optIns, subject.optIns) || !sameList(approval.env, subject.env)) {
     return violation(
       "config_changed",
-      "the opt-ins or environment names differ from what was approved; run `ufo approve` in a terminal",
+      `the opt-ins or environment names differ from what was approved; ${personMustRun("ufo approve")}`,
     );
   }
   const current = new Map(subject.cards.map((card) => [card.id, card]));
@@ -244,7 +244,7 @@ export async function checkApproval(
   }
   return violation(
     "config_changed",
-    `technique card ${preview(described)} changed since it was approved; run \`ufo approve\` in a terminal`,
+    `technique card ${preview(described)} changed since it was approved; ${personMustRun("ufo approve")}`,
     changed.sort(),
   );
 }
@@ -264,7 +264,10 @@ export async function isApproved(
 export function requireTty(stdin: { readonly isTTY?: boolean | undefined }): void {
   if (stdin.isTTY !== true) {
     throw new PolicyError(
-      violation("non_tty_approval", "ufo approve needs an interactive terminal on stdin"),
+      violation(
+        "non_tty_approval",
+        `ufo approve needs an interactive terminal on stdin: ${personMustRun("ufo approve")}`,
+      ),
     );
   }
 }

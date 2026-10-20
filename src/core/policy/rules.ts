@@ -64,6 +64,14 @@ export function violation(
   };
 }
 
+/**
+ * How a message names a human-only step (`ufo approve`, `ufo extend-budget`), so an agent that
+ * reads it asks for it instead of running the command itself (security M3).
+ */
+export function personMustRun(command: string): string {
+  return `a person must run \`${command}\` in their own terminal; an agent must not run it`;
+}
+
 /** `a, b, c and 7 more`: a bounded preview of a list for a violation detail. */
 export function preview(items: readonly string[], limit = 10): string {
   const shown = items.slice(0, limit).join(", ");

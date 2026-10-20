@@ -28,8 +28,9 @@ writes only protocol messages on stdout; diagnostics go to stderr. It exits when
   and the Docker runner and DNS resolver are the server process's own, exactly as the CLI's. No
   tool argument sets any of them ([safety.md](safety.md) R6).
 
-There is no approval, opt-in, or budget tool. Ask the user to run `ufo approve` or
-`ufo extend-budget` in a terminal.
+There is no approval, opt-in, or budget tool. Only a person can approve `ufo.yaml` or raise a
+budget: ask the user to run `ufo approve` or `ufo extend-budget` in their own terminal. An agent
+must not run them itself, even where it has a shell; the messages that name them say so.
 
 ## Tools
 
@@ -89,8 +90,8 @@ message does not.
 | `run_not_active` | The run has ended, never finished starting, or only measures. Start a new run. |
 | `run_in_progress` | Another run is active: running, still starting, or a start cut short. Finish or cancel it first; the message names it and how. |
 | `worker_not_running` | The run's worker stopped. Call `resume_run`, then poll again. |
-| `policy:unapproved_config`, `policy:config_changed` | Ask the user to run `ufo approve` in a terminal. |
-| `policy:budget_exceeded` | Ask the user to run `ufo extend-budget` in a terminal, or finish the run. |
+| `policy:unapproved_config`, `policy:config_changed` | Ask the user to run `ufo approve` in their own terminal; never run it yourself. |
+| `policy:budget_exceeded` | Ask the user to run `ufo extend-budget` in their own terminal (never run it yourself), or finish the run. |
 | `interrupted` | The client cancelled the call (a `get_job` wait). |
 
 Arguments that do not match a tool's schema are answered with a tool error whose text starts
