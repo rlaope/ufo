@@ -84,6 +84,8 @@ describe("trusted run state", { timeout: TIMEOUT_MS }, () => {
       { ...state, optIns: ["lossy", "upgrade"] },
       // Another run's or repository's ids.
       { ...state, runId: "20261017-000000-aaaaaa" },
+      // A ufo.yaml that is not the approved one its hash names (M2 A2).
+      { ...state, configText: `${state.configText}# edited\n` },
     ]) {
       writeFileSync(file, JSON.stringify(edited));
       const failure = await refusal(getRun(toy.context, { runId: run.runId }));

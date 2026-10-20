@@ -15,7 +15,7 @@ import {
 } from "../core/jobs/index.js";
 import { PolicyError } from "../core/policy/index.js";
 import { type ActiveRun, activeRun, refuseIfFinishing, rethrowAsUsage } from "./active.js";
-import type { AppContext } from "./context.js";
+import { type AppContext, controlLockWaitMs } from "./context.js";
 import { AppError } from "./errors.js";
 import { budgetStatus } from "./events.js";
 import { ChangeJobInputSchema, JOB_KINDS } from "./jobs/index.js";
@@ -114,7 +114,7 @@ export async function submitChange(
   } catch (error) {
     rethrowAsUsage(error);
   }
-  return withControlLock(active.runDir, async () => {
+  return withControlLock(active.runDir, controlLockWaitMs(context), async () => {
     await refuseIfFinishing(active);
     await checkBudgetOpen(active);
     const job = await enqueueJob(active.runDir, {
@@ -143,7 +143,9 @@ export async function runRecipes(
   options: { readonly runId?: string } = {},
 ): Promise<RecipeJobs> {
   const active = await activeRun(context, options.runId);
-  return withControlLock(active.runDir, () => queueRecipes(context, active));
+  return withControlLock(active.runDir, controlLockWaitMs(context), () =>
+    queueRecipes(context, active),
+  );
 }
 
 async function queueRecipes(context: AppContext, active: ActiveRun): Promise<RecipeJobs> {

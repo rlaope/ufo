@@ -25,6 +25,7 @@ import type { TechniqueCatalog } from "../techniques/index.js";
 import { approvalSubject, type CardSet } from "./cards.js";
 import { parseConfigText } from "./config.js";
 import { resolveRepo } from "./context.js";
+import { AppError } from "./errors.js";
 
 /**
  * App-level state of one run, next to `run.json`; written by `startRun`, and again by
@@ -104,7 +105,13 @@ export async function writeAppState(runDir: string, state: AppState): Promise<vo
 
 export async function readAppState(runDir: string): Promise<AppState> {
   const value = await readJsonIfExists(path.join(runDir, APP_STATE_FILE));
-  if (value === undefined) throw new Error(`no ${APP_STATE_FILE} in ${runDir}`);
+  // Written once the start got that far: a run without it never finished starting.
+  if (value === undefined) {
+    throw new AppError(
+      "run_not_active",
+      `run ${path.basename(runDir)} never finished starting (it has no ${APP_STATE_FILE})`,
+    );
+  }
   const parsed = AppStateSchema.safeParse(value);
   if (!parsed.success) {
     const issue = parsed.error.issues[0];
@@ -151,7 +158,10 @@ export async function openRun(home: string, runDir: string): Promise<OpenRun> {
     throw new TrustError("unsafe_state", `${APP_STATE_FILE} in ${runDir} names another run`);
   }
   if (hashConfig(state.configText) !== state.configHash) {
-    throw new Error(`${APP_STATE_FILE}: the stored ufo.yaml does not match its approved hash`);
+    throw new TrustError(
+      "unsafe_state",
+      `${APP_STATE_FILE} in ${runDir}: the stored ufo.yaml does not match its approved hash`,
+    );
   }
   const repo = await resolveRepo(state.repoRoot);
   if (repo.repoId !== ids.repoId) {

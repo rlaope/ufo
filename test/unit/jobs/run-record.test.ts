@@ -18,11 +18,13 @@ import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   appendLedger,
+  CONTROL_LOCK_FILE,
   createRunState,
   endRun,
   enqueueJob,
   JOBS_DIR,
   LEDGER_FILE,
+  LockTimeoutError,
   listJobs,
   newRunId,
   parseRunDir,
@@ -34,6 +36,7 @@ import {
   runDirFor,
   ufoHome,
   updateRun,
+  withControlLock,
   withRunLock,
   writeJsonAtomic,
 } from "../../../src/core/jobs/index.js";
@@ -288,6 +291,22 @@ describe("run record", () => {
     const { runDir } = await createRunState(root, { runId: "run-1", repoId: "repo" });
     await writeFile(path.join(runDir, RUN_LOCK_FILE), String(await deadPid()));
     expect(await withRunLock(runDir, async () => "ran")).toBe("ran");
+  });
+
+  // M2 A1: the caller bounds the wait for a control lock another call holds, and the timeout is
+  // typed, so an adapter can report it as `busy`.
+  it("gives up on a held control lock after the given wait with a LockTimeoutError", async () => {
+    const { runDir } = await createRunState(root, { runId: "run-1", repoId: "repo" });
+    const lock = path.join(runDir, CONTROL_LOCK_FILE);
+    await writeFile(lock, String(process.pid));
+    const ran = vi.fn(async () => "ran");
+    const started = Date.now();
+    const error = await withControlLock(runDir, 100, ran).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(LockTimeoutError);
+    expect(error).toMatchObject({ file: lock, message: `timed out waiting for ${lock}` });
+    expect(Date.now() - started).toBeLessThan(5000);
+    expect(ran).not.toHaveBeenCalled();
+    expect(await readFile(lock, "utf8")).toBe(String(process.pid));
   });
 });
 

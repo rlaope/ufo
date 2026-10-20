@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type ActiveRun, refuseIfFinishing } from "../../../src/app/active.js";
 import type { AppContext } from "../../../src/app/index.js";
 import { ensureWorker } from "../../../src/app/launch.js";
-import type { AppState } from "../../../src/app/state.js";
+import { type AppState, readAppState } from "../../../src/app/state.js";
 import { createRunState, endRun, readMachineLock, readRun } from "../../../src/core/jobs/index.js";
 
 // Code review (round 2) #6: work that waited for the control lock while a cancel or finish held
@@ -48,5 +48,16 @@ describe("a run that ended while a call waited for its control lock", () => {
     });
     expect(await readMachineLock({ home })).toBeUndefined();
     expect((await readRun(runDir)).worker).toBeUndefined();
+  });
+});
+
+// M2 A2: run state without app state is a run that never finished starting, not an internal error.
+describe("a run without app state", () => {
+  it("is not active", async () => {
+    const { runDir } = await createRunState(home, { runId: "run-1", repoId: "repo" });
+    await expect(readAppState(runDir)).rejects.toMatchObject({
+      code: "run_not_active",
+      message: "run run-1 never finished starting (it has no app.json)",
+    });
   });
 });

@@ -28,6 +28,20 @@ export interface AppContext {
   readonly exec?: Exec;
   /** Resolves the hostnames of approved targets; defaults to the system resolver. */
   readonly resolver?: Resolver;
+  /**
+   * How long a call waits while another control operation holds the run (resume, cancel,
+   * finish, queueing work) before it fails `busy`; defaults to `CONTROL_LOCK_WAIT_MS`. An MCP
+   * server sets it under its host's tool timeout.
+   */
+  readonly controlLockWaitMs?: number;
+}
+
+/** The CLI's wait for a run's control lock. */
+export const CONTROL_LOCK_WAIT_MS = 120_000;
+
+/** The wait every `withControlLock` of an app call is given. */
+export function controlLockWaitMs(context: AppContext): number {
+  return context.controlLockWaitMs ?? CONTROL_LOCK_WAIT_MS;
 }
 
 export interface Repo {

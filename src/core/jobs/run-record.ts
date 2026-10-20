@@ -190,13 +190,13 @@ export function withRunLock<T>(runDir: string, fn: () => Promise<T>): Promise<T>
 
 /**
  * Runs `fn` while holding `control.lock`: launching a worker, resume, cancel, finish, and the
- * calls that queue work take turns, so two of them never act on one run at once. Never taken
- * inside `withRunLock`.
+ * calls that queue work take turns, so two of them never act on one run at once. Waits at most
+ * `waitMs` for another holder (`LockTimeoutError`). Never taken inside `withRunLock`.
  */
-export function withControlLock<T>(runDir: string, fn: () => Promise<T>): Promise<T> {
-  return withLockFile(
-    path.join(runDir, CONTROL_LOCK_FILE),
-    { timeoutMs: 120_000, retryMs: 25 },
-    fn,
-  );
+export function withControlLock<T>(
+  runDir: string,
+  waitMs: number,
+  fn: () => Promise<T>,
+): Promise<T> {
+  return withLockFile(path.join(runDir, CONTROL_LOCK_FILE), { timeoutMs: waitMs, retryMs: 25 }, fn);
 }

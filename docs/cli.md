@@ -60,7 +60,7 @@ evidence bundle does; expand it before you open a path from a script.
 | Code | Meaning | `error.code` values |
 |---|---|---|
 | 0 | Success. | |
-| 1 | A policy refused the request, the human declined, or the run needs `ufo resume` first. | `policy:<rule>` (see below), `approval_declined`, `opt_in_mismatch`, `config_exists`, `run_not_active`, `run_in_progress`, `worker_not_running`, `measurement_failed`, `ledger_mismatch`, `cancel_pending`, `arms_missing`, `interrupted`, `unsafe_state` |
+| 1 | A policy refused the request, the human declined, or the run needs `ufo resume` first. | `policy:<rule>` (see below), `approval_declined`, `opt_in_mismatch`, `config_exists`, `run_not_active`, `run_in_progress`, `worker_not_running`, `measurement_failed`, `ledger_mismatch`, `cancel_pending`, `arms_missing`, `interrupted`, `busy`, `unsafe_state` |
 | 2 | Usage or configuration error, or nothing to act on. | `usage`, `not_a_repo`, `config_missing`, `config_invalid`, `cards_invalid`, `no_run`, `unsafe_home` |
 | 3 | UFO itself failed. | `internal` |
 
@@ -92,6 +92,7 @@ Refusals that protect UFO's own state:
 | `run_in_progress` (exit 1) | Another run holds the machine lock, or a run of this repository is still `running`. The message names the run and how to end it (`ufo resume --run <id>` or `ufo cancel --run <id>`). |
 | `cancel_pending` (exit 1) | `ufo resume` on a run whose cancel was requested but did not complete. Run `ufo cancel` again to end it. |
 | `arms_missing` (exit 1) | `ufo resume` on a run whose arms under `$UFO_HOME/arms` are gone. It cannot continue; `ufo cancel` ends it. |
+| `busy` (exit 1) | Another UFO command (resume, cancel, finish, queueing a change) held the run longer than this one waits (120 s on the command line). Nothing was changed; try again. |
 
 ## `ufo.yaml` reference
 

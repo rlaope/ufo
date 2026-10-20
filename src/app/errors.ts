@@ -1,4 +1,5 @@
 import { GitError } from "../core/git/index.js";
+import { LockTimeoutError } from "../core/jobs/index.js";
 import { TrustError } from "../core/paths.js";
 import { PolicyError } from "../core/policy/index.js";
 import { CardLoadError } from "../techniques/index.js";
@@ -87,6 +88,10 @@ export function describeFailure(error: unknown): Failure {
   }
   if (error instanceof AppError) {
     return { exitCode: error.exitCode, code: error.code, message: error.message };
+  }
+  // Another call held the run's lock for longer than this call waits: try again later.
+  if (error instanceof LockTimeoutError) {
+    return { exitCode: EXIT_REFUSED, code: "busy", message: error.message };
   }
   if (error instanceof CardLoadError) {
     return { exitCode: EXIT_USAGE, code: "cards_invalid", message: error.message };

@@ -54,6 +54,7 @@ import { ensureWorkerFor, runRecipes } from "./changes.js";
 import { loadConfig } from "./config.js";
 import {
   type AppContext,
+  controlLockWaitMs,
   homeFor,
   listRunIds,
   locateRun,
@@ -126,9 +127,14 @@ async function exists(target: string): Promise<boolean> {
  * Under the run's control lock, so two starts' cleanups or a cancel and a start end it once;
  * returns whether this call did.
  */
-async function endAbandonedStart(home: string, repo: Repo, runId: string): Promise<boolean> {
+async function endAbandonedStart(
+  home: string,
+  repo: Repo,
+  runId: string,
+  waitMs: number,
+): Promise<boolean> {
   const runDir = runDirFor(home, repo.repoId, runId);
-  return withControlLock(runDir, async () => {
+  return withControlLock(runDir, waitMs, async () => {
     if (!(await abandonedStart(await readRun(runDir)))) return false;
     const layout = runLayout(home, repo.repoId, runId);
     const branchHead = await runGit(
@@ -153,14 +159,14 @@ async function endAbandonedStart(home: string, repo: Repo, runId: string): Promi
  * leaves arms on disk that nothing else would remove). Cleanup that fails is reported as a
  * warning and never blocks the start.
  */
-async function cleanUpRuns(home: string, repo: Repo): Promise<string[]> {
+async function cleanUpRuns(home: string, repo: Repo, waitMs: number): Promise<string[]> {
   const warnings: string[] = [];
   for (const id of await listRunIds(home, repo)) {
     try {
       const runDir = runDirFor(home, repo.repoId, id);
       const run = await readRun(runDir);
       if (await abandonedStart(run)) {
-        await endAbandonedStart(home, repo, id);
+        await endAbandonedStart(home, repo, id, waitMs);
         continue;
       }
       if (run.status === "running") continue;
@@ -210,7 +216,7 @@ async function startRunFor(
   } catch (error) {
     rethrowAsUsage(error);
   }
-  const cleanupWarnings = await cleanUpRuns(home, repo);
+  const cleanupWarnings = await cleanUpRuns(home, repo, controlLockWaitMs(context));
   await refuseActiveRuns(home, repo);
 
   const runId = newRunId();
@@ -262,7 +268,9 @@ async function startRunFor(
     const job = await enqueueJob(runDir, { kind: JOB_KINDS.baseline, input: {} });
     // Started once there is something to resume: a crash before this is a start cut short.
     await updateRun(runDir, (record) => ({ ...record, started: true }));
-    await withControlLock(runDir, () => ensureWorker(context, runDir, home, state));
+    await withControlLock(runDir, controlLockWaitMs(context), () =>
+      ensureWorker(context, runDir, home, state),
+    );
     const warnings = [
       ...cleanupWarnings,
       ...(created.userTreeDirty
@@ -323,7 +331,7 @@ export async function finishRun(
   } catch (error) {
     rethrowAsUsage(error);
   }
-  return withControlLock(active.runDir, async () => {
+  return withControlLock(active.runDir, controlLockWaitMs(context), async () => {
     await refuseIfFinishing(active);
     const state = { ...active.open.state, ...(modelId === undefined ? {} : { modelId }) };
     if (modelId !== undefined) await writeAppState(active.runDir, state);
@@ -412,7 +420,9 @@ export async function resumeRun(
   options: { readonly runId?: string } = {},
 ): Promise<ResumeResult> {
   const active = await activeRun(context, options.runId);
-  return withControlLock(active.runDir, () => resumeLocked(context, active));
+  return withControlLock(active.runDir, controlLockWaitMs(context), () =>
+    resumeLocked(context, active),
+  );
 }
 
 async function resumeLocked(context: AppContext, active: ActiveRun): Promise<ResumeResult> {
@@ -507,7 +517,13 @@ export async function cancelRun(
       throw new AppError("run_in_progress", `run ${located.runId} is still starting`);
     }
     const kill = await killRunProcesses(located.runDir, killOptions(context));
-    if (!(await endAbandonedStart(located.home, located.repo, located.runId))) {
+    const ended = await endAbandonedStart(
+      located.home,
+      located.repo,
+      located.runId,
+      controlLockWaitMs(context),
+    );
+    if (!ended) {
       throw new AppError(
         "run_not_active",
         `run ${located.runId} ended before the cancel took effect`,
@@ -521,7 +537,9 @@ export async function cancelRun(
     };
   }
   const active = await activeRun(context, options.runId);
-  return withControlLock(active.runDir, () => cancelLocked(context, active));
+  return withControlLock(active.runDir, controlLockWaitMs(context), () =>
+    cancelLocked(context, active),
+  );
 }
 
 async function cancelLocked(context: AppContext, active: ActiveRun): Promise<CancelResult> {
@@ -704,7 +722,7 @@ function closeMeasureRun(
   started: { runId: string; runDir: string; home: string },
   job: JobRecord | undefined,
 ): Promise<void> {
-  return withControlLock(started.runDir, async () => {
+  return withControlLock(started.runDir, controlLockWaitMs(context), async () => {
     await killRunProcesses(started.runDir, killOptions(context));
     // The status first, as everywhere: a crash in the cleanup below leaves an ended run whose
     // arms and branch the next start removes.
