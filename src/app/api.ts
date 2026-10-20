@@ -16,7 +16,6 @@ export {
   bindRepository,
   CONTROL_LOCK_WAIT_MS,
   refuseChangedRepository,
-  refuseForeignGitDir,
   trustProcessPath,
 } from "./context.js";
 export type { ExitCode, Failure } from "./errors.js";

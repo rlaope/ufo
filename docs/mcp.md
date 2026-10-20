@@ -25,7 +25,8 @@ writes only protocol messages on stdout; diagnostics go to stderr. It exits when
   absolute path; a relative one, or a placeholder the host did not substitute, is refused, never
   resolved against the working directory. Outside any git working tree the server keeps serving,
   since a user-scope server starts in every session, and answers every tool with `not_a_repo`
-  (hint: open a repository folder) until the folder is a repository; it binds to it then. Once
+  (hint: open a repository folder) until the folder is a repository; it binds to it then, after
+  filtering its `PATH` again for that repository (see PATH). Once
   bound, the repository's top level, git directory, common directory, and id are pinned and
   checked before every call. Approval is per repository: an unapproved one is refused at
   `start_run`.
@@ -33,8 +34,8 @@ writes only protocol messages on stdout; diagnostics go to stderr. It exits when
   the agent's own model id, recorded as self-reported.
 - **PATH.** Before it runs anything, the server drops from its own `PATH` every relative entry,
   every entry with a `node_modules` segment, and entries inside the working directory, the
-  repository, its git directories, and UFO's home ([safety.md](safety.md) R3b), so git, ps, and
-  docker are never a project's own; your home directory and what is installed under it stay. It
+  repository, its git directories, and UFO's home ([safety.md](safety.md) R3b), and again for a
+  repository it binds to only later, so git, ps, and docker are never a project's own; your home directory and what is installed under it stay. It
   logs the entries it left out on stderr, so the host's MCP log says why a program is not found. Start it with an absolute node and the absolute path of the
   installed `dist/cli/index.js`, not `npx`.
 - **Fixed by the process.** The UFO home (`$UFO_HOME`, default `~/.ufo`), the card directories,

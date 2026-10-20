@@ -133,7 +133,6 @@ describe("the adapter modules", () => {
       "profileTarget",
       "redact",
       "refuseChangedRepository",
-      "refuseForeignGitDir",
       "report",
       "resumeRun",
       "runToEnd",

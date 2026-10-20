@@ -126,7 +126,8 @@ until it is, `ufo setup` refuses to install from the registry and takes a tarbal
   working tree around it (found by their `.git` entries before git runs, a superproject's and a
   linked worktree's main checkout included: a `.git` file names a main checkout only as a
   `.git/worktrees/<name>` directory whose `gitdir` names it back, so a planted one cannot drop
-  another directory), the repository's git directories, and UFO's home.
+  another directory), the repository's git directories, and UFO's home. `ufo mcp` started
+  outside a repository does it again, before git runs there, for the repository it binds to later.
   Your home directory and its parents are never one of those: tools installed under it
   (`~/.nvm`, `~/.cargo/bin`, `~/.local/bin`) stay even when you start UFO there or your home
   is a repository, and a project's `.bin` there is caught by the `node_modules` rule. `ufo mcp`

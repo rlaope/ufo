@@ -10,8 +10,6 @@ import {
   packageVersion,
   type Repo,
   refuseChangedRepository,
-  refuseForeignGitDir,
-  trustProcessPath,
 } from "../app/api.js";
 import { registerTools } from "./tools.js";
 
@@ -73,21 +71,25 @@ export interface McpServeOptions {
 
 /**
  * The repository the server acts on: pinned when it is first found, at startup or, outside a
- * repository then, on the first call that finds one; before every call after that, it must
- * still be the one pinned (security N1).
+ * repository then, on the first call that finds one (`bind`); before every call after that, it
+ * must still be the one pinned (security N1).
  */
 export interface Binding {
   readonly root: () => string;
   readonly guard: () => Promise<void>;
 }
 
-export function bindingFor(dir: string, repo: Repo | undefined): Binding {
+export function bindingFor(
+  dir: string,
+  repo: Repo | undefined,
+  bind: () => Promise<Repo | undefined>,
+): Binding {
   let pinned = repo;
   return {
     root: () => pinned?.root ?? dir,
     guard: async () => {
       if (pinned === undefined) {
-        pinned = await bindRepository(dir);
+        pinned = await bind();
         return;
       }
       await refuseChangedRepository(pinned, "ufo mcp");
@@ -120,27 +122,30 @@ export function createServer(options: McpServeOptions & { readonly binding: Bind
  * `legacy: 'serve'`), whatever version it asks for.
  */
 export async function serveMcp(options: McpServeOptions): Promise<void> {
-  const { repo, dropped } = await trustProcessPath({
-    cwd: process.cwd(),
-    repoDir: options.dir,
-    home: options.context?.home,
-    ...(options.env === undefined ? {} : { env: options.env }),
-  });
-  // So a host's log says why a program on its PATH is not found.
-  if (dropped.length > 0) {
-    const shown = dropped.map((entry) => (entry === "" ? '""' : entry)).join(path.delimiter);
-    options.log(`ufo mcp: left out of PATH, so nothing there runs: ${shown}`);
-  }
+  const bind = async (requireRepo: boolean) => {
+    const { repo, dropped } = await bindRepository({
+      dir: options.dir,
+      cwd: process.cwd(),
+      home: options.context?.home,
+      requireRepo,
+      ...(options.env === undefined ? {} : { env: options.env }),
+    });
+    // So a host's log says why a program on its PATH is not found.
+    if (dropped.length > 0) {
+      const shown = dropped.map((entry) => (entry === "" ? '""' : entry)).join(path.delimiter);
+      options.log(`ufo mcp: left out of PATH, so nothing there runs: ${shown}`);
+    }
+    return repo;
+  };
+  const repo = await bind(false);
   // A user-scope server starts in every session, a repository or not: outside one it answers
   // every tool with not_a_repo until the folder is one (code review CR-N8).
   if (repo === undefined) {
     options.log(
       `ufo mcp: ${options.dir} is not inside a git working tree; every tool answers not_a_repo until it is`,
     );
-  } else {
-    await refuseForeignGitDir(repo);
   }
-  const binding = bindingFor(options.dir, repo);
+  const binding = bindingFor(options.dir, repo, () => bind(true));
   const closed = new Promise<void>((resolve) => {
     process.stdin.once("end", resolve);
     process.stdin.once("close", resolve);

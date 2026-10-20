@@ -350,6 +350,30 @@ describe("the server's repository and PATH", { timeout: TIMEOUT_MS }, () => {
     });
   });
 
+  // Security S2-3: a repository found after startup is filtered out of PATH before git runs in
+  // it, its git directories included: here a linked worktree's main checkout.
+  it("filters PATH again for the repository a later call finds", async () => {
+    const toy = toyFor();
+    const plain = path.join(toy.root, "plain");
+    mkdirSync(plain);
+    const marker = path.join(toy.root, "planted-ran");
+    const tools = path.join(toy.repo, "tools");
+    const env = { ...serverEnv(toy), PATH: [tools, process.env.PATH ?? ""].join(path.delimiter) };
+    const client = await connect(
+      toy,
+      {},
+      { args: ["--host", "cursor", "--repo", plain], cwd: plain, env },
+    );
+    expect(await call(client, "inspect_target")).toMatchObject({
+      isError: true,
+      body: { code: "not_a_repo" },
+    });
+    git(toy.repo, "worktree", "add", "--quiet", plain);
+    plantPrograms(tools, marker);
+    expect((await ok(client, "inspect_target")).body).toMatchObject({ repoRoot: plain });
+    expect(existsSync(marker) ? readFileSync(marker, "utf8") : "").toBe("");
+  });
+
   // Security N1: at startup, a work tree whose git directory is elsewhere is served only when that
   // git directory names it back, as a linked worktree's does.
   it("refuses at startup a .git that names another repository's git directory", async () => {

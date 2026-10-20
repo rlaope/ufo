@@ -212,7 +212,7 @@ async function namesWorkTree(repo: Repo): Promise<boolean> {
  * as a linked worktree's or a submodule's does (security N1): a `.git` pointed at another
  * repository's git directory would act on that repository's runs.
  */
-export async function refuseForeignGitDir(repo: Repo): Promise<void> {
+async function refuseForeignGitDir(repo: Repo): Promise<void> {
   if (within(repo.commonDir, repo.root) || (await namesWorkTree(repo))) return;
   throw new TrustError(
     "unsafe_state",
@@ -221,13 +221,22 @@ export async function refuseForeignGitDir(repo: Repo): Promise<void> {
 }
 
 /**
- * The repository at `dir`, to bind a long-lived server to: `not_a_repo` outside one, and a work
- * tree whose git directory is outside it without naming it back is refused (security N1).
+ * The repository at `dir`, to bind a long-lived server to, with this process's PATH filtered
+ * for it first (`trustProcessPath`): each time it is looked for, so one found only after startup
+ * is filtered for too before git runs in it (security S2-3). A work tree whose git directory is
+ * outside it without naming it back is refused (security N1). Outside a repository `repo` is
+ * `undefined`, or `not_a_repo` is thrown when `requireRepo`.
  */
-export async function bindRepository(dir: string): Promise<Repo> {
-  const repo = await resolveRepo(dir);
-  await refuseForeignGitDir(repo);
-  return repo;
+export async function bindRepository(options: {
+  readonly dir: string;
+  readonly cwd: string;
+  readonly home?: string | undefined;
+  readonly requireRepo?: boolean;
+  readonly env?: NodeJS.ProcessEnv;
+}): Promise<{ repo: Repo | undefined; dropped: string[] }> {
+  const found = await trustProcessPath({ ...options, repoDir: options.dir });
+  if (found.repo !== undefined) await refuseForeignGitDir(found.repo);
+  return found;
 }
 
 /**
