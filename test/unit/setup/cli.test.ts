@@ -54,7 +54,8 @@ describe("ufo setup, uninstall, update on the command line", () => {
     }
   });
 
-  it("says nothing changed on a second setup", async () => {
+  // Two setups and an uninstall: about 0.6 s alone, but past vitest's 5 s default under full-suite load.
+  it("says nothing changed on a second setup", { timeout: 20_000 }, async () => {
     await put(codexFile(), "a = 1\n");
     expect((await ufo("setup", "--host", "codex", "--yes")).code).toBe(0);
     const config = await readFile(codexFile(), "utf8");
