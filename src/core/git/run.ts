@@ -533,7 +533,9 @@ function shellWord(text: string): string {
 /**
  * Removes what a start created for `run`: its arms directory and, with `deleteBranch`, the run
  * branch, each tried even when the other fails. Returns what is left and how to remove each,
- * or `undefined` once nothing is: with no run state left, nothing else would find them.
+ * or `undefined` once nothing is: with no run state left, nothing else would find them. The
+ * directory is named, not put in a command: a redacted path (`~/…`, `<redacted:username>`) in a
+ * pasted command would remove nothing (code review R2). A branch name holds no such part.
  */
 export async function removeRunLeaving(
   run: Run,
@@ -545,7 +547,7 @@ export async function removeRunLeaving(
     await removeEmptyDir(path.dirname(run.dir)).catch(() => undefined);
   } catch (error) {
     left.push(
-      `could not remove the arms directory ${run.dir} (${describe(error)}); remove it with \`rm -rf -- ${shellWord(run.dir)}\``,
+      `could not remove the arms directory ${run.dir} (${describe(error)}); remove that directory and everything in it by hand`,
     );
   }
   if (options.deleteBranch) {

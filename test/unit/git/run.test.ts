@@ -12,8 +12,10 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import os from "node:os";
 import path from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { describeFailure } from "../../../src/app/index.js";
 import {
   applyToB,
   attributeDrivers,
@@ -35,6 +37,7 @@ import {
   resetBTo,
   revertB,
   runBranch,
+  withLeftovers,
 } from "../../../src/core/git/index.js";
 import { newRunId } from "../../../src/core/paths.js";
 import {
@@ -158,22 +161,37 @@ function userState(repo: string) {
   };
 }
 
-// Code review CR-N6: the command a leftover hint names can be pasted as it is, whatever the path.
+// Code review R2: what is left is named, never put in a command, since the failure that carries it
+// reaches you redacted (`~/…`), and a pasted `rm -rf -- '~/…'` would remove nothing.
 describe("removeRunLeaving", () => {
-  it("quotes the path in the command that removes what is left", async () => {
+  it("names the directory it could not remove, redacted, without a command", async () => {
     const root = path.join(sandbox.root, `it's here ${randomUUID()}`);
     const dir = path.join(root, "run-1");
     mkdirSync(path.join(dir, "a"), { recursive: true });
     chmodSync(root, 0o500);
+    const homedir = vi.spyOn(os, "homedir").mockReturnValue(sandbox.root);
     try {
       const left = await removeRunLeaving({ dir } as Run, { deleteBranch: false });
-      const quoted = `'${root.replaceAll("'", "'\\''")}/run-1'`;
-      expect(left?.endsWith(`; remove it with \`rm -rf -- ${quoted}\``)).toBe(true);
+      expect(left).toMatch(
+        new RegExp(
+          `^could not remove the arms directory ${escapeRegExp(dir)} \\(.+\\); remove that directory and everything in it by hand$`,
+        ),
+      );
+      const failure = describeFailure(withLeftovers(new Error("git clone failed"), left));
+      expect(failure.message).toContain(
+        `could not remove the arms directory ~${dir.slice(sandbox.root.length)} (`,
+      );
+      expect(failure.message).not.toContain("rm -rf");
     } finally {
+      homedir.mockRestore();
       chmodSync(root, 0o700);
     }
   });
 });
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 describe("repoId", () => {
   it("is stable across subdirectories and linked worktrees and hides the path", async () => {

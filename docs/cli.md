@@ -386,9 +386,10 @@ change. Your branch, working tree, index, `.gitignore`, and `.git/info/exclude` 
 uncommitted changes are not part of the run (a warning says so). A start holds the new run's
 control lock until its worker runs, so no cancel acts on a run half started. A start that fails
 records its run as failed, then removes the branch and the arms it created and its run state.
-Whatever cannot be removed, the run branch or the arms directory, the error names with the
-command that removes it (`git branch -D -- 'ufo/run-<run-id>'`, `rm -rf -- '<arms directory>'`, quoted to paste as they are), since no
-run state is left to find it by.
+Whatever cannot be removed, the run branch or the arms directory, the error names, since no run
+state is left to find it by: the branch with the command that deletes it
+(`git branch -D -- 'ufo/run-<run-id>'`), the arms directory by its path, to remove by hand. A
+path in an error is redacted (`~` for your home), so it is not given as a command to paste.
 
 The arms are UFO's own local clones (`git clone --no-checkout --local` without templates), so
 they carry none of your repository's config, hooks, or worktree admin data, and your `.git`

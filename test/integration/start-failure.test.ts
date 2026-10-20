@@ -203,7 +203,7 @@ describe("a start that fails after it created the arms", { timeout: TIMEOUT_MS }
       expect(existsSync(path.join(left, "a"))).toBe(true);
       expect((error as Error).message).toMatch(
         new RegExp(
-          `^git clone failed \\(test\\); could not remove the arms directory ${left} \\(.+\\); remove it with \`rm -rf -- '${left}'\`$`,
+          `^git clone failed \\(test\\); could not remove the arms directory ${left} \\(.+\\); remove that directory and everything in it by hand$`,
         ),
       );
       expect(runBranches(current)).toBe("");
