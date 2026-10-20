@@ -35,7 +35,10 @@ writes only protocol messages on stdout; diagnostics go to stderr. It exits when
   open a project folder ([safety.md](safety.md) R3b). A folder inside a repository at your home
   (dotfiles) is answered `not_a_repo` the same way, until it is a repository of its own. A work tree that shares a git directory
   elsewhere, or a nested repository's, is served only as a linked worktree or a submodule whose
-  own git directory is outside it ([safety.md](safety.md) R7); otherwise `unsafe_state`. Calls
+  own git directory is outside it ([safety.md](safety.md) R7); otherwise `unsafe_state`, as for
+  a work tree made with `git init --separate-git-dir` (no `core.worktree`) or a `.git` that is
+  a symbolic link to a directory elsewhere. A submodule binds, but `start_run` refuses its
+  `core.worktree` (`policy:unsafe_repo_config`), so it can be inspected, not run. Calls
   that arrive together before the first bind share it. Once bound, the repository's top level,
   git directory, common directory (the directory itself, so a repository made again at the same
   path is another), and id are pinned and checked before every call, and every call acts on

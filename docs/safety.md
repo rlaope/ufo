@@ -199,7 +199,9 @@ until it is, `ufo setup` refuses to install from the registry and takes a tarbal
   its common directory is another one at the same path (a repository made again there: told
   by device, inode, and birth time, or by device and inode alone on a file system that keeps no
   birth time, which may give the new directory the old inode), and
-  every call's workflow acts on the repository it pinned.
+  every call's workflow acts on the repository it pinned. Git itself still reads `.git` again
+  each time UFO runs it, so a `.git` swapped in the middle of a call, after that call's check,
+  is not caught until the next call.
 
 - **R8. Drivers from your own git config.** UFO refuses filter, diff, and merge drivers defined
   in the repository's config, but not those in your global or system config. When the
