@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { processRunner } from "../../../src/setup/hosts.js";
 import {
   compareVersions,
   installedIntegrity,
@@ -79,11 +80,23 @@ describe("the node a host starts", () => {
     const bin = await mkdtemp(path.join(os.tmpdir(), "ufo-node-"));
     try {
       await symlink(process.execPath, path.join(bin, "node"));
-      expect(await nodeCommand({ PATH: bin }, process.execPath)).toBe(path.join(bin, "node"));
-      expect(await nodeCommand({ PATH: bin }, "/elsewhere/node")).toBe("/elsewhere/node");
-      expect(await nodeCommand({ PATH: "" }, process.execPath)).toBe(process.execPath);
+      const any = () => true;
+      expect(await nodeCommand({ PATH: bin }, process.execPath, any)).toBe(path.join(bin, "node"));
+      expect(await nodeCommand({ PATH: bin }, "/elsewhere/node", any)).toBe("/elsewhere/node");
+      expect(await nodeCommand({ PATH: "" }, process.execPath, any)).toBe(process.execPath);
     } finally {
       await rm(bin, { recursive: true, force: true });
     }
+  });
+});
+
+describe("a command that runs past its time", () => {
+  it("is reported by the signal that stopped it, not as a missing program", async () => {
+    const result = await processRunner("/bin/sleep", ["5"], {
+      cwd: os.tmpdir(),
+      env: { PATH: "/usr/bin:/bin" },
+      timeoutMs: 100,
+    });
+    expect(result).toMatchObject({ code: -1, signal: "SIGTERM" });
   });
 });

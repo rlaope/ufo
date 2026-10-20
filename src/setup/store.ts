@@ -11,6 +11,7 @@ import {
 import { SetupError } from "./errors.js";
 import { readPrivate, sha256, writePrivate } from "./files.js";
 import { HOST_IDS, type HostId } from "./hosts.js";
+import { isExactVersion } from "./package.js";
 
 // What setup wrote, kept in UFO's trusted home: `$UFO_HOME/private/setup/setup.json`, and
 // `backups/<host>-<file name>`, each edited file as it was before setup's first write to it.
@@ -25,6 +26,8 @@ const BACKUPS_DIR = "backups";
 const LOCK_FILE = "setup.lock";
 
 const Sha256Schema = z.string().regex(/^[0-9a-f]{64}$/);
+/** An exact `ufo-agents` version: it names a directory under `$UFO_HOME/pkg`. */
+const VersionSchema = z.string().refine(isExactVersion, "must be an exact version");
 const HostIdSchema = z.enum(HOST_IDS);
 const EntrySchema = z.record(z.string(), z.unknown());
 
@@ -45,11 +48,11 @@ const HostRecordSchema = z.strictObject({
   /** The host config file the entry is in. */
   path: z.string(),
   /** The `ufo-agents` version the entry starts. */
-  version: z.string(),
+  version: VersionSchema,
   /** The `ufo` entry as setup last wrote it. */
   entry: EntrySchema,
   /** An entry being written: until the write is confirmed, either one is UFO's. */
-  pending: z.strictObject({ version: z.string(), entry: EntrySchema }).optional(),
+  pending: z.strictObject({ version: VersionSchema, entry: EntrySchema }).optional(),
   /** Present for the config files setup edits itself (Codex, Cursor). */
   file: FileStateSchema.optional(),
 });
@@ -61,6 +64,8 @@ const SkillRecordSchema = z.strictObject({
   pending: z.record(z.string(), Sha256Schema).optional(),
   /** The hosts set up with this skill directory (Codex and Cursor share one). */
   hosts: z.array(HostIdSchema),
+  /** The `ufo-agents` version the files are from. */
+  version: VersionSchema,
 });
 
 const PackageRecordSchema = z.strictObject({
@@ -76,7 +81,7 @@ const SetupRecordSchema = z.strictObject({
   hosts: z.partialRecord(HostIdSchema, HostRecordSchema),
   skills: z.record(z.string(), SkillRecordSchema),
   /** Installed copies, by version. */
-  packages: z.record(z.string(), PackageRecordSchema),
+  packages: z.record(VersionSchema, PackageRecordSchema),
 });
 
 export type FileState = z.infer<typeof FileStateSchema>;
@@ -92,9 +97,13 @@ export interface Store {
   readonly pkgRoot: string;
 }
 
-/** Checks `$UFO_HOME` and creates (0700) `private/setup/backups` and `pkg` under it. */
-export async function openStore(ufoHome: string): Promise<Store> {
-  const home = await trustedHome(ufoHome);
+/**
+ * Checks `$UFO_HOME` and creates (0700) `private/setup/backups` and `pkg` under it. A home inside
+ * any of `outside` (the working directory's project, as the PATH filter finds it) is refused
+ * (`unsafe_home`): what hosts start would live in a repository.
+ */
+export async function openStore(ufoHome: string, outside: readonly string[]): Promise<Store> {
+  const home = await trustedHome(ufoHome, { outside });
   const dir = path.join(home, PRIVATE_DIR, SETUP_DIR);
   const pkgRoot = path.join(home, PKG_DIR);
   await ensureTrustedDir(home, backupsDir(dir));

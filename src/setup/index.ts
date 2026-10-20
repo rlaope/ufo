@@ -2,7 +2,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describeFailure, packageVersion, trustProcessPath } from "../app/api.js";
-import { askTerminal, ufoHome } from "../app/api-cli.js";
+import { askTerminal, heldMachineLock, processPath, ufoHome } from "../app/api-cli.js";
 import { SetupError } from "./errors.js";
 import { formatSetupPlan } from "./format.js";
 import {
@@ -13,6 +13,7 @@ import {
   HOST_IDS,
   HOST_NAMES,
   type HostId,
+  type HostPaths,
   hostPaths,
   processRunner,
   tilde,
@@ -21,11 +22,14 @@ import {
   compareVersions,
   type Fetcher,
   httpFetcher,
+  installedIntegrity,
+  isExactVersion,
   launchFor,
   nodeCommand,
   PACKAGE_NAME,
   prefixFor,
   registrySource,
+  sweepPackages,
   tarballSource,
 } from "./package.js";
 import {
@@ -184,13 +188,23 @@ function notes(command: SetupCommand, report: Omit<SetupReport, "notes">): strin
   return out;
 }
 
-/** The newest version any of `hosts` starts now. */
-function newestVersion(record: SetupRecord, hosts: readonly HostId[]): string | undefined {
-  const versions = hosts.flatMap((host) => {
-    const version = record.hosts[host]?.version;
-    return version === undefined ? [] : [version];
-  });
-  return versions.sort(compareVersions).at(-1);
+/**
+ * The newest version anything the change touches is at now: the entries of `hosts`, and each
+ * skill directory they use, which another host (outside `--host`) may share at its own version.
+ */
+function newestVersion(
+  record: SetupRecord,
+  hosts: readonly HostId[],
+  paths: HostPaths,
+): string | undefined {
+  const versions = hosts.flatMap((host) => [
+    record.hosts[host]?.version,
+    record.skills[paths.skillDirs[host]]?.version,
+  ]);
+  return versions
+    .filter((version) => version !== undefined)
+    .sort(compareVersions)
+    .at(-1);
 }
 
 async function execute(command: SetupCommand, options: SetupOptions): Promise<SetupReport> {
@@ -199,11 +213,12 @@ async function execute(command: SetupCommand, options: SetupOptions): Promise<Se
   const env = { ...(options.env ?? process.env) };
   const ufoHomePath = options.ufoHome ?? (env.UFO_HOME ? ufoHome(env) : path.join(home, ".ufo"));
   // The rules every ufo process applies before it runs anything (safety.md R3b), on a copy.
-  await trustProcessPath({ cwd, home: ufoHomePath, env });
-  const store = await openStore(ufoHomePath);
+  const { projectRoots } = await trustProcessPath({ cwd, home: ufoHomePath, env });
+  const store = await openStore(ufoHomePath, projectRoots);
   const run = options.run ?? processRunner;
   const paths = hostPaths(home, env);
   return withSetupLock(store.dir, options.lockWaitMs ?? LOCK_WAIT_MS, async () => {
+    await sweepPackages(store.pkgRoot);
     const record = await readRecord(store.dir);
     let detected: DetectedHost[] | undefined;
     let hosts: HostId[];
@@ -232,17 +247,40 @@ async function execute(command: SetupCommand, options: SetupOptions): Promise<Se
     }
     let install: PlanContext["install"];
     if (command !== "uninstall") {
+      const version = options.version ?? packageVersion();
+      // A copy the record and its own lockfile agree on needs no registry: setup works offline.
+      const known = isExactVersion(version) ? record.packages[version] : undefined;
+      const installed =
+        known?.source === "registry"
+          ? await installedIntegrity(prefixFor(store.pkgRoot, version), version)
+          : undefined;
       const source =
         options.package === undefined
           ? await registrySource(
-              options.version ?? packageVersion(),
+              version,
               options.fetch ?? httpFetcher,
               options.skillSource ?? SKILL_SOURCE,
+              installed !== undefined && installed === known?.integrity ? installed : undefined,
             )
           : await tarballSource(path.resolve(cwd, options.package));
-      const node = await nodeCommand(env, options.execPath ?? process.execPath);
-      install = { source, launch: launchFor(prefixFor(store.pkgRoot, source.version), node) };
+      // The node hosts start passes the PATH rules (no project's own, none under node_modules).
+      const untrusted = [...projectRoots, store.home];
+      const node = await nodeCommand(
+        env,
+        options.execPath ?? process.execPath,
+        (dir) => processPath(dir, untrusted) === dir,
+      );
+      install = {
+        source,
+        launch: launchFor(prefixFor(store.pkgRoot, source.version), node),
+        // Hosts start servers with their own environment, so a UFO home other than ~/.ufo is
+        // written into every entry.
+        ...(path.resolve(ufoHomePath) === path.join(home, ".ufo")
+          ? {}
+          : { env: { UFO_HOME: store.home } }),
+      };
     }
+    const held = await heldMachineLock({ home: store.home });
     const ctx: PlanContext = {
       paths,
       run,
@@ -251,6 +289,7 @@ async function execute(command: SetupCommand, options: SetupOptions): Promise<Se
       claude,
       npm: install === undefined ? undefined : await findExecutable("npm", env),
       ...(install === undefined ? {} : { install }),
+      ...(held === undefined ? {} : { runLock: { runId: held.holder?.runId } }),
     };
     const plan = await planChanges(
       ctx,
@@ -274,7 +313,7 @@ async function execute(command: SetupCommand, options: SetupOptions): Promise<Se
     if (changes.length > 0) {
       options.print(formatSetupPlan(report));
       const confirm = options.confirm ?? terminalConfirm(command);
-      const newest = newestVersion(record, hosts);
+      const newest = newestVersion(record, hosts, paths);
       if (install !== undefined && newest !== undefined) {
         if (compareVersions(install.source.version, newest) < 0) {
           // Security L1: --yes does not cover going back to an older version.

@@ -1,17 +1,26 @@
 import { randomBytes } from "node:crypto";
-import { mkdtemp, readFile, realpath, rename, rm } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, realpath, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { gunzipSync } from "node:zlib";
 import { SetupError } from "./errors.js";
 import { exists, integrityOf, isErrno } from "./files.js";
-import { type CommandRunner, findExecutable, type Launch, SKILL_NAME } from "./hosts.js";
+import {
+  type CommandRunner,
+  findExecutable,
+  howItEnded,
+  type Launch,
+  SKILL_NAME,
+} from "./hosts.js";
 import { hashFiles, readSkillSource, sameFiles } from "./skills.js";
 
 // The package a host starts (security H1): never `npx`, which resolves a name at every start.
 // Setup installs one exact version into `$UFO_HOME/pkg/<version>` with npm (no install scripts,
 // the public registry, no npm_config_* from the environment), checks the installed version and
 // the lockfile's integrity against the registry's, and points each host at that copy's CLI with
-// an absolute node. `--package <file.tgz>` installs a local tarball instead.
+// an absolute node. `--package <file.tgz>` installs a local tarball instead. Dependencies are
+// checked only for where they came from (every `resolved` URL on the public registry); their
+// integrity is npm's own check against the registry, until the package ships an
+// npm-shrinkwrap.json (plan M6).
 
 export const PACKAGE_NAME = "ufo-agents";
 export const REGISTRY = "https://registry.npmjs.org/";
@@ -80,12 +89,15 @@ const PUBLISH_HINT = "install from a tarball with --package <file.tgz>";
 /**
  * The registry's `ufo-agents@<version>`, the version this UFO is (security H2): refused for
  * `0.0.0` (an unreleased checkout), a version that is not exact, and one the registry does not
- * have. `skillDir` is this UFO's own skill, the same files as that version's.
+ * have. `skillDir` is this UFO's own skill, the same files as that version's. `installed` is the
+ * integrity a copy already installed from the registry holds, as the record and its lockfile
+ * agree: then the registry is not asked again, so a second setup works offline.
  */
 export async function registrySource(
   version: string,
   fetcher: Fetcher,
   skillDir: string,
+  installed?: string,
 ): Promise<PackageSource> {
   if (!isExactVersion(version) || version === "0.0.0") {
     throw new SetupError(
@@ -93,6 +105,8 @@ export async function registrySource(
       `${PACKAGE_NAME}@${version} is not a released version; ${PUBLISH_HINT}`,
     );
   }
+  const skill = await readSkillSource(skillDir);
+  if (installed !== undefined) return { kind: "registry", version, integrity: installed, skill };
   const url = `${REGISTRY}${PACKAGE_NAME}/${version}`;
   let response: Awaited<ReturnType<Fetcher>>;
   try {
@@ -129,7 +143,7 @@ export async function registrySource(
       `${url} does not describe ${PACKAGE_NAME}@${version} with a sha512 integrity`,
     );
   }
-  return { kind: "registry", version, integrity, skill: await readSkillSource(skillDir) };
+  return { kind: "registry", version, integrity, skill };
 }
 
 /** The regular files of a gzipped tar archive, by name (ustar, pax, and GNU long names). */
@@ -274,7 +288,10 @@ export interface InstallOptions {
   readonly run: CommandRunner;
 }
 
-/** The `npm install` command line setup runs. */
+/**
+ * The `npm install` command line setup runs. Flags beat a user's `.npmrc`, so the lockfile
+ * setup checks is written whatever `package-lock`, `save`, `dry-run`, or `global` says there.
+ */
 export function npmArgs(prefix: string, source: PackageSource): string[] {
   return [
     "install",
@@ -284,15 +301,53 @@ export function npmArgs(prefix: string, source: PackageSource): string[] {
     "--omit=dev",
     "--no-audit",
     "--no-fund",
+    "--package-lock=true",
+    "--save=true",
+    "--dry-run=false",
+    "--global=false",
     `--registry=${REGISTRY}`,
     source.tarball ?? `${PACKAGE_NAME}@${source.version}`,
   ];
 }
 
 /**
+ * Every package in the lockfile came from the public registry (security DS-N2): a scoped
+ * registry in an `.npmrc` must not swap a dependency. The package itself may be the `--package`
+ * tarball.
+ */
+async function checkResolved(prefix: string, source: PackageSource): Promise<void> {
+  const lock = (await readJson(path.join(prefix, "package-lock.json"))) as
+    | { packages?: Record<string, { resolved?: unknown; link?: unknown }> }
+    | undefined;
+  for (const [name, entry] of Object.entries(lock?.packages ?? {})) {
+    if (name === "") continue;
+    const { resolved } = entry;
+    const own = name === `node_modules/${PACKAGE_NAME}` && source.tarball !== undefined;
+    const fromRegistry = typeof resolved === "string" && resolved.startsWith(REGISTRY);
+    const fromTarball = own && typeof resolved === "string" && resolved.startsWith("file:");
+    if (entry.link === true || !(fromRegistry || fromTarball)) {
+      throw new SetupError(
+        "integrity_mismatch",
+        `npm resolved ${name.replace(/^node_modules\//, "")} from ${typeof resolved === "string" ? resolved : "nowhere"}, not ${REGISTRY} (a registry set in an .npmrc?); nothing was set up`,
+      );
+    }
+  }
+}
+
+/** Removes what an interrupted install left in `pkgRoot`: `.install-*` and `<version>.old-*`. */
+export async function sweepPackages(pkgRoot: string): Promise<void> {
+  for (const name of await readdir(pkgRoot)) {
+    if (/^\.install-|\.old-[0-9a-f]{8}$/.test(name)) {
+      await rm(path.join(pkgRoot, name), { recursive: true, force: true });
+    }
+  }
+}
+
+/**
  * Installs `source` into a new directory under `pkgRoot`, checks it, and renames it to
- * `pkgRoot/<version>`, replacing what was there. Refuses (`integrity_mismatch`) a copy whose
- * version or lockfile integrity is not what the source says.
+ * `pkgRoot/<version>`, replacing what was there (put back if the rename fails). Refuses
+ * (`integrity_mismatch`) a copy whose version, lockfile integrity, or dependency sources are not
+ * what the source says.
  */
 export async function installPackage(
   options: InstallOptions,
@@ -314,9 +369,16 @@ export async function installPackage(
       const last = result.stderr.trim().split("\n").at(-1) ?? "";
       throw new SetupError(
         "install_failed",
-        `npm install ${args.at(-1)} exited ${result.code}${last === "" ? "" : `: ${last}`}`,
+        `npm install ${args.at(-1)} ${howItEnded(result)}${last === "" ? "" : `: ${last}`}`,
       );
     }
+    if (!(await exists(path.join(temp, "package-lock.json")))) {
+      throw new SetupError(
+        "install_failed",
+        "npm wrote no package-lock.json, so UFO cannot check what it installed; nothing was set up",
+      );
+    }
+    await checkResolved(temp, source);
     const integrity = await installedIntegrity(temp, source.version);
     if (integrity !== source.integrity) {
       throw new SetupError(
@@ -329,7 +391,12 @@ export async function installPackage(
     if (await exists(prefix)) {
       const old = `${prefix}.old-${randomBytes(4).toString("hex")}`;
       await rename(prefix, old);
-      await rename(temp, prefix);
+      try {
+        await rename(temp, prefix);
+      } catch (error) {
+        await rename(old, prefix);
+        throw error;
+      }
       await rm(old, { recursive: true, force: true });
     } else {
       await rename(temp, prefix);
@@ -345,13 +412,23 @@ export async function removePackage(pkgRoot: string, version: string): Promise<v
 
 /**
  * The node a host runs: the `node` on the filtered PATH when it is this process's own binary
- * (a stable path such as a package manager's link), else this process's absolute path.
+ * (a stable path such as a package manager's link), else this process's absolute path. Either
+ * way its real directory must pass `trusted` (security DS-N1: the PATH rules, so not a project's
+ * own node or one under node_modules); otherwise setup refuses.
  */
-export async function nodeCommand(env: NodeJS.ProcessEnv, execPath: string): Promise<string> {
-  const found = await findExecutable("node", env);
-  if (found !== undefined) {
-    const [a, b] = await Promise.all([realpath(found), realpath(execPath)]).catch(() => ["", "-"]);
-    if (a === b) return found;
+export async function nodeCommand(
+  env: NodeJS.ProcessEnv,
+  execPath: string,
+  trusted: (dir: string) => boolean,
+): Promise<string> {
+  const real = await realpath(execPath).catch(() => execPath);
+  if (!trusted(path.dirname(real))) {
+    throw new SetupError(
+      "node_untrusted",
+      `${execPath} is inside the project or a node_modules directory, and hosts would start it at every launch; run ufo setup with a node outside the project`,
+    );
   }
+  const found = await findExecutable("node", env);
+  if (found !== undefined && (await realpath(found).catch(() => "")) === real) return found;
   return execPath;
 }

@@ -380,6 +380,13 @@ function renderValue(value: unknown): string {
   if (typeof value === "number" && Number.isSafeInteger(value)) return String(value);
   if (typeof value === "boolean") return String(value);
   if (Array.isArray(value)) return `[${value.map(renderValue).join(", ")}]`;
+  if (typeof value === "object" && value !== null) {
+    const pairs = Object.entries(value).map(
+      ([key, item]) =>
+        `${/^[A-Za-z0-9_-]+$/.test(key) ? key : JSON.stringify(key)} = ${renderValue(item)}`,
+    );
+    return `{ ${pairs.join(", ")} }`;
+  }
   throw new Error(`setup does not write ${JSON.stringify(value)} to TOML`);
 }
 

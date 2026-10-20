@@ -9,7 +9,7 @@ import {
   uninstall,
   update,
 } from "../../../src/setup/index.js";
-import { fakePackage, put, type Sandbox, SKILL_TEXT, sandbox, VERSION } from "./sandbox.js";
+import { fakePackage, NODE, put, type Sandbox, SKILL_TEXT, sandbox, VERSION } from "./sandbox.js";
 
 let box: Sandbox;
 /** The skill a running UFO 2.0.0 ships, which the registry's 2.0.0 holds too. */
@@ -32,7 +32,8 @@ const options = (extra: Partial<SetupOptions> = {}): SetupOptions => ({
 });
 
 /** Options of a running UFO 2.0.0. */
-const v2 = () => options({ version: "2.0.0", skillSource: skill2 });
+const v2 = (extra: Partial<SetupOptions> = {}) =>
+  options({ version: "2.0.0", skillSource: skill2, ...extra });
 const codexFile = () => path.join(box.home, ".codex", "config.toml");
 const cursorFile = () => path.join(box.home, ".cursor", "mcp.json");
 const agentsSkill = () => path.join(box.home, ".agents", "skills", "ufo-optimize");
@@ -239,5 +240,82 @@ describe("ufo update", () => {
     expect((await refusal(update(options({ hosts: ["cursor"] })))).message).toBe(
       "UFO has not set up Cursor; run ufo setup",
     );
+  });
+});
+
+describe("step D re-review", () => {
+  it("DC-N1: asks before a --host setup puts an older skill where another host has a newer one", async () => {
+    await mkdir(path.join(box.home, ".codex"));
+    await mkdir(path.join(box.home, ".cursor"));
+    await setup(v2({ hosts: ["codex"] }));
+    let asked = "";
+    const error = await refusal(
+      setup(
+        options({
+          hosts: ["cursor"],
+          confirm: async (prompt) => {
+            asked = prompt;
+            return "yes";
+          },
+        }),
+      ),
+    );
+    expect(asked).toContain('ufo-agents@2.0.0 is set up; type "downgrade"');
+    expect(error.code).toBe("approval_declined");
+    expect(await read(path.join(agentsSkill(), "SKILL.md"))).toBe(`${SKILL_TEXT}Version 2.\n`);
+  });
+
+  it("DC-N2: a UFO home other than ~/.ufo goes into every host's entry", async () => {
+    const ufoHome = path.join(box.root, "elsewhere-ufo");
+    const custom = (extra: Partial<SetupOptions> = {}) => options({ ufoHome, ...extra });
+    const script = path.join(ufoHome, "pkg", VERSION, "node_modules/ufo-agents/dist/cli/index.js");
+    await put(codexFile(), "a = 1\n");
+    await put(cursorFile(), "{}\n");
+    await setup(custom());
+    expect(await read(codexFile())).toBe(
+      `a = 1\n\n[mcp_servers.ufo]\ncommand = "${NODE}"\nargs = ["${script}", "mcp", "--host", "codex"]\nstartup_timeout_sec = 60\nenv = { UFO_HOME = "${ufoHome}" }\n`,
+    );
+    expect(JSON.parse(await read(cursorFile())).mcpServers.ufo.env).toEqual({ UFO_HOME: ufoHome });
+    expect(box.claudeCalls()[0]?.slice(0, 8)).toEqual([
+      "mcp",
+      "add",
+      "--scope",
+      "user",
+      "ufo",
+      "-e",
+      `UFO_HOME=${ufoHome}`,
+      "--",
+    ]);
+    const claudeJson = JSON.parse(await read(path.join(box.home, ".claude.json")));
+    expect(claudeJson.mcpServers.ufo.env).toEqual({ UFO_HOME: ufoHome });
+    expect((await setup(custom())).changed).toBe(false);
+    await uninstall(custom());
+    expect(await read(codexFile())).toBe("a = 1\n");
+    expect(await read(cursorFile())).toBe("{}\n");
+  });
+
+  it("DC-N7: a Claude Code entry found up to date is confirmed in the record", async () => {
+    await setup(options({ hosts: ["claude-code"] }));
+    const file = path.join(setupDir(), "setup.json");
+    const saved = JSON.parse(await read(file));
+    const owned = saved.hosts["claude-code"];
+    saved.hosts["claude-code"] = {
+      ...owned,
+      version: "1.0.0",
+      pending: { version: VERSION, entry: owned.entry },
+    };
+    await writeFile(file, JSON.stringify(saved));
+    expect((await setup(options({ hosts: ["claude-code"] }))).changed).toBe(false);
+    expect((await record()).hosts["claude-code"]).toEqual({ ...owned, version: VERSION });
+  });
+
+  it("DC-N9: whitespace in an empty mcpServers comes back after a re-pin and a host edit", async () => {
+    const pre = '{\n  "mcpServers": {\n  },\n  "theme": "dark"\n}\n';
+    await put(cursorFile(), pre);
+    await setup(options({ hosts: ["cursor"] }));
+    await update(v2());
+    await writeFile(cursorFile(), (await read(cursorFile())).replace("dark", "light"));
+    await uninstall(options());
+    expect(await read(cursorFile())).toBe(pre.replace("dark", "light"));
   });
 });

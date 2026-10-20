@@ -140,7 +140,8 @@ async function enclosingWorkTrees(dir: string): Promise<string[]> {
  * those roots, even when one is a repository (dotfiles) or the working directory: tools installed
  * under it (`~/.nvm`, `~/.cargo/bin`) stay, and a project's `.bin` there is caught by the
  * `node_modules` rule. Returns the repository, or `undefined` when there is none (an error when
- * `requireRepo`), and the entries it dropped.
+ * `requireRepo`), the entries it dropped, and the project roots it distrusted besides UFO's home
+ * (where `ufo setup` refuses a UFO home).
  */
 export async function trustProcessPath(options: {
   readonly cwd: string;
@@ -148,7 +149,7 @@ export async function trustProcessPath(options: {
   readonly home?: string | undefined;
   readonly requireRepo?: boolean;
   readonly env?: NodeJS.ProcessEnv;
-}): Promise<{ repo: Repo | undefined; dropped: string[] }> {
+}): Promise<{ repo: Repo | undefined; dropped: string[]; projectRoots: string[] }> {
   const env = options.env ?? process.env;
   const before = (env.PATH ?? "").split(path.delimiter);
   const userHome = path.resolve(os.homedir());
@@ -158,25 +159,24 @@ export async function trustProcessPath(options: {
   const dirs = [options.cwd, ...(options.repoDir === undefined ? [] : [options.repoDir])];
   const reals = await Promise.all(dirs.map((dir) => realpath(dir).catch(() => dir)));
   const trees = await Promise.all([...dirs, ...reals].map(enclosingWorkTrees));
-  const untrusted = roots([
-    ...dirs,
-    ...reals,
-    ...trees.flat(),
-    path.resolve(options.home ?? ufoHome(env)),
-  ]);
+  const project = roots([...dirs, ...reals, ...trees.flat()]);
+  const untrusted = [...project, ...roots([path.resolve(options.home ?? ufoHome(env))])];
   env.PATH = processPath(env.PATH ?? "", untrusted);
   const repo = await resolveRepo(options.repoDir ?? options.cwd).catch((error: unknown) => {
     if (options.requireRepo === true) throw error;
     return undefined;
   });
-  if (repo !== undefined) {
-    env.PATH = processPath(env.PATH, [
-      ...untrusted,
-      ...roots([repo.root, repo.gitDir, repo.commonDir, path.dirname(repo.commonDir)]),
-    ]);
-  }
+  const repoRoots =
+    repo === undefined
+      ? []
+      : roots([repo.root, repo.gitDir, repo.commonDir, path.dirname(repo.commonDir)]);
+  if (repo !== undefined) env.PATH = processPath(env.PATH, [...untrusted, ...repoRoots]);
   const kept = new Set(env.PATH.split(path.delimiter));
-  return { repo, dropped: [...new Set(before.filter((entry) => !kept.has(entry)))] };
+  return {
+    repo,
+    dropped: [...new Set(before.filter((entry) => !kept.has(entry)))],
+    projectRoots: [...project, ...repoRoots],
+  };
 }
 
 function within(dir: string, root: string): boolean {

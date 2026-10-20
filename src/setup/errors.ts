@@ -16,6 +16,8 @@ export type SetupErrorCode =
   | "entry_conflict"
   | "changed_during_setup"
   | "integrity_mismatch"
+  | "node_untrusted"
+  | "run_in_progress"
   | "approval_declined"
   | "busy"
   | "unsafe_state"
@@ -33,6 +35,8 @@ const EXIT_BY_CODE: Record<SetupErrorCode, ExitCode> = {
   entry_conflict: EXIT_REFUSED,
   changed_during_setup: EXIT_REFUSED,
   integrity_mismatch: EXIT_REFUSED,
+  node_untrusted: EXIT_REFUSED,
+  run_in_progress: EXIT_REFUSED,
   approval_declined: EXIT_REFUSED,
   busy: EXIT_REFUSED,
   unsafe_state: EXIT_REFUSED,

@@ -83,6 +83,12 @@ export interface Fakes {
   npmServes?: FakePackage;
   /** Fields `claude mcp add` stores besides the ones it was given. */
   claudeAdds?: Record<string, unknown>;
+  /** npm writes no lockfile (`package-lock=false` in an .npmrc). */
+  npmNoLockfile?: boolean;
+  /** Where npm says the `zod` dependency came from. */
+  npmResolvesZodFrom?: string;
+  /** npm answers with this instead of installing. */
+  npmResult?: CommandResult;
 }
 
 const ok = (stdout = "ok\n"): CommandResult => ({ code: 0, stdout, stderr: "" });
@@ -102,12 +108,19 @@ async function fakeClaude(configFile: string, fakes: Fakes, args: string[]) {
   const [mcp, action] = args;
   if (mcp !== "mcp") return fail("unknown command");
   if (action === "add") {
+    // mcp add --scope user <name> [-e KEY=VALUE]... -- <command> [args...]
     const dash = args.indexOf("--");
-    const name = args[dash - 1] ?? "";
+    const name = args[4] ?? "";
+    const env: Record<string, string> = {};
+    for (let i = 5; i < dash; i += 2) {
+      if (args[i] !== "-e") return fail(`unexpected ${args[i]}`);
+      const [key = "", ...value] = (args[i + 1] ?? "").split("=");
+      env[key] = value.join("=");
+    }
     const [command, ...rest] = args.slice(dash + 1);
     if (args[2] !== "--scope" || args[3] !== "user") return fail("expected --scope user");
     if (Object.hasOwn(servers, name)) return fail(`MCP server ${name} already exists`);
-    servers[name] = { type: "stdio", command, args: rest, env: {}, ...fakes.claudeAdds };
+    servers[name] = { type: "stdio", command, args: rest, env, ...fakes.claudeAdds };
   } else if (action === "remove") {
     const name = args[2] ?? "";
     if (args[3] !== "--scope" || args[4] !== "user") return fail("expected --scope user");
@@ -126,8 +139,13 @@ const NPM_FLAGS = [
   "--omit=dev",
   "--no-audit",
   "--no-fund",
+  "--package-lock=true",
+  "--save=true",
+  "--dry-run=false",
+  "--global=false",
   "--registry=https://registry.npmjs.org/",
 ];
+const REGISTRY = "https://registry.npmjs.org/";
 
 /** Unpacks the package into `<prefix>/node_modules/ufo-agents` and writes a lockfile. */
 async function fakeNpm(fakes: Fakes, args: string[], cwd: string, env: NodeJS.ProcessEnv) {
@@ -135,6 +153,7 @@ async function fakeNpm(fakes: Fakes, args: string[], cwd: string, env: NodeJS.Pr
   if (install !== "install" || flag !== "--prefix" || prefix !== cwd) return fail("bad call");
   if (!NPM_FLAGS.every((f) => rest.includes(f))) return fail("missing a flag");
   if (Object.keys(env).some((name) => /^npm_config_/i.test(name))) return fail("npm_config_ set");
+  if (fakes.npmResult !== undefined) return fakes.npmResult;
   const spec = rest.at(-1) ?? "";
   let pkg: FakePackage | undefined;
   if (spec.startsWith("ufo-agents@")) {
@@ -150,7 +169,20 @@ async function fakeNpm(fakes: Fakes, args: string[], cwd: string, env: NodeJS.Pr
     await mkdir(path.dirname(file), { recursive: true });
     await writeFile(file, content);
   }
-  const lock = { packages: { "node_modules/ufo-agents": { integrity: pkg.integrity } } };
+  if (fakes.npmNoLockfile === true) return ok();
+  const own = spec.startsWith("ufo-agents@")
+    ? `${REGISTRY}ufo-agents/-/ufo-agents-${pkg.version}.tgz`
+    : `file:${spec}`;
+  const lock = {
+    packages: {
+      "": { dependencies: { "ufo-agents": spec } },
+      "node_modules/ufo-agents": { resolved: own, integrity: pkg.integrity },
+      "node_modules/zod": {
+        resolved: fakes.npmResolvesZodFrom ?? `${REGISTRY}zod/-/zod-4.6.7.tgz`,
+        integrity: "sha512-zod",
+      },
+    },
+  };
   await writeFile(path.join(prefix, "package-lock.json"), JSON.stringify(lock));
   return ok();
 }
@@ -181,7 +213,8 @@ export async function sandbox(): Promise<Sandbox> {
   }
   await writeFile(path.join(skillSource, "SKILL.md"), SKILL_TEXT);
   for (const name of ["claude", "npm"]) await onPathIn(bin, name);
-  const ufoHome = path.join(root, "ufo-home");
+  // The default UFO home, so the entries carry no UFO_HOME.
+  const ufoHome = path.join(home, ".ufo");
   const fakes: Fakes = {
     calls: [],
     registry: new Map([[VERSION, fakePackage(VERSION)]]),

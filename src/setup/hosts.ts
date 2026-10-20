@@ -29,10 +29,17 @@ const CODEX_STARTUP_TIMEOUT_SEC = 60;
 const CURSOR_WORKSPACE = "${workspaceFolder}";
 
 export interface CommandResult {
-  /** The exit status; 127 when the program could not be started. */
+  /** The exit status; 127 when the program could not be started, -1 when a signal ended it. */
   readonly code: number;
+  /** The signal that ended it, e.g. `SIGTERM` at the timeout. */
+  readonly signal?: string;
   readonly stdout: string;
   readonly stderr: string;
+}
+
+/** How a failed command ended: `exited 1`, or `was killed by SIGTERM`. */
+export function howItEnded(result: CommandResult): string {
+  return result.signal === undefined ? `exited ${result.code}` : `was killed by ${result.signal}`;
 }
 
 export interface RunOptions {
@@ -57,6 +64,10 @@ export const processRunner: CommandRunner = (file, args, options) =>
       (error, stdout, stderr) => {
         if (error === null) {
           resolve({ code: 0, stdout, stderr });
+          return;
+        }
+        if (typeof error.signal === "string") {
+          resolve({ code: -1, signal: error.signal, stdout, stderr });
           return;
         }
         const code = typeof error.code === "number" ? error.code : 127;
@@ -128,20 +139,36 @@ export interface Launch {
   readonly script: string;
 }
 
-/** The `ufo` entry UFO writes for `host`: `ufo mcp --host <host>` from the installed package. */
-export function desiredEntry(host: HostId, launch: Launch): Record<string, unknown> {
+/**
+ * The `ufo` entry UFO writes for `host`: `ufo mcp --host <host>` from the installed package.
+ * `env` (a UFO home other than `~/.ufo`) goes into the entry, since hosts start servers with an
+ * environment of their own: Codex passes a fixed list of variables, and a host opened from the
+ * Dock has no shell environment at all.
+ */
+export function desiredEntry(
+  host: HostId,
+  launch: Launch,
+  env?: Readonly<Record<string, string>>,
+): Record<string, unknown> {
   const args = [launch.script, "mcp", "--host", host];
+  const withEnv = env === undefined ? {} : { env: { ...env } };
   switch (host) {
     case "claude-code":
-      return { command: launch.node, args };
+      return { command: launch.node, args, ...withEnv };
     case "codex":
-      return { command: launch.node, args, startup_timeout_sec: CODEX_STARTUP_TIMEOUT_SEC };
+      return {
+        command: launch.node,
+        args,
+        startup_timeout_sec: CODEX_STARTUP_TIMEOUT_SEC,
+        ...withEnv,
+      };
     case "cursor":
       // No host documents a stdio server's working directory; Cursor substitutes the workspace.
       return {
         type: "stdio",
         command: launch.node,
         args: [...args, "--repo", CURSOR_WORKSPACE],
+        ...withEnv,
       };
   }
 }

@@ -108,6 +108,10 @@ describe("ufo setup", () => {
       "--omit=dev",
       "--no-audit",
       "--no-fund",
+      "--package-lock=true",
+      "--save=true",
+      "--dry-run=false",
+      "--global=false",
       "--registry=https://registry.npmjs.org/",
       `ufo-agents@${VERSION}`,
     ]);
@@ -249,7 +253,9 @@ describe("ufo setup", () => {
     const diff = report.changes.find((c) => c.kind === "mcp_server")?.diff ?? "";
     expect(diff).toContain(' API_KEY = "<redacted:api_key>"');
     expect(diff).not.toContain("sk-abcdefghijklmnopqrstuvwx");
-    expect(diff).toContain(`+args = ["${box.script()}", "mcp", "--host", "codex"]`);
+    expect(diff).toContain(
+      '+args = ["~/.ufo/pkg/1.2.3/node_modules/ufo-agents/dist/cli/index.js", "mcp", "--host", "codex"]',
+    );
     expect(printed).not.toContain("sk-abcdefghijklmnopqrstuvwx");
     expect(printed).not.toContain(box.home);
   });

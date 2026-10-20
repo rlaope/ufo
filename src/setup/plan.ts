@@ -4,12 +4,14 @@ import { unifiedDiff } from "./diff.js";
 import { SetupError } from "./errors.js";
 import { readConfig, removeConfig, sha256, writeConfig } from "./files.js";
 import {
+  type CommandResult,
   type CommandRunner,
   desiredEntry,
   HOST_IDS,
   HOST_NAMES,
   type HostId,
   type HostPaths,
+  howItEnded,
   type Launch,
   SERVER_NAME,
   SKILL_NAME,
@@ -109,8 +111,17 @@ export interface PlanContext {
   /** `claude` and `npm` as absolute paths, when in scope and found. */
   readonly claude: string | undefined;
   readonly npm: string | undefined;
-  /** Setup and update: the package to install and how hosts start it. */
-  readonly install?: { readonly source: PackageSource; readonly launch: Launch };
+  /**
+   * Setup and update: the package to install, how hosts start it, and the environment each entry
+   * passes (`UFO_HOME` when it is not `~/.ufo`).
+   */
+  readonly install?: {
+    readonly source: PackageSource;
+    readonly launch: Launch;
+    readonly env?: Readonly<Record<string, string>>;
+  };
+  /** The run holding the machine lock, if any: its worker may run from an installed copy. */
+  readonly runLock?: { readonly runId: string | undefined };
 }
 
 export type Mode = "setup" | "update" | "remove";
@@ -134,7 +145,7 @@ function shown(ctx: PlanContext, text: string): string {
   return redact(text, { homeDir: ctx.paths.home });
 }
 
-function installing(ctx: PlanContext): { source: PackageSource; launch: Launch } {
+function installing(ctx: PlanContext): NonNullable<PlanContext["install"]> {
   if (ctx.install === undefined) throw new Error("setup and update need a package to install");
   return ctx.install;
 }
@@ -269,8 +280,8 @@ async function planFileHost(
   };
 
   if (mode !== "remove") {
-    const { source, launch } = installing(ctx);
-    const desired = desiredEntry(host, launch);
+    const { source, launch, env } = installing(ctx);
+    const desired = desiredEntry(host, launch, env);
     /** Records, then writes, `next`, backing the file up first when setup never wrote it. */
     const write =
       (next: string, edit: SpanEdit | null, parentCreated: boolean) =>
@@ -481,6 +492,10 @@ async function planClaudeCode(
     "--scope",
     "user",
     SERVER_NAME,
+    ...Object.entries((entry.env ?? {}) as Record<string, string>).flatMap(([name, value]) => [
+      "-e",
+      `${name}=${value}`,
+    ]),
     "--",
     String(entry.command),
     ...(entry.args as string[]),
@@ -489,17 +504,17 @@ async function planClaudeCode(
   const line = (args: readonly string[]) => `${claude} ${args.join(" ")}`;
   const run = (args: readonly string[]) =>
     ctx.run(claude, args, { cwd: ctx.paths.home, env: ctx.env, timeoutMs: 60_000 });
-  const why = (result: { code: number; stderr: string; stdout: string }) => {
+  const why = (result: CommandResult) => {
     const text = (result.stderr || result.stdout).trim().split("\n").at(-1) ?? "";
-    return `exited ${result.code}${text === "" ? "" : `: ${text}`}`;
+    return `${howItEnded(result)}${text === "" ? "" : `: ${text}`}`;
   };
   const unchangedSincePlan = async () => {
     if (!isDeepStrictEqual(await claudeEntry(file, label), current)) throw changed(label);
   };
 
   if (mode !== "remove") {
-    const { source, launch } = installing(ctx);
-    const desired = desiredEntry(host, launch);
+    const { source, launch, env } = installing(ctx);
+    const desired = desiredEntry(host, launch, env);
     const add = addArgs(desired);
     /**
      * Records, then runs `claude mcp add` (after `remove` for a re-pin). When the add fails or
@@ -581,6 +596,16 @@ async function planClaudeCode(
             ? "has this ufo server already, not added by UFO; uninstall leaves it"
             : `up to date (${PACKAGE_NAME}@${source.version})`,
       });
+      if (owned !== undefined) {
+        // As for the file hosts: the entry there is confirmed, at this version.
+        plan.bookkeeping.push(async (target) => {
+          target.hosts[host] = {
+            path: file,
+            version: source.version,
+            entry: current as Record<string, unknown>,
+          };
+        });
+      }
     } else if (ownsEntry(owned, current)) {
       plan.steps.push({
         view: {
@@ -681,7 +706,11 @@ async function planSkills(
         if (owned !== undefined) {
           // The files on disk are this version's: that is what UFO owns now.
           plan.bookkeeping.push(async (target) => {
-            target.skills[dir] = { files: hashes, hosts: withHosts(target) };
+            target.skills[dir] = {
+              files: hashes,
+              hosts: withHosts(target),
+              version: source.version,
+            };
           });
         }
         continue;
@@ -711,10 +740,11 @@ async function planSkills(
             files: prior?.files ?? hashes,
             pending: hashes,
             hosts: withHosts(target),
+            version: prior?.version ?? source.version,
           };
           await save(target);
           await installSkill(dir, files, replace);
-          target.skills[dir] = { files: hashes, hosts: withHosts(target) };
+          target.skills[dir] = { files: hashes, hosts: withHosts(target), version: source.version };
         },
       });
       continue;
@@ -769,6 +799,7 @@ async function planPackage(
     plan.unchanged.push({ ...where, reason: `${PACKAGE_NAME}@${source.version} is installed` });
     return;
   }
+  if (installed !== undefined) refuseWhileRunning(ctx, prefix);
   if (ctx.npm === undefined) {
     throw new SetupError("install_failed", "npm is not on PATH (outside the project)");
   }
@@ -797,6 +828,16 @@ async function planPackage(
   });
 }
 
+/** Refuses (`run_in_progress`) to replace or remove `prefix` while a run holds the machine lock. */
+function refuseWhileRunning(ctx: PlanContext, prefix: string): void {
+  if (ctx.runLock === undefined) return;
+  const run = ctx.runLock.runId === undefined ? "a UFO run" : `UFO run ${ctx.runLock.runId}`;
+  throw new SetupError(
+    "run_in_progress",
+    `${run} holds the machine lock, and its worker may be running from ${tilde(prefix, ctx.paths.home)}; finish or cancel the run first (ufo status, ufo cancel), then run this again`,
+  );
+}
+
 /** Uninstall: remove each installed copy no host left set up still starts. */
 function planPackageRemoval(
   ctx: PlanContext,
@@ -823,6 +864,7 @@ function planPackageRemoval(
       plan.unchanged.push({ ...where, reason: `kept for ${hostNames(users)}` });
       continue;
     }
+    refuseWhileRunning(ctx, prefixFor(ctx.store.pkgRoot, version));
     plan.steps.push({
       view: { ...where, action: "remove", detail: `remove ${PACKAGE_NAME}@${version}` },
       apply: async (target) => {

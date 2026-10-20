@@ -86,6 +86,17 @@ export function readMachineLock(options: LockOptions): Promise<MachineLock | und
   return readLock(machineLockPath(options.home));
 }
 
+/**
+ * Whether a run holds the machine lock now, by the same test `acquireMachineLock` uses (a lock
+ * whose run ended or is gone is stale, not held), with the holder when the lock names one.
+ */
+export async function heldMachineLock(
+  options: LockOptions,
+): Promise<{ readonly holder: MachineLock | undefined } | undefined> {
+  const state = await inspect(options.home, machineLockPath(options.home));
+  return state.kind === "held" ? { holder: state.holder } : undefined;
+}
+
 async function createExclusive(file: string, text: string): Promise<boolean> {
   let handle: Awaited<ReturnType<typeof openNoFollow>>;
   try {
