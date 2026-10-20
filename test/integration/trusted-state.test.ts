@@ -142,6 +142,11 @@ describe("trusted run state", { timeout: TIMEOUT_MS }, () => {
       expect(listed.runs.at(-1)).toMatchObject({ runId: first.runId, workTree: toy.repo });
       expect(listed.runs.every((run) => run.workTree === toy.repo)).toBe(true);
       expect(listed.current).toBeUndefined();
+      // Code review F5: named, it is listed too, with where to act on it, and nothing fails.
+      const named = await status(there, scoped);
+      expect(named.runs).toEqual(listed.runs);
+      expect(named.current).toBeUndefined();
+      expect(named.note).toBe(elsewhere);
       expect(await refusal(startRun(there))).toMatchObject({
         code: "run_in_progress",
         message: `run ${first.runId} of this repository, started in the work tree at ${toy.repo}, is still running; finish it, or stop it with \`ufo cancel --run ${first.runId}\` there`,

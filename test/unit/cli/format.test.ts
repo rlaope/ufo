@@ -52,6 +52,13 @@ describe("formatStatus", () => {
       "run-1  running  2026-10-20T00:00:00.000Z",
       "run-2  running  2026-10-20T00:01:00.000Z  (work tree /repo-linked)",
     ]);
+    // Code review F5: named, the run has no view here; the note says where it has one.
+    const note = "run run-2 was started in the work tree at /repo-linked; act on it from there";
+    expect(formatStatus({ repoRoot: "/repo", runs, note }).split("\n").slice(-3)).toEqual([
+      "",
+      note,
+      "",
+    ]);
   });
 });
 

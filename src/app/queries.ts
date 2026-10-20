@@ -279,6 +279,8 @@ export interface StatusView {
   /** The run holding the machine lock; `thisRepository` tells whether it is one of these runs. */
   lock?: { runId: string; thisRepository: boolean } | undefined;
   current?: RunView | undefined;
+  /** Why the named run has no `current`: another work tree started it (code review F5). */
+  note?: string | undefined;
 }
 
 /**
@@ -312,8 +314,12 @@ export async function status(
   const lock = await readMachineLock({ home });
   // A run that never finished starting has no view; it is still listed in `runs`.
   const shown = options.runId ?? latest;
+  // A run another work tree started is listed, and only that work tree shows it.
+  const elsewhere = runs.find((run) => run.runId === shown)?.workTree;
   const shownStarted =
-    shown !== undefined && (await readRun(runDirFor(home, repo.repoId, shown))).started;
+    shown !== undefined &&
+    elsewhere === undefined &&
+    (await readRun(runDirFor(home, repo.repoId, shown))).started;
   const current = shownStarted ? await getRun(context, { runId: shown }) : undefined;
   return toJson({
     ...redactView({
@@ -323,6 +329,10 @@ export async function status(
         lock === undefined
           ? undefined
           : { runId: lock.runId, thisRepository: lock.repoId === repo.repoId },
+      note:
+        elsewhere === undefined
+          ? undefined
+          : `run ${shown} was started in the work tree at ${elsewhere}; act on it from there`,
     }),
     // Redacted by getRun, except its arm paths.
     current,

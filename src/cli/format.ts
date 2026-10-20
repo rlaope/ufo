@@ -97,6 +97,7 @@ export function formatStatus(result: StatusView): string {
     );
   }
   if (result.current !== undefined) lines.push("", ...formatView(result.current));
+  if (result.note !== undefined) lines.push("", result.note);
   return `${lines.join("\n")}\n`;
 }
 

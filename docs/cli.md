@@ -17,7 +17,7 @@ ufo <command> [options]
 | `approve` | Shows everything `ufo.yaml` lets UFO run and records your approval. Needs an interactive terminal. |
 | `measure` | Measures the current `HEAD`: the oracle snapshot, 5 samples, and the noise floor. Leaves no branch or arm behind. |
 | `run` | Starts a run, applies each enabled recipe card once with its default parameters, then runs the final check and prints the report. |
-| `status` | Lists the repository's runs (those another linked worktree started marked with its path) and the machine lock, and shows this work tree's latest run (or `--run <id>`). Commands without `--run` act on this work tree's latest run. |
+| `status` | Lists the repository's runs (those another linked worktree started marked with its path) and the machine lock, and shows this work tree's latest run (or `--run <id>`; a run another work tree started is not shown, and a note names that work tree). Commands without `--run` act on this work tree's latest run. |
 | `resume` | Resumes an interrupted run (for example, after the worker was killed). |
 | `cancel` | Cancels a run. Its completed observations stay in the ledger. |
 | `report` | Prints a finished run's report, or what is known so far for an unfinished run. With `--json`, `result.finished` is `true` for the report and `false` for the run's view. |
