@@ -33,8 +33,8 @@ export interface ActiveRun {
 
 /**
  * Refuses a run that never finished starting, which has no app state yet: `run_starting` while
- * its start is still in progress, `run_not_active` once it ended or its start was cut short (a
- * cancel ends that one).
+ * its start is still in progress, `run_in_progress` when its start was cut short (it still holds
+ * the machine lock until a cancel ends it), and `run_not_active` once it ended.
  */
 export async function refuseUnstarted(runId: string, run: RunRecord): Promise<void> {
   if (run.started) return;
@@ -46,7 +46,7 @@ export async function refuseUnstarted(runId: string, run: RunRecord): Promise<vo
   }
   if (await abandonedStart(run)) {
     throw new AppError(
-      "run_not_active",
+      "run_in_progress",
       `run ${runId} did not finish starting; cancel it to end it`,
     );
   }

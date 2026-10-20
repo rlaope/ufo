@@ -174,8 +174,8 @@ describe("a start cut short", { timeout: TIMEOUT_MS }, () => {
     const view = await status(toy.context);
     expect(view.runs.map((r) => r.runId)).toContain(left.runId);
     await expect(getRun(toy.context, { runId: left.runId })).rejects.toMatchObject({
-      code: "run_not_active",
-      message: expect.stringContaining("did not finish starting"),
+      code: "run_in_progress",
+      message: expect.stringContaining("did not finish starting; cancel it to end it"),
     });
 
     const run = await startRun(toy.context);
@@ -209,8 +209,9 @@ describe("a start cut short", { timeout: TIMEOUT_MS }, () => {
     expect((await readRun(left.runDir)).status).toBe("failed");
   });
 
-  // M2 A3, A9: a start in progress is `run_starting` (try again shortly), never advice to cancel
-  // or resume it.
+  // M2 A3, A9: a start in progress is `run_starting` (try again shortly) for calls on it, never
+  // advice to cancel or resume it. Another start is `run_in_progress` (code review, step A, #2):
+  // trying again once this one started would be refused all the same.
   it("is left alone while its starter still runs", async () => {
     const startTime = await readProcessStartTime(process.pid);
     expect(startTime).toBeDefined();
@@ -220,7 +221,7 @@ describe("a start cut short", { timeout: TIMEOUT_MS }, () => {
     await expect(getRun(toy.context, { runId: left.runId })).rejects.toMatchObject(starting);
     await expect(finishRun(toy.context, { runId: left.runId })).rejects.toMatchObject(starting);
     await expect(startRun(toy.context)).rejects.toMatchObject({
-      code: "run_starting",
+      code: "run_in_progress",
       message: `run ${left.runId} of this repository is still starting`,
     });
     // Clean up as the starter would have on failure.

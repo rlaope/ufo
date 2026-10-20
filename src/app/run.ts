@@ -99,10 +99,10 @@ function killOptions(context: AppContext): { exec?: NonNullable<AppContext["exec
 }
 
 /**
- * A new run never silently replaces one: a `running` run of this repository refuses the start.
- * A start still in progress is `run_starting`; a run with or without a live worker, and a start
- * cut short that the cleanup could not end, are `run_in_progress`, saying how to end them. The
- * cleanup's warnings go with the refusal.
+ * A new run never silently replaces one: a `running` run of this repository refuses the start
+ * with `run_in_progress`, saying how to end it: a start still in progress (it becomes a running
+ * run, so trying again later is refused as well), a start cut short that the cleanup could not
+ * end, and a run with or without a live worker. The cleanup's warnings go with the refusal.
  */
 async function refuseActiveRuns(
   home: string,
@@ -115,7 +115,7 @@ async function refuseActiveRuns(
     const cleanup = warnings.length > 0 ? ` (${warnings.join("; ")})` : "";
     if (!run.started && !(await abandonedStart(run))) {
       throw new AppError(
-        "run_starting",
+        "run_in_progress",
         `run ${id} of this repository is still starting${cleanup}`,
       );
     }

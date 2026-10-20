@@ -80,16 +80,17 @@ describe("a run that takes no work right now", () => {
     });
   });
 
-  it("is run_starting while its start runs, and run_not_active once that ended or was cut short", async () => {
+  it("is run_starting while its start runs, run_in_progress once cut short, run_not_active once ended", async () => {
     // Started by this process, which is still alive.
     const { run } = await createRunState(home, { runId: "run-1", repoId: "repo" });
     await expect(refuseUnstarted("run-1", run)).rejects.toMatchObject({
       code: "run_starting",
       message: "run run-1 is still starting",
     });
+    // Code review (step A) #4: cut short, it still holds the machine lock until cancelled.
     const { starter: _starter, ...cutShort } = run;
     await expect(refuseUnstarted("run-1", cutShort)).rejects.toMatchObject({
-      code: "run_not_active",
+      code: "run_in_progress",
       message: "run run-1 did not finish starting; cancel it to end it",
     });
     await expect(refuseUnstarted("run-1", { ...run, status: "failed" })).rejects.toMatchObject({

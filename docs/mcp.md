@@ -84,10 +84,10 @@ message does not.
 | Code | What the agent does |
 |---|---|
 | `busy` (retryable) | Another call held the run for 20 s. Call again in a few seconds. |
-| `run_starting` (retryable) | The run, or another run of the repository, is still starting. Call again shortly. |
+| `run_starting` (retryable) | The run is still starting. Call again shortly. |
 | `run_finishing` | The finish is queued. Poll its job, then read `get_run`. |
 | `run_not_active` | The run has ended, never finished starting, or only measures. Start a new run. |
-| `run_in_progress` | Another run is active. Finish or cancel it first; the message names it. |
+| `run_in_progress` | Another run is active: running, still starting, or a start cut short. Finish or cancel it first; the message names it and how. |
 | `worker_not_running` | The run's worker stopped. Call `resume_run`, then poll again. |
 | `policy:unapproved_config`, `policy:config_changed` | Ask the user to run `ufo approve` in a terminal. |
 | `policy:budget_exceeded` | Ask the user to run `ufo extend-budget` in a terminal, or finish the run. |
