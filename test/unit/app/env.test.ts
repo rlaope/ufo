@@ -94,16 +94,20 @@ describe("processPath", () => {
 });
 
 describe("trustProcessPath", () => {
-  it("drops the working tree around the working directory before git finds it", async () => {
+  // Security N3: every working tree around it, not only the one git finds first.
+  it("drops the working trees around the working directory before git finds them", async () => {
     const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), "ufo-path-")));
     try {
-      // A working tree as git would find it from its subdirectory; no git runs to find it.
+      // Working trees as git would find them from a subdirectory, a submodule inside a
+      // superproject; no git runs to find them.
       mkdirSync(path.join(root, "project", ".git"), { recursive: true });
-      mkdirSync(path.join(root, "project", "sub"), { recursive: true });
+      mkdirSync(path.join(root, "project", "module", ".git"), { recursive: true });
+      mkdirSync(path.join(root, "project", "module", "sub"), { recursive: true });
       const env: NodeJS.ProcessEnv = {
         UFO_HOME: path.join(root, "ufo-home"),
         PATH: [
           path.join(root, "project", "tools"),
+          path.join(root, "project", "module", "tools"),
           path.join(root, "parent", "node_modules", ".bin"),
           path.join(root, "ufo-home", "bin"),
           "relative/bin",
@@ -111,7 +115,10 @@ describe("trustProcessPath", () => {
           "/usr/bin",
         ].join(path.delimiter),
       };
-      const repo = await trustProcessPath({ cwd: path.join(root, "project", "sub"), env });
+      const repo = await trustProcessPath({
+        cwd: path.join(root, "project", "module", "sub"),
+        env,
+      });
       expect(repo).toBeUndefined();
       expect(env.PATH).toBe("/usr/bin");
     } finally {

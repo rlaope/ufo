@@ -85,13 +85,17 @@ export async function resolveRepo(cwd: string): Promise<Repo> {
   };
 }
 
-/** The nearest directory at or above `dir` with a `.git` entry: its working tree, as git finds it. */
-async function nearestWorkTree(dir: string): Promise<string | undefined> {
+/**
+ * Every directory at or above `dir` with a `.git` entry: the working trees around it, the one git
+ * finds first and those that enclose it (a submodule's superproject).
+ */
+async function enclosingWorkTrees(dir: string): Promise<string[]> {
+  const trees: string[] = [];
   for (let current = path.resolve(dir); ; current = path.dirname(current)) {
     if ((await lstat(path.join(current, ".git")).catch(() => undefined)) !== undefined) {
-      return current;
+      trees.push(current);
     }
-    if (path.dirname(current) === current) return undefined;
+    if (path.dirname(current) === current) return trees;
   }
 }
 
@@ -99,8 +103,8 @@ async function nearestWorkTree(dir: string): Promise<string | undefined> {
  * Filters this process's own `PATH` before UFO runs git, ps, or docker (security H1, N4): no
  * empty or relative entry, none with a `node_modules` segment, and none inside the working
  * directory, `repoDir`, UFO's home, or the repository there with its git directories. Before git
- * finds that repository, the working tree around each directory is found by its `.git` entry,
- * so the repository's own `git` never runs. Returns the repository, or `undefined` when there is
+ * finds that repository, every working tree around each directory is found by its `.git` entry,
+ * so no repository's own `git` runs. Returns the repository, or `undefined` when there is
  * none (an error when `requireRepo`).
  */
 export async function trustProcessPath(options: {
@@ -113,11 +117,11 @@ export async function trustProcessPath(options: {
   const env = options.env ?? process.env;
   const dirs = [options.cwd, ...(options.repoDir === undefined ? [] : [options.repoDir])];
   const reals = await Promise.all(dirs.map((dir) => realpath(dir).catch(() => dir)));
-  const trees = await Promise.all([...dirs, ...reals].map(nearestWorkTree));
+  const trees = await Promise.all([...dirs, ...reals].map(enclosingWorkTrees));
   const untrusted = [
     ...dirs,
     ...reals,
-    ...trees.filter((tree) => tree !== undefined),
+    ...trees.flat(),
     path.resolve(options.home ?? ufoHome(env)),
   ];
   env.PATH = processPath(env.PATH ?? "", untrusted);
