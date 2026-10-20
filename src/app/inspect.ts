@@ -195,8 +195,11 @@ async function onPath(program: string, searchPath: string): Promise<string | und
 export interface ProgramCheck {
   program: string;
   found: boolean;
-  /** `path`: on the PATH commands get; `repository`: a path inside the repository; `shell`. */
-  where?: "path" | "repository" | "shell" | undefined;
+  /**
+   * `path`: on the PATH commands get; `repository`: a path inside the repository;
+   * `outside_repository`: a relative path that leaves it, never looked up; `shell`.
+   */
+  where?: "path" | "repository" | "outside_repository" | "shell" | undefined;
   path?: string | undefined;
   hint?: string | undefined;
   /** The approved commands that start it (`ufo approve` names them the same way). */
@@ -220,12 +223,23 @@ async function checkProgram(
   searchPath: string,
 ): Promise<Omit<ProgramCheck, "usedBy">> {
   if (SHELL_WORDS.has(program)) return { program, found: true, where: "shell" };
+  if (path.isAbsolute(program)) return { program, found: await executable(program), where: "path" };
   if (program.includes("/")) {
-    const file = path.isAbsolute(program) ? program : path.join(repo.root, program);
-    const found = path.isAbsolute(program)
-      ? await executable(file)
-      : (await lstat(file).catch(() => undefined)) !== undefined;
-    return { program, found, where: path.isAbsolute(program) ? "path" : "repository" };
+    const file = path.resolve(repo.root, program);
+    // Not looked up: nothing outside the repository says what a command run in its arm finds.
+    if (file !== repo.root && !file.startsWith(`${repo.root}${path.sep}`)) {
+      return {
+        program,
+        found: false,
+        where: "outside_repository",
+        hint: "this path leaves the repository; a command runs in UFO's clone of it, so name a program on PATH or a file inside the repository",
+      };
+    }
+    return {
+      program,
+      found: (await lstat(file).catch(() => undefined)) !== undefined,
+      where: "repository",
+    };
   }
   const found = await onPath(program, searchPath);
   if (found !== undefined) return { program, found: true, where: "path", path: found };

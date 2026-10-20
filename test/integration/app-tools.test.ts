@@ -110,6 +110,21 @@ describe("checking capabilities", { timeout: TIMEOUT_MS }, () => {
       expect(report.programs[0]?.usedBy).toEqual(["workload setup"]);
       expect(existsSync(path.join(other.repo, "ran-by-ufo"))).toBe(false);
 
+      // Security N4: a relative path that leaves the repository is not looked up, even when a
+      // file is there.
+      const escaping = makeToy({ config: lightWorkload("../escape/tool --version") });
+      try {
+        mkdirSync(path.join(escaping.root, "escape"));
+        writeFileSync(path.join(escaping.root, "escape", "tool"), "#!/bin/sh\n");
+        expect((await checkCapabilities(escaping.context)).programs[0]).toMatchObject({
+          program: "../escape/tool",
+          found: false,
+          where: "outside_repository",
+        });
+      } finally {
+        await escaping.cleanup();
+      }
+
       const missing = makeToy({ config: lightWorkload("no-such-program-ufo --version") });
       try {
         expect((await checkCapabilities(missing.context)).programs[0]).toEqual({
