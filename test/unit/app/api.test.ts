@@ -11,6 +11,11 @@ import * as api from "../../../src/app/api.js";
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const API = "src/app/api.ts";
 const ADAPTERS = ["src/cli", "src/mcp"];
+/**
+ * What an adapter may import besides api.ts and its own directory. `ufo setup`, `uninstall`, and
+ * `update` write host config files and run no app workflow; the MCP server never calls them.
+ */
+const ALSO_ALLOWED: Readonly<Record<string, readonly string[]>> = { "src/cli": ["src/setup/"] };
 
 function sourcesUnder(dir: string): string[] {
   if (!existsSync(path.join(ROOT, dir))) return [];
@@ -47,7 +52,10 @@ describe("the adapter module", () => {
         // Bare specifiers are Node built-ins and packages.
         for (const specifier of specifiers(file).filter((s) => s.startsWith("."))) {
           const to = target(file, specifier);
-          if (to !== API && !to.startsWith(`${adapter}/`)) outside.push(`${file} -> ${specifier}`);
+          const allowed = [`${adapter}/`, ...(ALSO_ALLOWED[adapter] ?? [])];
+          if (to !== API && !allowed.some((dir) => to.startsWith(dir))) {
+            outside.push(`${file} -> ${specifier}`);
+          }
         }
       }
     }
