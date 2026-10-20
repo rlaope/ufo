@@ -23,6 +23,9 @@ ufo <command> [options]
 | `report` | Prints a finished run's report, or what is known so far for an unfinished run. With `--json`, `result.finished` is `true` for the report and `false` for the run's view. |
 | `extend-budget` | Raises a run's technique cap or wall-clock budget. Needs an interactive terminal. |
 | `mcp` | Serves UFO's tools to an agent over MCP on stdin and stdout until stdin closes, bound to one repository ([mcp.md](mcp.md)). Your agent's host starts it; `ufo setup` writes its entry. |
+| `setup` | Registers UFO's MCP server and installs the `ufo-optimize` skill in Claude Code, Codex, and Cursor. Shows each change as a diff and asks first. See [Setup, uninstall, and update](#setup-uninstall-and-update). |
+| `uninstall` | Removes exactly what `setup` added. |
+| `update` | Re-pins what `setup` added to the installed version of UFO. |
 | `worker` | Internal: `ufo worker --run-dir <absolute path>` is the detached worker UFO launches itself. It accepts only a run directory under its own `$UFO_HOME/private/runs/` whose `run.json` names that run (`unsafe_state` otherwise). |
 
 ### Options
@@ -36,12 +39,14 @@ ufo <command> [options]
 | `--minutes <n>` | `extend-budget` | Minutes to add to the wall-clock budget. Default: 0. |
 | `--host <host>` | `mcp` | Required: `claude-code`, `codex`, or `cursor`. It decides the repository the server binds to and is recorded as the run's host agent. |
 | `--repo <path>` | `mcp` | The repository, an absolute path; required for `cursor`. Default: `$CLAUDE_PROJECT_DIR` (for `claude-code`), else the working directory. A relative path or a placeholder the host left unsubstituted is a usage error (exit 2). |
+| `--host <name>` | `setup`, `uninstall`, `update` | Only this host: `claude-code`, `codex`, or `cursor`. Repeatable. Default: for `setup`, every host found; otherwise every host setup configured. |
+| `--yes` | `setup`, `uninstall`, `update` | Applies the changes shown without asking. |
 | `--json` | every command | Prints one JSON object on stdout instead of text. |
 | `-h`, `--help` | every command | Prints the usage and exits 0. |
 | `-v`, `--version` | alone | Prints the package version and exits 0. |
 
-Unknown commands, unknown flags, and positional arguments are usage errors (exit 2). There is no
-`--yes`: nothing skips the approval prompt.
+Unknown commands, unknown flags, and positional arguments are usage errors (exit 2). `approve` and
+`extend-budget` have no `--yes`: nothing skips their prompt.
 
 ### `--json`
 
@@ -478,6 +483,131 @@ arm since the last job is not measured.
   requeued by the resume, and runs on the new worker. `ufo measure` closes its run instead and
   reports `measurement_failed` (exit 1): run it again.
 
+## Setup, uninstall, and update
+
+`npx ufo-agents setup` registers UFO's MCP server and installs the `ufo-optimize` skill in each
+coding agent it finds. `ufo uninstall` removes exactly what setup added, and `ufo update` re-pins
+it to the installed version.
+
+```
+ufo setup     [--host <name>]... [--yes] [--json]
+ufo uninstall [--host <name>]... [--yes] [--json]
+ufo update    [--host <name>]... [--yes] [--json]
+```
+
+| Host (`--host`) | Found when | MCP server | Skill |
+|---|---|---|---|
+| Claude Code (`claude-code`) | `claude --version` succeeds | `claude mcp add --scope user ufo -- npx -y ufo-agents@<version> mcp`, through Claude Code's own CLI. Setup reads `~/.claude.json` but never writes it. | `~/.claude/skills/ufo-optimize/` |
+| Codex (`codex`) | `codex` on `PATH`, the CLI inside `/Applications/ChatGPT.app`, or `~/.codex` | The `[mcp_servers.ufo]` table in `~/.codex/config.toml` | `~/.agents/skills/ufo-optimize/` |
+| Cursor (`cursor`) | `agent` or `cursor-agent` on `PATH`, `/Applications/Cursor.app`, or `~/.cursor` | The `ufo` member of `mcpServers` in `~/.cursor/mcp.json` | `~/.agents/skills/ufo-optimize/`, shared with Codex |
+
+`CLAUDE_CONFIG_DIR` and `CODEX_HOME` move Claude Code's and Codex's files, as they do for the
+hosts. The entry pins the version of UFO that ran setup, never `@latest`:
+
+```toml
+[mcp_servers.ufo]
+command = "npx"
+args = ["-y", "ufo-agents@<version>", "mcp"]
+startup_timeout_sec = 60
+```
+
+```json
+"ufo": {
+  "type": "stdio",
+  "command": "npx",
+  "args": ["-y", "ufo-agents@<version>", "mcp", "--repo", "${workspaceFolder}"]
+}
+```
+
+Codex waits 10 seconds for a server to start by default; 60 leaves room for the first `npx`
+download. Cursor passes the open workspace as `--repo`. Claude Code sets `CLAUDE_PROJECT_DIR`, and
+Codex starts the server in its own working directory. Restart each host, or reconnect with `/mcp`,
+after setup, update, or uninstall. Cursor also reads `~/.claude/skills`, so with Claude Code set up
+too it may list the skill twice. Setup stores no credentials.
+
+### What setup does
+
+1. Detects the hosts. `--host` limits it to the hosts named; a named host that is not installed
+   is refused (`host_not_found`).
+2. Works out every change and prints it: the command it runs for Claude Code, a unified diff for
+   each config file, and the skill directories. When nothing would change it says so and exits 0,
+   so a second `ufo setup` leaves every file as it was.
+3. Asks `Apply these changes? Type "yes":` on the terminal (`/dev/tty`). Anything else writes
+   nothing (`approval_declined`). `--yes` applies without asking, so setup can run unattended:
+   it only adds UFO's own server, pinned to the version that runs, and cannot approve a
+   `ufo.yaml` or widen an opt-in. Without `--yes` and without a terminal it refuses
+   (`no_terminal`).
+4. Before its first write to a Codex or Cursor config, copies the file to
+   `$UFO_HOME/private/setup/backups/<host>-<file name>` (mode 0600).
+5. Writes. The TOML and JSON files are edited at the span of the `ufo` entry only: the
+   `[mcp_servers.ufo]` table goes at the end of the file after one blank line, and the `ufo` member
+   after the last server in `mcpServers` (the file or `mcpServers` is created when missing), in the
+   file's own indentation and line endings. Nothing else is re-serialized, so comments, order, and
+   formatting stay. The file is replaced atomically and keeps its mode (a new file gets 0600); a
+   symbolic link to it stays a link.
+6. Records what it wrote in `$UFO_HOME/private/setup/setup.json`: each host's entry, the hashes of
+   the config file before and after, the text it inserted, and the hash of each skill file.
+
+Each step re-reads its file first. If the file changed after the plan was shown, setup stops
+(`changed_during_setup`) and writes nothing more; run it again.
+
+Before writing anything, setup refuses:
+
+- a config file it cannot edit safely (`host_config_invalid`): invalid TOML or JSON (JSON with
+  comments included), text that is not UTF-8, a repeated `ufo` or `mcpServers` key, or
+  `mcp_servers` written as an inline table or array of tables;
+- a `ufo` server, or a `ufo-optimize` skill directory, that differs from what UFO would write and
+  that UFO did not write (`entry_conflict`). Setup never overwrites a server or skill of yours.
+  Remove or rename it, or leave that host out with `--host`. An entry identical to UFO's that UFO
+  did not write is left alone, by setup and by uninstall.
+
+### Uninstall
+
+`ufo uninstall` acts only on what `setup.json` records, for every host or the `--host` ones:
+
+- A config file still byte-identical to what setup last wrote, with no other writer in between, is
+  restored from its backup. A file setup created is deleted.
+- A file changed since (hosts rewrite their configs) keeps every other byte and loses only the
+  `ufo` entry. Setup's own insertion is taken out exactly when the host left those bytes alone;
+  otherwise the entry goes with its separating comma (JSON) or the blank line before it (TOML).
+  Either way, the result must parse and hold no `ufo` entry.
+- Claude Code's server is removed with `claude mcp remove ufo --scope user`.
+- A skill directory is removed when its files are exactly what setup installed. The directory
+  Codex and Cursor share stays until both are uninstalled.
+- A `ufo` entry or skill directory changed since setup wrote it is refused (`entry_conflict`);
+  remove it by hand. One that is already gone is forgotten.
+
+With nothing recorded, uninstall says so and exits 0.
+
+### Update
+
+`ufo update` does what setup does, for the hosts setup configured: it re-pins each `ufo` entry to
+the installed version (Claude Code: `claude mcp remove`, then `claude mcp add`) and refreshes the
+skill directories. It refuses with `not_set_up` when setup configured none of them.
+
+### Setup exit codes
+
+The three commands use the exit codes above, with these `error.code` values:
+
+| Code | Exit | When |
+|---|---|---|
+| `usage` | 2 | An unknown `--host` name. |
+| `host_not_found` | 2 | No host found, or a `--host` that is not installed. |
+| `not_set_up` | 2 | `ufo update` with nothing set up. |
+| `host_config_invalid` | 2 | A host config setup cannot edit safely (see above). |
+| `no_terminal` | 2 | No terminal to ask on, and no `--yes`. |
+| `entry_conflict` | 1 | A `ufo` server or skill that UFO did not write, or changed since it did; or a record naming another config file (`HOME` or the host's config directory moved). |
+| `changed_during_setup` | 1 | A file changed between the plan and the write. |
+| `approval_declined` | 1 | The answer was not `yes`; nothing was written. |
+| `unsafe_state` | 1 | `setup.json` or a backup is not what setup wrote. |
+| `host_cli_failed` | 3 | `claude mcp add` or `remove` failed, or did not change the config as expected. |
+
+With `--json`, `result` holds `command`, `version`, `hosts` (the hosts acted on), `detected` (setup
+only: every host, `found`, and the evidence), `changes` (each with `hosts`, `kind` of `mcp_server`
+or `skill`, `target`, `action` of `add`, `repin`, `remove`, `restore`, `install`, or `replace`,
+`detail`, and `diff` for a config file), `unchanged` (each with its `reason`), `changed`,
+`backups`, and `notes`.
+
 ## Where UFO keeps state
 
 `$UFO_HOME` defaults to `~/.ufo`. UFO creates it with mode 0700 and refuses (`unsafe_home`) one
@@ -492,6 +622,7 @@ or its `.git`, except the `ufo/run-<run-id>` branch and its objects.
 | `$UFO_HOME/private/runs/<repo-id>/<run-id>/` | The run state. |
 | `$UFO_HOME/private/lock` | The machine lock: one run at a time per machine, held by a run (run id and repository id) for its whole life. |
 | `$UFO_HOME/arms/<repo-id>/<run-id>/{a,b}` | The two arms (local clones) of a run, where the agent reads code and workloads run. Removed when the run finishes or is cancelled. |
+| `$UFO_HOME/private/setup/` | What `ufo setup` wrote: `setup.json`, and `backups/` with each edited host config as it was before setup's first write (see [Setup, uninstall, and update](#setup-uninstall-and-update)). |
 
 UFO opens run state files without following symbolic links and checks every directory on the way
 with `lstat`; a planted symlink is refused (`unsafe_state`). The run directory, its repository id,
