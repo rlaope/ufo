@@ -128,6 +128,7 @@ describe("the adapter modules", () => {
       "finishRun",
       "getJob",
       "getRun",
+      "getTechnique",
       "hintFor",
       "inspectTarget",
       "isDraftConfig",

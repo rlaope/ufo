@@ -30,7 +30,7 @@ export {
   hintFor,
 } from "./errors.js";
 export type { CapabilityReport, TargetInspection, TechniqueListing } from "./inspect.js";
-export { checkCapabilities, inspectTarget, listTechniques } from "./inspect.js";
+export { checkCapabilities, getTechnique, inspectTarget, listTechniques } from "./inspect.js";
 export type { BaselineResult, ProfileResult, RunReport } from "./jobs/index.js";
 export type {
   FinishedReport,

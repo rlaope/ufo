@@ -15,7 +15,7 @@ import { draftConfigFor, type LoadedConfig, loadConfig } from "./config.js";
 import { type AppContext, homeFor, type Repo, repoOf } from "./context.js";
 import { type DetectedStack, detectStacks } from "./detect.js";
 import { captureEnv } from "./env.js";
-import { describeFailure } from "./errors.js";
+import { AppError, describeFailure } from "./errors.js";
 import { type ApprovedCommand, approvedCommands } from "./review.js";
 
 const execFileAsync = promisify(execFile);
@@ -344,6 +344,7 @@ export async function checkCapabilities(context: AppContext): Promise<Capability
 }
 
 export interface TechniqueListing {
+  /** One compact entry per card; `getTechnique` opens the full card. */
   cards: {
     id: string;
     domain: string;
@@ -353,15 +354,7 @@ export interface TechniqueListing {
     /** Stacks the card applies to; empty means any. */
     stacks: StackId[];
     bottlenecks: Bottleneck[];
-    /** Profiler evidence that points at the card. */
-    signals: string[];
-    preconditions: string[];
-    /** The ordered how-to of a guided card. */
-    steps: string[];
-    verification: string[];
-    traps: string[];
     expectedEffect?: string | undefined;
-    sources: string[];
     /** ufo.yaml enables it; only enabled cards can be submitted. */
     enabled: boolean;
   }[];
@@ -376,7 +369,7 @@ function rank(card: TechniqueCard, wanted: ReadonlySet<StackId>): number {
 }
 
 /**
- * `list_techniques`: the cards UFO knows for this repository, optionally of one domain, one
+ * `list_techniques`: an index of the cards UFO knows for this repository, optionally of one domain, one
  * stack (cards for that stack and cards for any stack), or one bottleneck. Without a stack
  * filter the cards for the repository's detected stacks come first, then the stack-independent
  * ones.
@@ -419,6 +412,65 @@ export async function listTechniques(
       riskClass: card.riskClass,
       stacks: [...card.stacks],
       bottlenecks: [...card.bottlenecks],
+      expectedEffect: card.expectedEffect,
+      enabled: enabled.has(card.id),
+    }));
+  return redact({
+    cards: listed,
+    ...("error" in read ? { configError: read.error } : {}),
+  });
+}
+
+export interface TechniqueDetail {
+  card: {
+    id: string;
+    domain: string;
+    title: string;
+    kind: string;
+    riskClass: string;
+    stacks: StackId[];
+    bottlenecks: Bottleneck[];
+    signals: string[];
+    preconditions: string[];
+    steps: string[];
+    verification: string[];
+    traps: string[];
+    expectedEffect?: string | undefined;
+    sources: string[];
+    /** Ids of the card's command templates; the commands are shown at approval. */
+    commandTemplates: string[];
+    pinnedToolVersions: Record<string, string>;
+    verifiedIn: string | string[];
+  };
+  /** ufo.yaml enables it; only enabled cards can be submitted. */
+  enabled: boolean;
+}
+
+/** `get_technique`: one card in full. `usage` for an id no card has. */
+export async function getTechnique(
+  context: AppContext,
+  options: { readonly cardId: string },
+): Promise<TechniqueDetail> {
+  const repo = await repoOf(context);
+  const read = await readConfig(repo, context);
+  const cards = "error" in read ? await loadCards(repo.root, context) : read.cards;
+  const found = cards.get(options.cardId);
+  if (found === undefined) {
+    throw new AppError(
+      "usage",
+      `no technique card has id ${options.cardId}; list_techniques lists them`,
+    );
+  }
+  const { card } = found;
+  return redact({
+    card: {
+      id: card.id,
+      domain: card.domain,
+      title: card.title,
+      kind: card.kind,
+      riskClass: card.riskClass,
+      stacks: [...card.stacks],
+      bottlenecks: [...card.bottlenecks],
       signals: [...card.signals],
       preconditions: [...card.preconditions],
       steps: [...card.steps],
@@ -426,10 +478,10 @@ export async function listTechniques(
       traps: [...card.traps],
       expectedEffect: card.expectedEffect,
       sources: [...card.sources],
-      enabled: enabled.has(card.id),
-    }));
-  return redact({
-    cards: listed,
-    ...("error" in read ? { configError: read.error } : {}),
+      commandTemplates: card.commandTemplates.map((template) => template.id),
+      pinnedToolVersions: { ...card.pinnedToolVersions },
+      verifiedIn: Array.isArray(card.verifiedIn) ? [...card.verifiedIn] : card.verifiedIn,
+    },
+    enabled: !("error" in read) && read.loaded.config.cards.includes(card.id),
   });
 }

@@ -9,6 +9,7 @@ import {
   finishRun,
   getJob,
   getRun,
+  getTechnique,
   init,
   inspectTarget,
   JOB_KINDS,
@@ -22,6 +23,7 @@ import {
 } from "../../src/app/index.js";
 import { ensureWorker } from "../../src/app/launch.js";
 import { enqueueJob, readRun, updateRun } from "../../src/core/jobs/index.js";
+import { MAX_RESULT_BYTES, success } from "../../src/mcp/results.js";
 import {
   approveToy,
   git,
@@ -238,10 +240,39 @@ describe("listing techniques", { timeout: TIMEOUT_MS }, () => {
     for (const group of groups) expect(group).toEqual([...group].sort());
     const fastPath = cards.find((card) => card.id === "toy.fast-path");
     expect(fastPath).toMatchObject({ domain: "toy", enabled: true, kind: expect.any(String) });
-    expect(fastPath?.signals.length).toBeGreaterThan(0);
+    // The index holds none of the long fields; getTechnique opens the card.
+    expect(Object.keys(fastPath ?? {}).sort()).toEqual(
+      [
+        "bottlenecks",
+        "domain",
+        "enabled",
+        "expectedEffect",
+        "id",
+        "kind",
+        "riskClass",
+        "stacks",
+        "title",
+      ].sort(),
+    );
+    expect(
+      (await getTechnique(toy.context, { cardId: "toy.fast-path" })).card.signals.length,
+    ).toBeGreaterThan(0);
     const toyOnly = await listTechniques(toy.context, { domain: "toy" });
     expect(toyOnly.cards.length).toBeGreaterThan(0);
     expect(toyOnly.cards.every((card) => card.domain === "toy")).toBe(true);
+  });
+});
+
+describe("the technique index", { timeout: TIMEOUT_MS }, () => {
+  it("lists every built-in card within the result budget, unfiltered", async () => {
+    const listing = await listTechniques(toy.context);
+    expect(listing.cards.length).toBeGreaterThan(50);
+    const text = JSON.stringify(success(listing).structuredContent);
+    expect(Buffer.byteLength(text)).toBeLessThan(MAX_RESULT_BYTES);
+    expect(text).not.toContain("truncated");
+    for (const card of listing.cards) {
+      expect(Object.keys(card)).not.toContain("signals");
+    }
   });
 });
 
@@ -305,16 +336,42 @@ describe("filtering and ordering techniques by stack and bottleneck", {
         "startup",
       );
       const listed = cards.find((entry) => entry.id === "stk.c-node-cpu");
-      expect(listed).toMatchObject({
+      expect(listed).toEqual({
+        id: "stk.c-node-cpu",
+        domain: "stk",
+        title: "Card c-node-cpu",
+        kind: "guided",
+        riskClass: "lossless",
         stacks: ["node"],
         bottlenecks: ["cpu", "io"],
-        steps: ["first", "second"],
         expectedEffect: "faster when measured",
-        sources: ["https://example.com/ufo-test-fixture"],
-        preconditions: [],
-        verification: [],
-        traps: [],
         enabled: false,
+      });
+      expect(await getTechnique(other.context, { cardId: "stk.c-node-cpu" })).toEqual({
+        card: {
+          id: "stk.c-node-cpu",
+          domain: "stk",
+          title: "Card c-node-cpu",
+          kind: "guided",
+          riskClass: "lossless",
+          stacks: ["node"],
+          bottlenecks: ["cpu", "io"],
+          signals: ["evidence"],
+          preconditions: [],
+          steps: ["first", "second"],
+          verification: [],
+          traps: [],
+          expectedEffect: "faster when measured",
+          sources: ["https://example.com/ufo-test-fixture"],
+          commandTemplates: [],
+          pinnedToolVersions: {},
+          verifiedIn: "unverified",
+        },
+        enabled: false,
+      });
+      await expect(getTechnique(other.context, { cardId: "stk.nope" })).rejects.toMatchObject({
+        code: "usage",
+        message: expect.stringContaining("stk.nope"),
       });
     } finally {
       await other.cleanup();
@@ -377,10 +434,11 @@ describe("the views behind the read-only tools", { timeout: TIMEOUT_MS }, () => 
           path: "~/bin/mytool",
         });
         const listed = await listTechniques(context, { domain: "secret" });
-        expect(listed.cards[0]?.signals).toEqual([
+        const opened = await getTechnique(context, { cardId: "secret.leak" });
+        expect(opened.card.signals).toEqual([
           "the profile shows <redacted:api_key> in every request",
         ]);
-        for (const view of [inspected, capabilities, listed]) {
+        for (const view of [inspected, capabilities, listed, opened]) {
           expect(JSON.stringify(view)).not.toContain(FAKE_KEY);
           expect(JSON.stringify(view)).not.toContain(other.root);
         }

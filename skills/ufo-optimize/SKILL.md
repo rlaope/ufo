@@ -10,8 +10,8 @@ own copy of the repository (arm B), measures it against the current best (arm A)
 drop, or inconclusive. A kept change is committed to the run branch `ufo/run-<id>`; the user's own
 branch and working tree are never touched. The decision is UFO's, not yours.
 
-The tools are `inspect_target`, `check_capabilities`, `list_techniques`, `start_run`,
-`profile_target`, `submit_change`, `get_job`, `get_run`, `finish_run`, `resume_run`, and
+The tools are `inspect_target`, `check_capabilities`, `list_techniques`, `get_technique`,
+`start_run`, `profile_target`, `submit_change`, `get_job`, `get_run`, `finish_run`, `resume_run`, and
 `cancel_run`. The tools that start work (`start_run`, `profile_target`, `submit_change`,
 `finish_run`) return a job id at once; poll `get_job` with `wait_s: 25` until the job is
 `succeeded`, `failed`, or `cancelled`.
@@ -26,7 +26,7 @@ The tools are `inspect_target`, `check_capabilities`, `list_techniques`, `start_
 2. **Configuration.** Call `inspect_target`. Without a `ufo.yaml`, its result carries `draftConfig`,
    a commented draft: write it to `ufo.yaml` at the repository root. Fill in the objective, the
    workload command, the oracles (the test suite whose passing set must not shrink), and the cards
-   to enable (`list_techniques` lists them). The full format is in
+   to enable (`list_techniques` indexes them). The full format is in
    https://github.com/rlaope/ufo/blob/main/docs/cli.md#ufoyaml-reference. Done when `inspect_target`
    reports the configuration valid.
 
@@ -46,14 +46,16 @@ The tools are `inspect_target`, `check_capabilities`, `list_techniques`, `start_
 6. **Diagnose.** Call `profile_target` and poll its job. Read its phase times and values, then the
    code and configuration in arm A (`arms.a` from `get_run`). Name the bottleneck with
    [bottlenecks.md](bottlenecks.md): its category, and the evidence that shows it. Then call
-   `list_techniques` with the stack `inspect_target` detected and that `bottleneck`. Done when you
-   have the bottleneck, its evidence, and the cards whose signals the evidence matches, in the
-   order bottlenecks.md gives.
+   `list_techniques` with the stack `inspect_target` detected and that `bottleneck`, and open each
+   candidate with `get_technique` to check its `signals` and `preconditions` against the evidence.
+   Done when you have the bottleneck, its evidence, and the cards whose signals the evidence
+   matches, in the order bottlenecks.md gives.
 
 7. **Changes.** For each matching card, in that order:
    - If the card is not in the enabled `cards` of `ufo.yaml`, ask the user to enable it and
      approve again; a change under a card that is not enabled is refused.
-   - Follow the card's `steps`, mind its `traps`, and check its `preconditions` in arm A.
+   - Follow the card's `steps` (from `get_technique`), mind its `traps`, and check its
+     `preconditions` in arm A.
    - Write a unified diff against arm A's current commit (`shas.a` from `get_run`), touching only
      the code the card covers.
    - Call `submit_change` with `card_id`, `diff`, `hypothesis` (what should get faster, and why),

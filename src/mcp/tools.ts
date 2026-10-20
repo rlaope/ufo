@@ -11,6 +11,7 @@ import {
   finishRun,
   getJob,
   getRun,
+  getTechnique,
   inspectTarget,
   listTechniques,
   MAX_WAIT_S,
@@ -101,7 +102,7 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
     "list_techniques",
     {
       title: "List technique cards",
-      description: `The technique cards UFO knows for this repository: id, domain, title, kind (recipe or guided), risk class, the stacks and bottlenecks each applies to, the profiler signals that point at it, its preconditions, steps, verification, traps, expected effect, and sources, and whether ufo.yaml enables it. Filter by the stack inspect_target detected and by the bottleneck the profile found; without a filter, cards for the detected stacks come first. Only an enabled card can be submitted; pick one whose signals match the evidence. ${DATA}`,
+      description: `An index of the technique cards UFO knows for this repository: id, title, domain, kind (recipe or guided), risk class, the stacks and bottlenecks each applies to, its expected effect, and whether ufo.yaml enables it. Filter by the stack inspect_target detected and by the bottleneck the profile found; without a filter, cards for the detected stacks come first. Pick candidates here, then open each with get_technique for its signals, preconditions, steps, verification, and traps. ${DATA}`,
       inputSchema: z.strictObject({
         domain: z.string().max(64).optional().describe("Only cards of this domain."),
         stack: StackIdSchema.optional().describe(
@@ -121,6 +122,19 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
           ...(args.bottleneck === undefined ? {} : { bottleneck: args.bottleneck }),
         }),
       ),
+  );
+
+  server.registerTool(
+    "get_technique",
+    {
+      title: "Open one technique card",
+      description: `One technique card in full: signals, preconditions, steps, verification, traps, expected effect, sources, the ids of its command templates, and whether ufo.yaml enables it. Check its signals and preconditions against the evidence before following its steps. ${DATA}`,
+      inputSchema: z.strictObject({
+        card_id: z.string().max(64).describe("A card id from list_techniques."),
+      }),
+      annotations: READ_ONLY,
+    },
+    (args) => respond(() => getTechnique(deps.context(), { cardId: args.card_id })),
   );
 
   server.registerTool(

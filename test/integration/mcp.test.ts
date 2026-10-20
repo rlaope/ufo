@@ -27,6 +27,7 @@ const TOOLS = [
   "inspect_target",
   "check_capabilities",
   "list_techniques",
+  "get_technique",
   "profile_target",
   "start_run",
   "submit_change",
@@ -36,7 +37,14 @@ const TOOLS = [
   "resume_run",
   "cancel_run",
 ];
-const READ_ONLY = ["inspect_target", "check_capabilities", "list_techniques", "get_job", "get_run"];
+const READ_ONLY = [
+  "inspect_target",
+  "check_capabilities",
+  "list_techniques",
+  "get_technique",
+  "get_job",
+  "get_run",
+];
 
 /** Every call of the run test must come back within this: far below a host's tool budget. */
 const SHORT_TIMEOUT_MS = 4000;
@@ -239,6 +247,13 @@ describe("a run through the tools", { timeout: TIMEOUT_MS }, () => {
       ).map((c) => c.id);
     expect(await byFilter({ stack: "jvm", bottleneck: "cpu" })).toContain("toy.fast-path");
     expect(await byFilter({ bottleneck: "startup" })).toEqual([]);
+    const opened = (
+      await ok(client, "get_technique", { card_id: "toy.fast-path" }, SHORT_TIMEOUT_MS)
+    ).body as { card: { signals: string[] }; enabled: boolean };
+    expect(opened.enabled).toBe(true);
+    expect(opened.card.signals.length).toBeGreaterThan(0);
+    const unknownCard = await call(client, "get_technique", { card_id: "toy.nope" });
+    expect(unknownCard).toMatchObject({ isError: true, body: { code: "usage" } });
 
     const started = (await ok(client, "start_run", { model_id: "test-model" }, SHORT_TIMEOUT_MS))
       .body as { runId: string; baselineJobId: string; arms: { a: string; b: string } };
@@ -740,9 +755,13 @@ describe("repository text that reads like instructions", { timeout: TIMEOUT_MS }
     };
     expect(inspected.objective.scenario).toBe(INJECTED);
     const listed = (await ok(client, "list_techniques", { domain: "injected" })).body as {
-      cards: { title: string; signals: string[] }[];
+      cards: { title: string }[];
     };
-    expect(listed.cards).toMatchObject([{ title: INJECTED, signals: [INJECTED] }]);
+    expect(listed.cards).toMatchObject([{ title: INJECTED }]);
+    const opened = (await ok(client, "get_technique", { card_id: "injected.note" })).body as {
+      card: { title: string; signals: string[] };
+    };
+    expect(opened.card).toMatchObject({ title: INJECTED, signals: [INJECTED] });
     const refused = await call(client, "start_run");
     expect(refused).toMatchObject({ isError: true, body: { code: "policy:unapproved_config" } });
     for (const tool of (await client.listTools()).tools) {
@@ -830,6 +849,11 @@ describe("failures", { timeout: TIMEOUT_MS }, () => {
       { job_id: "job-000001", repo: "/" },
     ]) {
       const result = await client.callTool({ name: "get_job", arguments: args });
+      expect(result.isError, JSON.stringify(args)).toBe(true);
+      expect((result.content as { text: string }[])[0]?.text).toContain("Input validation error");
+    }
+    for (const args of [{ card_id: 7 }, { card_id: "toy.fast-path", extra: 1 }, {}]) {
+      const result = await client.callTool({ name: "get_technique", arguments: args });
       expect(result.isError, JSON.stringify(args)).toBe(true);
       expect((result.content as { text: string }[])[0]?.text).toContain("Input validation error");
     }

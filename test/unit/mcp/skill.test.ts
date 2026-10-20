@@ -40,7 +40,9 @@ describe("the ufo-optimize skill", () => {
     const named = new Set(
       [...text.matchAll(/`([a-z]+(?:_[a-z]+)+)`/g)]
         .map((match) => match[1] ?? "")
-        .filter((name) => /_(?:target|capabilities|techniques|run|change|job)$/.test(name)),
+        .filter((name) =>
+          /_(?:target|capabilities|techniques|technique|run|change|job)$/.test(name),
+        ),
     );
     expect([...named].sort()).toEqual([...tools].sort());
   });
