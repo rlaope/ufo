@@ -152,7 +152,9 @@ describe("approval (AC 18)", { timeout: TIMEOUT_MS }, () => {
     const body = source.slice(source.indexOf("export async function approveWithGate("));
     const gate = body.indexOf("requireTty(options.stdin);");
     expect(gate).toBeGreaterThan(0);
-    expect(gate).toBeLessThan(body.indexOf("resolveRepo("));
+    const repo = body.indexOf("repoOf(");
+    expect(repo).toBeGreaterThan(0);
+    expect(gate).toBeLessThan(repo);
     expect(gate).toBeLessThan(body.indexOf("recordApproval("));
   });
 });
