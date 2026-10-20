@@ -161,7 +161,7 @@ describe("a start that fails after it created the arms", { timeout: TIMEOUT_MS }
     const branch = runBranches(current);
     expect(branch).toMatch(/^ufo\/run-\S+$/);
     expect(error).toMatchObject({
-      message: `the worker could not start; could not remove the run branch ${branch} (git branch failed (test)); delete it with \`git branch -D ${branch}\``,
+      message: `the worker could not start; could not remove the run branch ${branch} (git branch failed (test)); delete it with \`git branch -D -- '${branch}'\``,
     });
     git(current.repo, "branch", "-D", branch);
     expect(runBranches(current)).toBe("");
@@ -179,7 +179,7 @@ describe("a start that fails after it created the arms", { timeout: TIMEOUT_MS }
     const branch = runBranches(current);
     expect(branch).toMatch(/^ufo\/run-\S+$/);
     expect(error).toMatchObject({
-      message: `git clone failed (test); could not remove the run branch ${branch} (git branch failed (test)); delete it with \`git branch -D ${branch}\``,
+      message: `git clone failed (test); could not remove the run branch ${branch} (git branch failed (test)); delete it with \`git branch -D -- '${branch}'\``,
     });
     expect(runIds(current)).toEqual([]);
     expect(await readMachineLock({ home: current.home })).toBeUndefined();
@@ -203,7 +203,7 @@ describe("a start that fails after it created the arms", { timeout: TIMEOUT_MS }
       expect(existsSync(path.join(left, "a"))).toBe(true);
       expect((error as Error).message).toMatch(
         new RegExp(
-          `^git clone failed \\(test\\); could not remove the arms directory ${left} \\(.+\\); remove it with \`rm -rf ${left}\`$`,
+          `^git clone failed \\(test\\); could not remove the arms directory ${left} \\(.+\\); remove it with \`rm -rf -- '${left}'\`$`,
         ),
       );
       expect(runBranches(current)).toBe("");

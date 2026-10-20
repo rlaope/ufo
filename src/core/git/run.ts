@@ -525,6 +525,11 @@ function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** `text` as one single-quoted shell word, so a hint's command can be pasted as it is. */
+function shellWord(text: string): string {
+  return `'${text.replaceAll("'", `'\\''`)}'`;
+}
+
 /**
  * Removes what a start created for `run`: its arms directory and, with `deleteBranch`, the run
  * branch, each tried even when the other fails. Returns what is left and how to remove each,
@@ -540,7 +545,7 @@ export async function removeRunLeaving(
     await removeEmptyDir(path.dirname(run.dir)).catch(() => undefined);
   } catch (error) {
     left.push(
-      `could not remove the arms directory ${run.dir} (${describe(error)}); remove it with \`rm -rf ${run.dir}\``,
+      `could not remove the arms directory ${run.dir} (${describe(error)}); remove it with \`rm -rf -- ${shellWord(run.dir)}\``,
     );
   }
   if (options.deleteBranch) {
@@ -554,7 +559,7 @@ export async function removeRunLeaving(
       ).catch(() => undefined);
       if (still?.code !== 1) {
         left.push(
-          `could not remove the run branch ${run.branch} (${describe(error)}); delete it with \`git branch -D ${run.branch}\``,
+          `could not remove the run branch ${run.branch} (${describe(error)}); delete it with \`git branch -D -- ${shellWord(run.branch)}\``,
         );
       }
     }

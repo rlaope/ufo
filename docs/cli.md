@@ -380,7 +380,7 @@ uncommitted changes are not part of the run (a warning says so). A start holds t
 control lock until its worker runs, so no cancel acts on a run half started. A start that fails
 records its run as failed, then removes the branch and the arms it created and its run state.
 Whatever cannot be removed, the run branch or the arms directory, the error names with the
-command that removes it (`git branch -D ufo/run-<run-id>`, `rm -rf <arms directory>`), since no
+command that removes it (`git branch -D -- 'ufo/run-<run-id>'`, `rm -rf -- '<arms directory>'`, quoted to paste as they are), since no
 run state is left to find it by.
 
 The arms are UFO's own local clones (`git clone --no-checkout --local` without templates), so

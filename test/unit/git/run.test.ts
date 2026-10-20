@@ -29,6 +29,7 @@ import {
   type Run,
   readFileAtA,
   removeRun,
+  removeRunLeaving,
   repoId,
   resetArms,
   resetBTo,
@@ -156,6 +157,23 @@ function userState(repo: string) {
     files: ["src/app.js", "test/app.test.js", "package.json", "notes.txt"].map(read),
   };
 }
+
+// Code review CR-N6: the command a leftover hint names can be pasted as it is, whatever the path.
+describe("removeRunLeaving", () => {
+  it("quotes the path in the command that removes what is left", async () => {
+    const root = path.join(sandbox.root, `it's here ${randomUUID()}`);
+    const dir = path.join(root, "run-1");
+    mkdirSync(path.join(dir, "a"), { recursive: true });
+    chmodSync(root, 0o500);
+    try {
+      const left = await removeRunLeaving({ dir } as Run, { deleteBranch: false });
+      const quoted = `'${root.replaceAll("'", "'\\''")}/run-1'`;
+      expect(left?.endsWith(`; remove it with \`rm -rf -- ${quoted}\``)).toBe(true);
+    } finally {
+      chmodSync(root, 0o700);
+    }
+  });
+});
 
 describe("repoId", () => {
   it("is stable across subdirectories and linked worktrees and hides the path", async () => {
