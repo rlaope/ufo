@@ -296,6 +296,7 @@ async function mcp(values: Values, io: CliIo): Promise<number> {
   try {
     await serveMcp({
       dir: bound.dir,
+      session: bound.session,
       host: values.host,
       context: io.context,
       env: io.env,

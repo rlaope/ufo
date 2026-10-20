@@ -26,7 +26,9 @@ writes only protocol messages on stdout; diagnostics go to stderr. It exits when
   resolved against the working directory. Outside any git working tree the server keeps serving,
   since a user-scope server starts in every session, and answers every tool with `not_a_repo`
   (hint: open a repository folder) until the folder is a repository; it binds to it then, after
-  filtering its `PATH` again for that repository (see PATH). Once
+  filtering its `PATH` again for that repository (see PATH). A work tree that shares a git directory elsewhere is
+  served only as a linked worktree or a submodule whose own git directory is outside the
+  session's directories ([safety.md](safety.md) R7); otherwise `unsafe_state`. Once
   bound, the repository's top level, git directory, common directory, and id are pinned and
   checked before every call. Approval is per repository: an unapproved one is refused at
   `start_run`.

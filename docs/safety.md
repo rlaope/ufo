@@ -171,10 +171,14 @@ until it is, `ufo setup` refuses to install from the registry and takes a tarbal
   (`status`, `rev-parse`) run with the config as it is then. Such an agent could also point
   `.git` at another repository's git directory, which gives your work tree that repository's id
   and so its runs. UFO acts on a run only from the work tree that started it (`unsafe_state`
-  otherwise), the MCP server refuses at startup a work tree whose git directory is outside it
-  unless that git directory names it back (a linked worktree or a submodule), and it refuses
-  every call once the repository's git directory, common directory, or id differs from the one
-  pinned at startup.
+  otherwise). The MCP server, when it binds (at startup, or on the first call that finds a
+  repository), refuses a work tree that shares a git directory outside it unless it is a linked
+  worktree or a submodule: its own git directory is `<shared>/worktrees/<name>` or the shared one
+  itself, lies outside the work tree and the session's directories (the bound directory, and
+  the working directory unless `--repo` named the bound one), and names the work tree back
+  (`gitdir`, `core.worktree`). A back-link inside those directories proves nothing, since
+  whatever pointed `.git` elsewhere could write it too. The server then refuses every call once
+  the repository's git directory, common directory, or id differs from the one it pinned.
 
 - **R8. Drivers from your own git config.** UFO refuses filter, diff, and merge drivers defined
   in the repository's config, but not those in your global or system config. When the

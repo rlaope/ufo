@@ -74,6 +74,31 @@ async function connect(
   return client;
 }
 
+/** `ufo mcp` started and stopped at once: the last line it logged before it exited 1. */
+function startup(
+  toy: Toy,
+  args: string[],
+  cwd: string,
+  env: Record<string, string> = {},
+  host = "cursor",
+): string | undefined {
+  const started = spawnSync(process.execPath, [BUILT_CLI, "mcp", "--host", host, ...args], {
+    cwd,
+    env: { ...serverEnv(toy), ...env },
+    input: "",
+    encoding: "utf8",
+    timeout: 30_000,
+  });
+  expect(started.status, started.stderr).toBe(1);
+  expect(started.stdout).toBe("");
+  return started.stderr.trimEnd().split("\n").at(-1);
+}
+
+/** Why a work tree that shares the git directory `common` is refused. */
+function foreign(root: string, common: string): string {
+  return `the git directory of ${root} is ${common}, outside it, and ${root} is no linked worktree or submodule of it`;
+}
+
 interface Called {
   isError: boolean;
   /** structuredContent, checked to be the same JSON as the one text block. */
@@ -374,28 +399,99 @@ describe("the server's repository and PATH", { timeout: TIMEOUT_MS }, () => {
     expect(existsSync(marker) ? readFileSync(marker, "utf8") : "").toBe("");
   });
 
-  // Security N1: at startup, a work tree whose git directory is elsewhere is served only when that
-  // git directory names it back, as a linked worktree's does.
+  // Security N1, S2-1: a work tree that shares a git directory elsewhere is served only as a
+  // linked worktree or a submodule whose own git directory, outside the session's directories,
+  // names it back.
   it("refuses at startup a .git that names another repository's git directory", async () => {
     const toy = toyFor();
     const imposter = path.join(toy.root, "imposter");
     mkdirSync(imposter);
     writeFileSync(path.join(imposter, ".git"), `gitdir: ${path.join(toy.scratch, ".git")}\n`);
-    const started = spawnSync(
-      process.execPath,
-      [BUILT_CLI, "mcp", "--host", "cursor", "--repo", imposter],
-      { env: serverEnv(toy), input: "", encoding: "utf8", timeout: 30_000 },
-    );
-    expect(started.status).toBe(1);
-    expect(started.stdout).toBe("");
-    expect(started.stderr.trimEnd().split("\n").at(-1)).toBe(
-      `ufo mcp: unsafe_state: the git directory of ${imposter} is ${path.join(toy.scratch, ".git")}, outside it, and does not name it as its work tree`,
+    expect(startup(toy, ["--repo", imposter], imposter)).toBe(
+      `ufo mcp: unsafe_state: ${foreign(imposter, path.join(toy.scratch, ".git"))}`,
     );
 
     const worktree = path.join(toy.root, "worktree");
     git(toy.repo, "worktree", "add", "--quiet", worktree);
-    const client = await connect(toy, {}, { args: ["--host", "cursor", "--repo", worktree] });
+    const client = await connect(
+      toy,
+      {},
+      { args: ["--host", "cursor", "--repo", worktree], cwd: worktree },
+    );
     expect((await ok(client, "inspect_target")).body).toMatchObject({ repoRoot: worktree });
+    // The worktree's git directory is inside the main checkout, here Claude Code's working
+    // directory: the session could have written its back-link.
+    expect(startup(toy, [], toy.root, { CLAUDE_PROJECT_DIR: worktree }, "claude-code")).toBe(
+      `ufo mcp: unsafe_state: ${foreign(worktree, path.join(toy.repo, ".git"))}`,
+    );
+
+    const superproject = path.join(toy.root, "super");
+    mkdirSync(superproject);
+    git(superproject, "init", "--quiet");
+    git(
+      superproject,
+      "-c",
+      "protocol.file.allow=always",
+      "submodule",
+      "--quiet",
+      "add",
+      toy.repo,
+      "sub",
+    );
+    const sub = path.join(superproject, "sub");
+    const inSub = await connect(toy, {}, { args: ["--host", "cursor", "--repo", sub], cwd: sub });
+    expect((await ok(inSub, "inspect_target")).body).toMatchObject({ repoRoot: sub });
+  });
+
+  // Security S2-1: a .git directory inside the work tree that shares another repository's git
+  // directory names the work tree back from inside it, which proves nothing.
+  it("refuses a work tree whose own .git shares another repository's git directory", async () => {
+    const toy = toyFor();
+    const common = path.join(toy.repo, ".git");
+    /** `dir/.git` laid out as a linked worktree's git directory, but inside `dir`. */
+    const share = (dir: string) => {
+      mkdirSync(path.join(dir, ".git"), { recursive: true });
+      writeFileSync(path.join(dir, ".git", "HEAD"), "ref: refs/heads/main\n");
+      writeFileSync(path.join(dir, ".git", "commondir"), `${common}\n`);
+      writeFileSync(path.join(dir, ".git", "gitdir"), `${path.join(dir, ".git")}\n`);
+    };
+    const sharing = path.join(toy.root, "sharing");
+    share(sharing);
+    expect(startup(toy, ["--repo", sharing], sharing)).toBe(
+      `ufo mcp: unsafe_state: ${foreign(sharing, common)}`,
+    );
+
+    const late = path.join(toy.root, "late");
+    mkdirSync(late);
+    const client = await connect(
+      toy,
+      {},
+      { args: ["--host", "cursor", "--repo", late], cwd: late },
+    );
+    expect(await call(client, "inspect_target")).toMatchObject({
+      isError: true,
+      body: { code: "not_a_repo" },
+    });
+    share(late);
+    expect(await call(client, "inspect_target")).toMatchObject({
+      isError: true,
+      body: { code: "unsafe_state", message: foreign(late, common) },
+    });
+
+    // A git directory outside it that names it back both ways (a worktree's gitdir, a submodule's
+    // core.worktree), but is neither a worktree's nor the shared one.
+    const elsewhere = path.join(toy.root, "elsewhere.git");
+    mkdirSync(elsewhere);
+    writeFileSync(path.join(elsewhere, "HEAD"), "ref: refs/heads/main\n");
+    writeFileSync(path.join(elsewhere, "commondir"), `${common}\n`);
+    const named = path.join(toy.root, "named");
+    mkdirSync(named);
+    writeFileSync(path.join(named, ".git"), `gitdir: ${elsewhere}\n`);
+    writeFileSync(path.join(elsewhere, "gitdir"), `${path.join(named, ".git")}\n`);
+    git(named, "config", "--file", path.join(elsewhere, "config"), "core.worktree", named);
+    expect(startup(toy, ["--repo", named], named)).toBe(
+      `ufo mcp: unsafe_state: ${foreign(named, common)}`,
+    );
   });
 
   // Security H1: what a project puts on the PATH the server starts with (npx puts its own

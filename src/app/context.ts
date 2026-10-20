@@ -183,59 +183,65 @@ function within(dir: string, root: string): boolean {
   return dir === root || dir.startsWith(`${root}${path.sep}`);
 }
 
-/** Whether the git directory of `repo`, outside its work tree, names that work tree back. */
+/**
+ * Whether `repo` is a linked worktree or a submodule whose git directory names its work tree
+ * back: `<common dir>/worktrees/<name>`, whose `gitdir` holds the path of the work tree's `.git`
+ * file, or the common directory itself, with `core.worktree` in its config.
+ */
 async function namesWorkTree(repo: Repo): Promise<boolean> {
-  // A linked worktree: `<git dir>/gitdir` holds the path of the work tree's `.git` file.
-  const linked = await readTextNoFollow(path.join(repo.gitDir, "gitdir")).catch(() => undefined);
-  if (linked !== undefined) {
-    const named = await realpath(path.dirname(path.resolve(repo.gitDir, linked.trim()))).catch(
-      () => undefined,
-    );
-    if (named === repo.root) return true;
+  let named: string | undefined;
+  if (path.dirname(repo.gitDir) === path.join(repo.commonDir, "worktrees")) {
+    const linked = await readTextNoFollow(path.join(repo.gitDir, "gitdir")).catch(() => undefined);
+    named =
+      linked === undefined ? undefined : path.dirname(path.resolve(repo.gitDir, linked.trim()));
+  } else if (repo.gitDir === repo.commonDir) {
+    // Relative to the git directory.
+    const configured = await runGit(
+      ["config", "--file", path.join(repo.gitDir, "config"), "--get", "core.worktree"],
+      repo.root,
+    ).catch(() => undefined);
+    named =
+      configured?.code === 0 ? path.resolve(repo.gitDir, configured.stdout.trim()) : undefined;
   }
-  // A submodule: `core.worktree` in its own config, relative to its git directory.
-  const configured = await runGit(
-    ["config", "--file", path.join(repo.gitDir, "config"), "--get", "core.worktree"],
-    repo.root,
-  ).catch(() => undefined);
-  if (configured?.code === 0) {
-    const named = await realpath(path.resolve(repo.gitDir, configured.stdout.trim())).catch(
-      () => undefined,
-    );
-    if (named === repo.root) return true;
-  }
-  return false;
+  return named !== undefined && (await realpath(named).catch(() => undefined)) === repo.root;
 }
 
 /**
- * Refuses a work tree whose git directory is outside it unless that git directory names it back,
- * as a linked worktree's or a submodule's does (security N1): a `.git` pointed at another
- * repository's git directory would act on that repository's runs.
+ * Refuses a work tree whose common git directory is outside it, unless it is a linked worktree
+ * or a submodule (`namesWorkTree`) whose git directory is outside the work tree and every one of
+ * `outside` too (security N1, S2-1): a `.git` pointed at another repository's git directory would
+ * act on that repository's runs, and a back-link inside a directory the session writes proves
+ * nothing, since whatever wrote the `.git` could write it too.
  */
-async function refuseForeignGitDir(repo: Repo): Promise<void> {
-  if (within(repo.commonDir, repo.root) || (await namesWorkTree(repo))) return;
+async function refuseForeignGitDir(repo: Repo, outside: readonly string[]): Promise<void> {
+  if (within(repo.commonDir, repo.root)) return;
+  const reals = await Promise.all(outside.map((dir) => realpath(dir).catch(() => dir)));
+  const roots = [repo.root, ...outside.map((dir) => path.resolve(dir)), ...reals];
+  if (!roots.some((root) => within(repo.gitDir, root)) && (await namesWorkTree(repo))) return;
   throw new TrustError(
     "unsafe_state",
-    `the git directory of ${repo.root} is ${repo.gitDir}, outside it, and does not name it as its work tree`,
+    `the git directory of ${repo.root} is ${repo.commonDir}, outside it, and ${repo.root} is no linked worktree or submodule of it`,
   );
 }
 
 /**
  * The repository at `dir`, to bind a long-lived server to, with this process's PATH filtered
  * for it first (`trustProcessPath`): each time it is looked for, so one found only after startup
- * is filtered for too before git runs in it (security S2-3). A work tree whose git directory is
- * outside it without naming it back is refused (security N1). Outside a repository `repo` is
- * `undefined`, or `not_a_repo` is thrown when `requireRepo`.
+ * is filtered for too before git runs in it (security S2-3). A work tree sharing a git directory
+ * elsewhere is refused unless it is a linked worktree or submodule of it whose git directory is
+ * outside the session's directories, `outside` (security N1, S2-1). Outside a repository `repo`
+ * is `undefined`, or `not_a_repo` is thrown when `requireRepo`.
  */
 export async function bindRepository(options: {
   readonly dir: string;
   readonly cwd: string;
+  readonly outside: readonly string[];
   readonly home?: string | undefined;
   readonly requireRepo?: boolean;
   readonly env?: NodeJS.ProcessEnv;
 }): Promise<{ repo: Repo | undefined; dropped: string[] }> {
   const found = await trustProcessPath({ ...options, repoDir: options.dir });
-  if (found.repo !== undefined) await refuseForeignGitDir(found.repo);
+  if (found.repo !== undefined) await refuseForeignGitDir(found.repo, options.outside);
   return found;
 }
 

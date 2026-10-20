@@ -33,30 +33,37 @@ export function isHost(value: unknown): value is Host {
  * be an absolute path as the host wrote it (a `${workspaceFolder}` the host did not substitute,
  * or a relative path, is refused, never resolved against the working directory); else, for
  * Claude Code, `CLAUDE_PROJECT_DIR`, then the working directory; for Codex, the working
- * directory. Cursor needs `--repo`.
+ * directory. Cursor needs `--repo`. `session` is where the host's agent session works: that
+ * directory, and the working directory too unless `--repo` named one, since a host that needs
+ * `--repo` may start its servers anywhere.
  */
 export function bindDirectory(options: {
   readonly host: Host;
   readonly repo?: string | undefined;
   readonly env: NodeJS.ProcessEnv;
   readonly cwd: string;
-}): { dir: string } | { error: string } {
-  const absolute = (value: string, what: string) =>
+}): { dir: string; session: string[] } | { error: string } {
+  const absolute = (value: string, what: string, session: string[]) =>
     !value.includes("${") && path.isAbsolute(value)
-      ? { dir: value }
+      ? { dir: value, session }
       : { error: `${what} must be an absolute path, not ${JSON.stringify(value)}` };
-  if (options.repo !== undefined) return absolute(options.repo, "--repo");
+  if (options.repo !== undefined) return absolute(options.repo, "--repo", [options.repo]);
   if (options.host === "cursor") return { error: "--host cursor needs --repo <absolute path>" };
   const project = options.env.CLAUDE_PROJECT_DIR;
   if (options.host === "claude-code" && project !== undefined && project !== "") {
-    return absolute(project, "CLAUDE_PROJECT_DIR");
+    return absolute(project, "CLAUDE_PROJECT_DIR", [project, options.cwd]);
   }
-  return { dir: options.cwd };
+  return { dir: options.cwd, session: [options.cwd] };
 }
 
 export interface McpServeOptions {
   /** The directory to bind to (`bindDirectory`); the server acts on the repository there. */
   readonly dir: string;
+  /**
+   * Where the host's agent session works (`bindDirectory`): a linked worktree's or submodule's
+   * git directory must be outside each (security S2-1).
+   */
+  readonly session: readonly string[];
   readonly host: Host;
   /**
    * The rest of every call's app context, fixed for the server's life: the UFO home, card
@@ -126,6 +133,7 @@ export async function serveMcp(options: McpServeOptions): Promise<void> {
     const { repo, dropped } = await bindRepository({
       dir: options.dir,
       cwd: process.cwd(),
+      outside: options.session,
       home: options.context?.home,
       requireRepo,
       ...(options.env === undefined ? {} : { env: options.env }),
