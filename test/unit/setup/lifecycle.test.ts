@@ -66,13 +66,21 @@ describe("ufo uninstall", () => {
     expect(await read(codexFile())).toBe(mine);
   });
 
-  it("refuses a ufo entry the host extended with [mcp_servers.ufo.env]", async () => {
+  it("refuses a ufo entry the host extended with a sub-table or another env value", async () => {
     await put(codexFile(), "a = 1\n");
     await setup(options({ hosts: ["codex"] }));
-    const extended = `${await read(codexFile())}\n[mcp_servers.ufo.env]\nTOKEN_FILE = "x"\n`;
-    await writeFile(codexFile(), extended);
-    expect((await refusal(uninstall(options()))).code).toBe("entry_conflict");
-    expect(await read(codexFile())).toBe(extended);
+    const written = await read(codexFile());
+    // The form Codex rewrites UFO's env into, with a variable of the user's added to it.
+    const env = written.replace(
+      /env = \{ UFO_HOME = ("[^"]*") \}\n/,
+      '\n[mcp_servers.ufo.env]\nUFO_HOME = $1\nTOKEN_FILE = "x"\n',
+    );
+    expect(env).toContain('TOKEN_FILE = "x"');
+    for (const extended of [env, `${written}\n[mcp_servers.ufo.tools]\nx = "y"\n`]) {
+      await writeFile(codexFile(), extended);
+      expect((await refusal(uninstall(options()))).code).toBe("entry_conflict");
+      expect(await read(codexFile())).toBe(extended);
+    }
   });
 
   it("refuses a skill directory changed since setup installed it, naming the file", async () => {
@@ -265,7 +273,7 @@ describe("step D re-review", () => {
     expect(await read(path.join(agentsSkill(), "SKILL.md"))).toBe(`${SKILL_TEXT}Version 2.\n`);
   });
 
-  it("DC-N2: a UFO home other than ~/.ufo goes into every host's entry", async () => {
+  it("DC-N2, L1: the UFO home goes into every host's entry", async () => {
     const ufoHome = path.join(box.root, "elsewhere-ufo");
     const custom = (extra: Partial<SetupOptions> = {}) => options({ ufoHome, ...extra });
     const script = path.join(ufoHome, "pkg", VERSION, "node_modules/ufo-agents/dist/cli/index.js");

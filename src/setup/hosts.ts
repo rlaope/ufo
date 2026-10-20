@@ -141,9 +141,9 @@ export interface Launch {
 
 /**
  * The `ufo` entry UFO writes for `host`: `ufo mcp --host <host>` from the installed package.
- * `env` (a UFO home other than `~/.ufo`) goes into the entry, since hosts start servers with an
- * environment of their own: Codex passes a fixed list of variables, and a host opened from the
- * Dock has no shell environment at all.
+ * `env` (`UFO_HOME`) goes into the entry, since hosts start servers with an environment of their
+ * own: Codex passes a fixed list of variables, a host opened from the Dock has no shell
+ * environment at all, and one that passes a `UFO_HOME` must not choose the server's home.
  */
 export function desiredEntry(
   host: HostId,

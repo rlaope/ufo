@@ -10,10 +10,11 @@ import { NODE, put, type Sandbox, SKILL_TEXT, sandbox } from "./sandbox.js";
 //
 // fixtures/codex-0.163 was captured from the Codex CLI bundled in ChatGPT.app (codex-cli
 // 0.163.0-alpha.10.2), run with HOME and CODEX_HOME in scratch directories: `pre-setup.toml`
-// and `after-setup.toml` (pre-setup plus UFO's table, as setup writes it), then `codex mcp add
-// other -- other-mcp --flag` and `codex mcp remove other` on each. Codex rewrites UFO's
-// `startup_timeout_sec = 60` as `60.0` and keeps every other byte. The fixture names neutral
-// paths; the test puts its own in.
+// and `after-setup.toml` (pre-setup plus UFO's table, as setup writes it, `env` included), then
+// `codex mcp add other -- other-mcp --flag` and `codex mcp remove other` on each. Codex rewrites
+// UFO's `startup_timeout_sec = 60` as `60.0` and its inline `env = { UFO_HOME = ... }` as an
+// `[mcp_servers.ufo.env]` table, and keeps every other byte. The fixture names neutral paths;
+// the test puts its own in. Every scenario runs with a UFO home other than ~/.ufo.
 
 let box: Sandbox;
 beforeEach(async () => {
@@ -23,8 +24,14 @@ afterEach(async () => {
   await box.cleanup();
 });
 
+/** A UFO home other than ~/.ufo, which every entry names. */
+const ufoHome = () => path.join(box.root, "ufo-elsewhere");
+const script = () =>
+  path.join(ufoHome(), "pkg", "1.2.3", "node_modules", "ufo-agents", "dist", "cli", "index.js");
+
 const options = (extra: Partial<SetupOptions> = {}): SetupOptions => ({
   ...box.environment,
+  ufoHome: ufoHome(),
   print: () => {},
   yes: true,
   ...extra,
@@ -32,10 +39,10 @@ const options = (extra: Partial<SetupOptions> = {}): SetupOptions => ({
 
 const read = (file: string) => readFile(file, "utf8");
 const FIXTURE_NODE = "/usr/local/bin/node";
-const FIXTURE_SCRIPT = "/home/user/.ufo/pkg/1.2.3/node_modules/ufo-agents/dist/cli/index.js";
+const FIXTURE_UFO_HOME = "/home/user/ufo-elsewhere";
 const fixture = async (name: string) =>
   (await read(new URL(`fixtures/codex-0.163/${name}`, import.meta.url).pathname))
-    .replaceAll(FIXTURE_SCRIPT, box.script())
+    .replaceAll(FIXTURE_UFO_HOME, ufoHome())
     .replaceAll(FIXTURE_NODE, NODE);
 // biome-ignore lint/suspicious/noTemplateCurlyInString: Cursor's variable, not a JS template.
 const WORKSPACE = "${workspaceFolder}";
@@ -43,7 +50,7 @@ const WORKSPACE = "${workspaceFolder}";
 const codexFile = () => path.join(box.home, ".codex", "config.toml");
 const cursorFile = () => path.join(box.home, ".cursor", "mcp.json");
 const claudeFile = () => path.join(box.home, ".claude.json");
-const setupDir = () => path.join(box.ufoHome, "private", "setup");
+const setupDir = () => path.join(ufoHome(), "private", "setup");
 
 describe("AC 11 per host", () => {
   it("Codex: what the real Codex CLI does to the file in between is kept, and only UFO's table goes", async () => {
@@ -59,7 +66,8 @@ describe("AC 11 per host", () => {
     expect(second.changed).toBe(false);
     expect(await read(codexFile())).toBe(written);
 
-    // `codex mcp add other ...`: Codex adds its table and writes UFO's timeout as 60.0.
+    // `codex mcp add other ...`: Codex adds its table, writes UFO's timeout as 60.0, and moves
+    // UFO's env into an [mcp_servers.ufo.env] table.
     await writeFile(codexFile(), await fixture("with-ufo.after-add-other.toml"));
     const added = await setup(options({ hosts: ["codex"] }));
     expect(added.changed).toBe(false);
@@ -73,7 +81,7 @@ describe("AC 11 per host", () => {
     expect(await read(codexFile())).toBe(await fixture("without-ufo.after-add-other.toml"));
     expect(existsSync(path.join(box.home, ".agents", "skills", "ufo-optimize"))).toBe(false);
     expect(await readdir(path.join(setupDir(), "backups"))).toEqual([]);
-    expect(await readdir(path.join(box.ufoHome, "pkg"))).toEqual([]);
+    expect(await readdir(path.join(ufoHome(), "pkg"))).toEqual([]);
     expect(existsSync(path.join(setupDir(), "setup.json"))).toBe(false);
   });
 
@@ -99,7 +107,8 @@ describe("AC 11 per host", () => {
         ufo: {
           type: "stdio",
           command: NODE,
-          args: [box.script(), "mcp", "--host", "cursor", "--repo", WORKSPACE],
+          args: [script(), "mcp", "--host", "cursor", "--repo", WORKSPACE],
+          env: { UFO_HOME: ufoHome() },
         },
       },
       theme: "dark",
@@ -112,8 +121,8 @@ describe("AC 11 per host", () => {
     const edited = written
       .replace('"theme": "dark"', '"theme": "light"')
       .replace(
-        `"${WORKSPACE}"\n      ]\n    }\n`,
-        `"${WORKSPACE}"\n      ]\n    },\n    "later": { "command": "l" }\n`,
+        `"UFO_HOME": ${JSON.stringify(ufoHome())}\n      }\n    }\n`,
+        `"UFO_HOME": ${JSON.stringify(ufoHome())}\n      }\n    },\n    "later": { "command": "l" }\n`,
       );
     expect(edited).not.toBe(written);
     await writeFile(cursorFile(), edited);
@@ -144,9 +153,11 @@ describe("AC 11 per host", () => {
         "--scope",
         "user",
         "ufo",
+        "-e",
+        `UFO_HOME=${ufoHome()}`,
         "--",
         NODE,
-        box.script(),
+        script(),
         "mcp",
         "--host",
         "claude-code",
@@ -156,8 +167,8 @@ describe("AC 11 per host", () => {
     expect(JSON.parse(written).mcpServers.ufo).toEqual({
       type: "stdio",
       command: NODE,
-      args: [box.script(), "mcp", "--host", "claude-code"],
-      env: {},
+      args: [script(), "mcp", "--host", "claude-code"],
+      env: { UFO_HOME: ufoHome() },
     });
     expect(await read(path.join(box.home, ".claude", "skills", "ufo-optimize", "SKILL.md"))).toBe(
       SKILL_TEXT,

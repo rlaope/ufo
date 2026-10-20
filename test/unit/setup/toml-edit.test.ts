@@ -117,15 +117,45 @@ describe("the Codex TOML span edit", () => {
     expect(remove(text)).toBe("");
   });
 
-  it("reports a ufo entry spread over sub-tables or dotted keys as not editable", () => {
+  it("reports a ufo entry spread over other sub-tables or dotted keys as not editable", () => {
     for (const text of [
-      `${TABLE}[mcp_servers.ufo.env]\nTOKEN = "x"\n`,
+      `${TABLE}[mcp_servers.ufo.env]\nPORT = 1\n`,
+      `${TABLE}[mcp_servers.ufo.env]\nA.B = "x"\n`,
+      `${TABLE}[mcp_servers.ufo.other]\nx = "y"\n`,
+      `${TABLE}[mcp_servers.ufo.env.deeper]\nx = "y"\n`,
+      '[mcp_servers.ufo.env]\nUFO_HOME = "/u"\n',
       '[mcp_servers]\nufo.command = "npx"\n',
       'mcp_servers.ufo = { command = "npx" }\n',
       `${TABLE}[[mcp_servers.ufo.tools]]\nname = "x"\n`,
     ]) {
-      expect(locate(text)).toEqual({ found: true, table: undefined, value: undefined });
+      expect(locate(text)).toEqual({
+        found: true,
+        table: undefined,
+        envTable: undefined,
+        value: undefined,
+      });
     }
+    expect(
+      refusal(() => locate(`${TABLE}env = { A = "1" }\n[mcp_servers.ufo.env]\nB = "2"\n`)).message,
+    ).toContain("sets a key of [mcp_servers.ufo] twice");
+    expect(
+      refusal(() =>
+        locate(`${TABLE}[mcp_servers.ufo.env]\nA = "1"\n[mcp_servers.ufo.env]\nB = "2"\n`),
+      ).message,
+    ).toContain("[mcp_servers.ufo.env] more than once");
+  });
+
+  it("H1: takes the [mcp_servers.ufo.env] table Codex writes an inline env as for UFO's own", () => {
+    const inline = `${TABLE}env = { UFO_HOME = "/u" }\n`;
+    // What `codex mcp add other ...` makes of it (codex-cli 0.163): its own table, then other.
+    const rewritten = `a = 1\n\n${TABLE.replace("= 60\n", "= 60.0\n")}\n[mcp_servers.ufo.env]\nUFO_HOME = "/u"\n\n[mcp_servers.other]\ncommand = "o"\n`;
+    const value = { ...ENTRY, env: { UFO_HOME: "/u" } };
+    expect(locate(inline)).toMatchObject({ found: true, value });
+    expect(locate(rewritten)).toMatchObject({ found: true, value });
+    expect(remove(rewritten)).toBe('a = 1\n\n[mcp_servers.other]\ncommand = "o"\n');
+    const repinned = replaceTomlEntry(rewritten, "mcp_servers", "ufo", value, "config.toml");
+    expect(repinned.text).toBe(`a = 1\n\n${inline}\n[mcp_servers.other]\ncommand = "o"\n`);
+    expect(locate(repinned.text)).toMatchObject({ found: true, value });
   });
 
   it("refuses a file that does not parse, naming the line", () => {

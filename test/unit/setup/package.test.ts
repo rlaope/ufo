@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -83,7 +83,10 @@ describe("the node a host starts", () => {
       const any = () => true;
       expect(await nodeCommand({ PATH: bin }, process.execPath, any)).toBe(path.join(bin, "node"));
       expect(await nodeCommand({ PATH: bin }, "/elsewhere/node", any)).toBe("/elsewhere/node");
-      expect(await nodeCommand({ PATH: "" }, process.execPath, any)).toBe(process.execPath);
+      // F3: the path it checked, the real one.
+      const link = path.join(bin, "link-to-node");
+      await symlink(process.execPath, link);
+      expect(await nodeCommand({ PATH: "" }, link, any)).toBe(await realpath(process.execPath));
     } finally {
       await rm(bin, { recursive: true, force: true });
     }

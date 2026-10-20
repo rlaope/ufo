@@ -40,7 +40,7 @@ const prefix = (version = VERSION) => path.join(box.ufoHome, "pkg", version);
 const read = (file: string) => readFile(file, "utf8");
 const record = async () => JSON.parse(await read(path.join(setupDir(), "setup.json")));
 const codexTable = (version = VERSION) =>
-  `[mcp_servers.ufo]\ncommand = "${NODE}"\nargs = ["${box.script(version)}", "mcp", "--host", "codex"]\nstartup_timeout_sec = 60\n`;
+  `[mcp_servers.ufo]\ncommand = "${NODE}"\nargs = ["${box.script(version)}", "mcp", "--host", "codex"]\nstartup_timeout_sec = 60\nenv = { UFO_HOME = "${box.ufoHome}" }\n`;
 
 async function refusal(promise: Promise<unknown>): Promise<SetupError> {
   try {
@@ -83,7 +83,10 @@ describe("ufo setup", () => {
     ]);
     // The plan names the programs it runs by their absolute paths.
     expect(printed).toContain(`claude at ${box.bin}/claude (2.1.304 (Claude Code))`);
-    expect(printed).toContain(`run ${box.bin}/claude mcp add --scope user ufo -- ${NODE} `);
+    // ~/.ufo too goes into every entry (F2), shown with the home as ~.
+    expect(printed).toContain(
+      `run ${box.bin}/claude mcp add --scope user ufo -e UFO_HOME=~/.ufo -- ${NODE} `,
+    );
     expect(printed).toContain(`with ${box.bin}/npm (no install scripts`);
     expect(printed).toContain("+[mcp_servers.ufo]");
     expect(report.notes.join(" ")).toContain("Restart Claude Code, Codex, and Cursor");

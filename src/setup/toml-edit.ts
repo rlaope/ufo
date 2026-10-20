@@ -309,17 +309,23 @@ export type TomlEntry =
   | { readonly found: false }
   | {
       readonly found: true;
-      /** The table, when the entry is exactly one `[parent.name]` table and nothing else. */
+      /** The table, when the entry is one `[parent.name]` table and nothing UFO does not know. */
       readonly table: TomlTable | undefined;
-      /** The table's keys as one value (`undefined` when `table` is). */
+      /**
+       * `[parent.name.env]`: Codex's own edits (`codex mcp add`) rewrite the `env = { ... }` UFO
+       * writes as this sub-table. It is part of UFO's entry when it holds only strings.
+       */
+      readonly envTable: TomlTable | undefined;
+      /** The entry as one value, `env` included (`undefined` when `table` is). */
       readonly value: TomlTableValue | undefined;
     };
 
 /**
- * Finds the `[<parent>.<name>]` table. Refuses (`host_config_invalid`) a file that does not parse,
- * repeats the table, or defines `parent` in a way a new table cannot extend (an inline table,
- * another value, an array of tables). An entry spread over sub-tables, dotted keys, or an inline
- * table is found without a `table`: setup does not edit it.
+ * Finds the `[<parent>.<name>]` table, and its `[<parent>.<name>.env]` table of strings if there is
+ * one. Refuses (`host_config_invalid`) a file that does not parse, repeats either table or `env`,
+ * or defines `parent` in a way a new table cannot extend (an inline table, another value, an
+ * array of tables). An entry spread over other sub-tables, dotted keys, an inline table, or an
+ * `env` table with other than string values is found without a `table`: setup does not edit it.
  */
 export function locateTomlEntry(
   text: string,
@@ -329,25 +335,38 @@ export function locateTomlEntry(
 ): TomlEntry {
   const tables = scanToml(text, label);
   const entryPath = [parent, name];
-  const exact = tables.filter(
-    (t) => !t.array && t.path.length === 2 && startsWith(t.path, entryPath),
-  );
-  if (exact.length > 1) {
-    throw new SetupError("host_config_invalid", `${label} has [${parent}.${name}] more than once`);
-  }
-  let elsewhere = tables.some(
-    (t) => startsWith(t.path, entryPath) && (t.array || t.path.length > 2),
-  );
-  for (const table of tables) {
-    if (table.array && table.path.length === 1 && table.path[0] === parent) {
+  const envPath = [parent, name, "env"];
+  const only = (path: readonly string[]) => {
+    const found = tables.filter(
+      (t) => !t.array && t.path.length === path.length && startsWith(t.path, path),
+    );
+    if (found.length > 1) {
+      throw new SetupError(
+        "host_config_invalid",
+        `${label} has [${path.join(".")}] more than once`,
+      );
+    }
+    return found[0];
+  };
+  const table = only(entryPath);
+  const envTable = only(envPath);
+  const ours = (t: TomlTable) => t === table || t === envTable;
+  const stringsOnly =
+    envTable === undefined ||
+    envTable.keys.every((line) => line.path.length === 1 && typeof line.value === "string");
+  let elsewhere =
+    !stringsOnly ||
+    tables.some((t) => startsWith(t.path, entryPath) && (t.array || t.path.length > 2) && !ours(t));
+  for (const t of tables) {
+    if (t.array && t.path.length === 1 && t.path[0] === parent) {
       throw new SetupError(
         "host_config_invalid",
         `${label} defines ${parent} as an array of tables; add the ufo server by hand`,
       );
     }
-    if (table.array) continue;
-    for (const line of table.keys) {
-      const full = [...table.path, ...line.path];
+    if (t.array) continue;
+    for (const line of t.keys) {
+      const full = [...t.path, ...line.path];
       if (full.length === 1 && full[0] === parent) {
         const { value } = line;
         const inline =
@@ -357,22 +376,28 @@ export function locateTomlEntry(
           `${label} sets ${parent} to ${inline ? "an inline table" : "a value that is not a table"}, so a [${parent}.${name}] table cannot be added; add the ufo server by hand`,
         );
       }
-      if (startsWith(full, entryPath) && table !== exact[0]) elsewhere = true;
+      if (startsWith(full, entryPath) && !ours(t)) elsewhere = true;
     }
   }
-  const [table] = exact;
-  if (table === undefined && !elsewhere) return { found: false };
-  if (table === undefined || elsewhere) return { found: true, table: undefined, value: undefined };
+  if (table === undefined && envTable === undefined && !elsewhere) return { found: false };
+  if (table === undefined || elsewhere) {
+    return { found: true, table: undefined, envTable: undefined, value: undefined };
+  }
   const value: TomlTableValue = {};
+  const twice = () =>
+    new SetupError("host_config_invalid", `${label} sets a key of [${parent}.${name}] twice`);
   for (const line of table.keys) {
-    if (!assign(value, line.path, line.value)) {
-      throw new SetupError(
-        "host_config_invalid",
-        `${label} sets a key of [${parent}.${name}] twice`,
-      );
-    }
+    if (!assign(value, line.path, line.value)) throw twice();
   }
-  return { found: true, table, value };
+  if (envTable !== undefined) {
+    if (Object.hasOwn(value, "env")) throw twice();
+    const env: TomlTableValue = {};
+    for (const line of envTable.keys) {
+      if (!assign(env, line.path, line.value)) throw twice();
+    }
+    value.env = env;
+  }
+  return { found: true, table, envTable, value };
 }
 
 function renderValue(value: unknown): string {
@@ -419,25 +444,51 @@ export function insertTomlEntry(
   return { text: current + inserted, edit: { replaced: "", inserted } };
 }
 
-/**
- * Removes the table by rule (when `undoEdit` cannot reverse setup's own edit): its header through
- * its last key/value line, and one blank line right before it. Comments and blank lines after its
- * last key belong to what follows and stay.
- */
-export function removeTomlEntry(text: string, parent: string, name: string, label: string): string {
-  const located = locateTomlEntry(text, parent, name, label);
-  if (!located.found) return text;
-  if (located.table === undefined) throw new Error(`${label} has no editable [${parent}.${name}]`);
-  const { start, end } = located.table;
-  let from = start;
-  if (start > 0) {
-    const previous = start >= 2 ? text.lastIndexOf("\n", start - 2) + 1 : 0;
-    if (text.slice(previous, start).trim() === "") from = previous;
-  }
-  return splice(text, from, end, "");
+/** Where `table` starts, with the one blank line right before it that setup adds. */
+function withBlankBefore(text: string, table: TomlTable): number {
+  const { start } = table;
+  if (start === 0) return start;
+  const previous = start >= 2 ? text.lastIndexOf("\n", start - 2) + 1 : 0;
+  return text.slice(previous, start).trim() === "" ? previous : start;
 }
 
-/** Replaces the table (present and editable) with one holding `value`; returns both texts. */
+/** `text` with each span replaced, the last one first so earlier offsets hold. */
+function spliceAll(
+  text: string,
+  edits: readonly { start: number; end: number; replacement: string }[],
+): string {
+  return [...edits]
+    .sort((a, b) => b.start - a.start)
+    .reduce((result, edit) => splice(result, edit.start, edit.end, edit.replacement), text);
+}
+
+function editable(text: string, parent: string, name: string, label: string) {
+  const located = locateTomlEntry(text, parent, name, label);
+  if (!located.found) return undefined;
+  if (located.table === undefined) throw new Error(`${label} has no editable [${parent}.${name}]`);
+  return { table: located.table, envTable: located.envTable };
+}
+
+/**
+ * Removes the table by rule (when `undoEdit` cannot reverse setup's own edit): its header through
+ * its last key/value line, and one blank line right before it; the same for an `env` table.
+ * Comments and blank lines after a table's last key belong to what follows and stay.
+ */
+export function removeTomlEntry(text: string, parent: string, name: string, label: string): string {
+  const found = editable(text, parent, name, label);
+  if (found === undefined) return text;
+  const spans = [found.table, ...(found.envTable === undefined ? [] : [found.envTable])];
+  return spliceAll(
+    text,
+    spans.map((t) => ({ start: withBlankBefore(text, t), end: t.end, replacement: "" })),
+  );
+}
+
+/**
+ * Replaces the table (present and editable) with one holding `value`, and drops an `env` table,
+ * whose strings the new table holds inline. Returns the new text and both versions of the main
+ * table.
+ */
 export function replaceTomlEntry(
   text: string,
   parent: string,
@@ -445,14 +496,19 @@ export function replaceTomlEntry(
   value: Readonly<Record<string, unknown>>,
   label: string,
 ): { text: string; before: string; after: string } {
-  const located = locateTomlEntry(text, parent, name, label);
-  if (!located.found || located.table === undefined) {
-    throw new Error(`${label} has no editable [${parent}.${name}]`);
-  }
-  const { start, end } = located.table;
+  const found = editable(text, parent, name, label);
+  if (found === undefined) throw new Error(`${label} has no [${parent}.${name}]`);
+  const { start, end } = found.table;
   const before = text.slice(start, end);
   const rendered = renderTomlTable(parent, name, value, eolOf(text));
   // A table at the end of a file without a final line ending stays without one.
   const after = before.endsWith("\n") ? rendered : rendered.replace(/\r?\n$/, "");
-  return { text: splice(text, start, end, after), before, after };
+  const env = found.envTable;
+  const edits = [
+    { start, end, replacement: after },
+    ...(env === undefined
+      ? []
+      : [{ start: withBlankBefore(text, env), end: env.end, replacement: "" }]),
+  ];
+  return { text: spliceAll(text, edits), before, after };
 }

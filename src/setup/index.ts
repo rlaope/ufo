@@ -273,11 +273,9 @@ async function execute(command: SetupCommand, options: SetupOptions): Promise<Se
       install = {
         source,
         launch: launchFor(prefixFor(store.pkgRoot, source.version), node),
-        // Hosts start servers with their own environment, so a UFO home other than ~/.ufo is
-        // written into every entry.
-        ...(path.resolve(ufoHomePath) === path.join(home, ".ufo")
-          ? {}
-          : { env: { UFO_HOME: store.home } }),
+        // Every entry names the UFO home, ~/.ufo too: hosts start servers with an environment
+        // of their own, and one that passes UFO_HOME must not move the server's home (F2).
+        env: { UFO_HOME: store.home },
       };
     }
     const held = await heldMachineLock({ home: store.home });

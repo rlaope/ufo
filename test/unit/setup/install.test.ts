@@ -65,9 +65,21 @@ describe("installing the copy hosts start", () => {
     const error = await refusal(setup(options()));
     expect(error.code).toBe("integrity_mismatch");
     expect(error.message).toContain(
-      "npm resolved zod from https://registry.example.com/zod/-/zod-4.6.7.tgz, not https://registry.npmjs.org/",
+      "npm resolved zod@4.6.7 from https://registry.example.com/zod/-/zod-4.6.7.tgz, not https://registry.npmjs.org/zod/-/zod-4.6.7.tgz",
     );
     expect(await readdir(pkgRoot())).toEqual([]);
+  });
+
+  it("F1: refuses a dependency resolved to another package's tarball on the registry", async () => {
+    box.fakes.npmResolvesZodFrom = "https://registry.npmjs.org/evil/-/evil-4.6.7.tgz";
+    const error = await refusal(setup(options()));
+    expect(error.code).toBe("integrity_mismatch");
+    expect(error.message).toContain(
+      "npm resolved zod@4.6.7 from https://registry.npmjs.org/evil/-/evil-4.6.7.tgz",
+    );
+    // A scoped dependency's own tarball is accepted (the fake lockfile has one).
+    box.fakes.npmResolvesZodFrom = "https://registry.npmjs.org/zod/-/zod-4.6.7.tgz";
+    expect((await setup(options())).changed).toBe(true);
   });
 
   it("DC-N8: reports an npm stopped at its time limit by the signal", async () => {
@@ -100,11 +112,13 @@ describe("installing the copy hosts start", () => {
     expect(error.message).toBe("could not reach https://registry.npmjs.org/: offline");
   });
 
-  it("DC-N5: sweeps what an interrupted install left in pkg/", async () => {
+  it("DC-N5, L2: sweeps what an interrupted install left in pkg/, never a version", async () => {
     await mkdir(path.join(pkgRoot(), ".install-AbCdEf"), { recursive: true });
-    await mkdir(path.join(pkgRoot(), `${VERSION}.old-0a1b2c3d`), { recursive: true });
+    await mkdir(path.join(pkgRoot(), `.old-${VERSION}-0a1b2c3d`), { recursive: true });
+    // A prerelease version's own directory can end in `.old-<hex>`.
+    await mkdir(path.join(pkgRoot(), "1.0.0-x.old-0a1b2c3d"), { recursive: true });
     await setup(options());
-    expect(await readdir(pkgRoot())).toEqual([VERSION]);
+    expect((await readdir(pkgRoot())).sort()).toEqual(["1.0.0-x.old-0a1b2c3d", VERSION]);
   });
 
   it("DC-N6: refuses to replace or remove a copy while a run holds the machine lock", async () => {

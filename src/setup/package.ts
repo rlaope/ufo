@@ -311,33 +311,43 @@ export function npmArgs(prefix: string, source: PackageSource): string[] {
 }
 
 /**
- * Every package in the lockfile came from the public registry (security DS-N2): a scoped
- * registry in an `.npmrc` must not swap a dependency. The package itself may be the `--package`
- * tarball.
+ * Every package in the lockfile is the registry's own tarball of its name and version (security
+ * DS-N2, F1): `https://registry.npmjs.org/<name>/-/<basename>-<version>.tgz`, so neither a
+ * scoped registry in an `.npmrc` nor a URL to another package's tarball can swap a dependency.
+ * The package itself may be the `--package` tarball.
  */
 async function checkResolved(prefix: string, source: PackageSource): Promise<void> {
   const lock = (await readJson(path.join(prefix, "package-lock.json"))) as
-    | { packages?: Record<string, { resolved?: unknown; link?: unknown }> }
+    | { packages?: Record<string, { resolved?: unknown; version?: unknown; link?: unknown }> }
     | undefined;
-  for (const [name, entry] of Object.entries(lock?.packages ?? {})) {
-    if (name === "") continue;
-    const { resolved } = entry;
-    const own = name === `node_modules/${PACKAGE_NAME}` && source.tarball !== undefined;
-    const fromRegistry = typeof resolved === "string" && resolved.startsWith(REGISTRY);
+  for (const [key, entry] of Object.entries(lock?.packages ?? {})) {
+    if (key === "") continue;
+    const name = key.slice(key.lastIndexOf("node_modules/") + "node_modules/".length);
+    const { resolved, version } = entry;
+    const expected =
+      typeof version === "string"
+        ? `${REGISTRY}${name}/-/${path.posix.basename(name)}-${version}.tgz`
+        : undefined;
+    const own = key === `node_modules/${PACKAGE_NAME}` && source.tarball !== undefined;
+    const fromRegistry = expected !== undefined && resolved === expected;
     const fromTarball = own && typeof resolved === "string" && resolved.startsWith("file:");
     if (entry.link === true || !(fromRegistry || fromTarball)) {
       throw new SetupError(
         "integrity_mismatch",
-        `npm resolved ${name.replace(/^node_modules\//, "")} from ${typeof resolved === "string" ? resolved : "nowhere"}, not ${REGISTRY} (a registry set in an .npmrc?); nothing was set up`,
+        `npm resolved ${name}@${typeof version === "string" ? version : "?"} from ${typeof resolved === "string" ? resolved : "nowhere"}, not ${expected ?? `${REGISTRY}${name}`} (a registry set in an .npmrc?); nothing was set up`,
       );
     }
   }
 }
 
-/** Removes what an interrupted install left in `pkgRoot`: `.install-*` and `<version>.old-*`. */
+/**
+ * Removes what an interrupted install left in `pkgRoot`: `.install-*` and `.old-*`. Both start
+ * with a dot, so no installed version's directory (an exact version starts with a digit, and may
+ * itself end in `.old-...` as a prerelease) is ever swept.
+ */
 export async function sweepPackages(pkgRoot: string): Promise<void> {
   for (const name of await readdir(pkgRoot)) {
-    if (/^\.install-|\.old-[0-9a-f]{8}$/.test(name)) {
+    if (/^\.(?:install|old)-/.test(name)) {
       await rm(path.join(pkgRoot, name), { recursive: true, force: true });
     }
   }
@@ -389,7 +399,7 @@ export async function installPackage(
     await installedSkill(temp, source.skill);
     const prefix = prefixFor(pkgRoot, source.version);
     if (await exists(prefix)) {
-      const old = `${prefix}.old-${randomBytes(4).toString("hex")}`;
+      const old = path.join(pkgRoot, `.old-${source.version}-${randomBytes(4).toString("hex")}`);
       await rename(prefix, old);
       try {
         await rename(temp, prefix);
@@ -412,7 +422,7 @@ export async function removePackage(pkgRoot: string, version: string): Promise<v
 
 /**
  * The node a host runs: the `node` on the filtered PATH when it is this process's own binary
- * (a stable path such as a package manager's link), else this process's absolute path. Either
+ * (a stable path such as a package manager's link), else the real path of this binary. Either
  * way its real directory must pass `trusted` (security DS-N1: the PATH rules, so not a project's
  * own node or one under node_modules); otherwise setup refuses.
  */
@@ -430,5 +440,5 @@ export async function nodeCommand(
   }
   const found = await findExecutable("node", env);
   if (found !== undefined && (await realpath(found).catch(() => "")) === real) return found;
-  return execPath;
+  return real;
 }

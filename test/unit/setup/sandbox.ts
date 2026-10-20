@@ -176,10 +176,16 @@ async function fakeNpm(fakes: Fakes, args: string[], cwd: string, env: NodeJS.Pr
   const lock = {
     packages: {
       "": { dependencies: { "ufo-agents": spec } },
-      "node_modules/ufo-agents": { resolved: own, integrity: pkg.integrity },
+      "node_modules/ufo-agents": { version: pkg.version, resolved: own, integrity: pkg.integrity },
       "node_modules/zod": {
+        version: "4.6.7",
         resolved: fakes.npmResolvesZodFrom ?? `${REGISTRY}zod/-/zod-4.6.7.tgz`,
         integrity: "sha512-zod",
+      },
+      "node_modules/@modelcontextprotocol/server": {
+        version: "2.3.1",
+        resolved: `${REGISTRY}@modelcontextprotocol/server/-/server-2.3.1.tgz`,
+        integrity: "sha512-mcp",
       },
     },
   };

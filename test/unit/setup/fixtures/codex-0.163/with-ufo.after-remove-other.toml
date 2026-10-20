@@ -7,5 +7,8 @@ args = ["--port", "9000"]
 
 [mcp_servers.ufo]
 command = "/usr/local/bin/node"
-args = ["/home/user/.ufo/pkg/1.2.3/node_modules/ufo-agents/dist/cli/index.js", "mcp", "--host", "codex"]
+args = ["/home/user/ufo-elsewhere/pkg/1.2.3/node_modules/ufo-agents/dist/cli/index.js", "mcp", "--host", "codex"]
 startup_timeout_sec = 60.0
+
+[mcp_servers.ufo.env]
+UFO_HOME = "/home/user/ufo-elsewhere"
