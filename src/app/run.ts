@@ -1,6 +1,7 @@
 // A run's lifecycle: start, finish, resume, cancel, `ufo measure`, and `ufo run` to the end.
 
 import { lstat, rm } from "node:fs/promises";
+import path from "node:path";
 import { redact } from "../core/evidence/index.js";
 import {
   type CreatedRun,
@@ -18,12 +19,14 @@ import {
   abandonedStart,
   acquireMachineLock,
   appendLedger,
+  CONTROL_LOCK_FILE,
   cancelJob,
   createRunState,
   endRun,
   enqueueJob,
   type JobRecord,
   JobRecordSchema,
+  LockTimeoutError,
   listJobs,
   readLedger,
   readRun,
@@ -760,14 +763,15 @@ export async function measure(
  * Ends a measure run that was not cancelled here: its final status, then its arms and branch. A
  * run something else ended first (`ufo cancel`) was cleaned up by that, or is by the next start.
  * Under the run's control lock: a `ufo cancel` that marked the baseline cancelled finishes first,
- * instead of racing this close.
+ * instead of racing this close, and one that holds the lock past this call's wait ends the run.
  */
-function closeMeasureRun(
+async function closeMeasureRun(
   context: AppContext,
   started: { runId: string; runDir: string; home: string },
   job: JobRecord | undefined,
 ): Promise<void> {
-  return withControlLock(started.runDir, controlLockWaitMs(context), async () => {
+  const control = path.join(started.runDir, CONTROL_LOCK_FILE);
+  await withControlLock(started.runDir, controlLockWaitMs(context), async () => {
     await killRunProcesses(started.runDir, killOptions(context));
     // The status first, as everywhere: a crash in the cleanup below leaves an ended run whose
     // arms and branch the next start removes.
@@ -782,6 +786,10 @@ function closeMeasureRun(
       });
     });
     await releaseMachineLock({ runId: started.runId, home: started.home });
+  }).catch((error: unknown) => {
+    // Whoever holds the run's control lock this long (an outside cancel) is ending the run.
+    if (error instanceof LockTimeoutError && error.file === control) return;
+    throw error;
   });
 }
 
