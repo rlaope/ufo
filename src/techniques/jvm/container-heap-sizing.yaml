@@ -1,0 +1,31 @@
+id: jvm.container-heap-sizing
+domain: jvm
+title: Size the heap from the container limit with MaxRAMPercentage
+kind: guided
+riskClass: lossless
+stacks: [jvm, spring-boot, docker]
+bottlenecks: [allocation]
+signals:
+  - "Container memory limit is set but GC log (-Xlog:gc) shows the heap capped near 25 percent of it, with frequent collections and high allocation pressure (the default MaxRAMPercentage is 25)."
+  - "Container is OOM-killed (exit 137) while JVM heap is below the limit, or the heap is fixed with -Xmx larger than the limit allows."
+  - "JFR shows high GC share of CPU and allocation rate with heap occupancy near the maximum."
+preconditions:
+  - "Container support is active (default on Linux, -XX:+UseContainerSupport)."
+  - "Known container memory limit; headroom is needed for metaspace, thread stacks, code cache and direct buffers."
+steps:
+  - "Check the effective values with `java -XX:+PrintFlagsFinal -version | grep -E 'MaxHeapSize|MaxRAMPercentage'` inside the container."
+  - "Set `-XX:MaxRAMPercentage=` (for example 70 to 75) instead of a fixed -Xmx so it follows the limit; keep the rest free for non-heap memory."
+  - "For fast ramp, raise `-XX:InitialRAMPercentage` (default 1.5625) or set -Xms equal to -Xmx on dedicated pods."
+  - "Re-measure GC frequency, pause time and RSS under load."
+verification:
+  - "GC log shows the larger max heap and fewer collections; RSS stays under the container limit during a load test."
+  - "No OOM kill over a soak run."
+traps:
+  - "A percentage too high leaves too little for non-heap memory and causes OOM kills by the container runtime."
+  - "If -Xmx is also set, it overrides the percentage flags."
+  - "Lazy initialization or a large AOT cache changes memory shape; re-measure."
+expectedEffect: "Fewer GCs and higher throughput when the heap was undersized; none if the heap was already adequate; measure."
+sources:
+  - https://docs.oracle.com/en/java/javase/21/docs/specs/man/java.html
+  - https://docs.spring.io/spring-boot/reference/features/spring-application.html
+verifiedIn: unverified

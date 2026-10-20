@@ -1,0 +1,34 @@
+id: ai.llama-server-kv-cache-quantization
+domain: ai
+title: Quantize the KV cache in llama-server to fit more context or slots
+kind: guided
+riskClass: lossy
+stacks:
+  - llama-cpp
+bottlenecks:
+  - inference
+  - allocation
+signals:
+  - llama-server fails to allocate or has to lower -c or -np because the KV cache does not fit in VRAM or RAM (startup log lists KV buffer sizes)
+  - Memory bandwidth for the KV cache dominates decode at long contexts
+preconditions:
+  - Quality oracle in place (fixed prompt set with accuracy or perplexity checks); user opted into lossy changes
+  - Options -ctk / --cache-type-k and -ctv / --cache-type-v accept f32, f16 (default), bf16, q8_0, q4_0, q4_1, iq4_nl, q5_0, q5_1
+steps:
+  - Record baseline quality and memory with the default f16 cache
+  - Try -ctk q8_0 -ctv q8_0 first (least aggressive of the quantized types), then lower types only if still needed
+  - Use the freed memory for a larger -c or more -np, and measure
+  - Compare quality on the oracle set; reject if the drop is above the agreed tolerance
+verification:
+  - Quality oracle result within tolerance, especially on long-context prompts
+  - KV buffer size in the startup log is smaller and the freed memory is actually used
+  - Throughput at the target context/slot count improves or the configuration becomes possible
+traps:
+  - "It is lossy: errors accumulate with context length and can hurt retrieval-style or long-reasoning tasks first"
+  - Quantizing K is usually more sensitive than V; the docs give no figures, so measure both
+  - Some backends have fewer kernels for quantized caches and can be slower; check combination with flash attention by test
+  - Does not shrink model weights; see the weight quantization card
+expectedEffect: Roughly halves or better the KV cache memory with q8_0 or lower types, with some quality loss; speed varies by backend, measure.
+sources:
+  - https://raw.githubusercontent.com/ggml-org/llama.cpp/master/tools/server/README.md
+verifiedIn: unverified

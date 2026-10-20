@@ -1,0 +1,35 @@
+id: server.node-worker-threads-cpu
+domain: server
+title: Offload CPU-bound JavaScript to a worker_threads pool
+kind: guided
+riskClass: lossless
+stacks: [node]
+bottlenecks: [cpu, contention]
+signals:
+  - "A --cpu-prof profile shows one pure-JS CPU-bound function (parsing, hashing, compression, image or data transform) dominating main-thread self time"
+  - "monitorEventLoopDelay p99 is high while requests for that work are in flight"
+  - "Only one core is busy on a multi-core host while latency rises"
+preconditions:
+  - "The work is CPU-bound JavaScript or WASM, not network or disk I/O"
+  - "Inputs and outputs can be passed with structured clone or transferred as ArrayBuffer"
+steps:
+  - "Move the hot function into a worker script and call it through a fixed-size pool; do not spawn one Worker per task"
+  - "Size the pool from os.availableParallelism() minus the cores used by the main process, and queue tasks when all workers are busy"
+  - "Pass large binary data with postMessage(value, [value.buffer]) so it is transferred, not copied; use SharedArrayBuffer with Atomics only when both sides must see the same memory"
+  - "Set resourceLimits (maxOldGenerationSizeMb) and handle the exit and error events so a crashed worker is replaced"
+  - "Keep I/O on the main thread; send only the CPU step to the worker"
+verification:
+  - "Event-loop delay percentiles and tail latency drop under concurrent load"
+  - "Results from the worker are identical to the in-thread implementation on the same inputs"
+  - "Throughput of the CPU step scales with pool size up to the core count"
+traps:
+  - "Creating a worker is expensive; per-task workers cost more than they save"
+  - "Structured clone of large objects costs CPU and memory and can erase the gain; prefer transferable buffers"
+  - "Pooled Buffers (Buffer.from, allocUnsafe) are always cloned, and class instances lose prototypes across the boundary"
+  - "Workers do not help I/O-bound work"
+  - "Reaching resourceLimits terminates the worker; those limits do not cover ArrayBuffer backing stores"
+expectedEffect: "Keeps the event loop responsive and uses extra cores when CPU work dominates; varies, measure."
+sources:
+  - https://nodejs.org/api/worker_threads.html
+  - https://nodejs.org/en/learn/asynchronous-work/dont-block-the-event-loop
+verifiedIn: unverified

@@ -1,0 +1,38 @@
+id: build.gradle-configuration-cache
+domain: build
+title: Enable the Gradle configuration cache and keep configuration-time work lazy
+kind: guided
+riskClass: lossless
+stacks: [gradle, jvm]
+bottlenecks: [build, caching]
+signals:
+  - "A Gradle build scan Performance page (or the report written by gradle --profile to the build directory reports/profile) shows a large share of wall time in the Configuration phase on every invocation, including no-op reruns."
+  - "gradle.properties has no org.gradle.configuration-cache setting and a run prints no 'Configuration cache entry reused' line."
+  - "Build scripts or plugins read environment variables, system properties, files, or run exec at configuration time (visible in the configuration cache report as inputs)."
+preconditions:
+  - "Gradle 8.x or newer; Gradle 9.0 made it the preferred execution mode and the docs say it becomes the default in Gradle 10."
+  - "All plugins in use support the configuration cache, or their incompatible tasks can opt out."
+steps:
+  - "Trial a run with --configuration-cache and open the generated configuration cache report (an HTML file under the build directory reports/configuration-cache); problems fail the build by default, so fix each one rather than switching to --configuration-cache-problems=warn."
+  - "Replace use of Project, Gradle, Settings, or Configuration objects inside task actions with task inputs (FileCollection, Property, Provider) wired at configuration time."
+  - "Read environment, system properties, and file contents through providers (providers.environmentVariable, providers.fileContents, providers.exec or a ValueSource) so they are read at execution time or tracked as proper inputs."
+  - "Replace build listeners with a Build Service for logic that reacts to task execution."
+  - "Remove expensive work from plugin apply() methods and task constructors; apply plugins only to projects that need them."
+  - "Once clean, set org.gradle.configuration-cache=true in gradle.properties."
+verification:
+  - "Run the same task twice; the second run reports the configuration cache entry was reused and the Configuration phase time in --profile or a build scan drops sharply."
+  - "Task outputs and test results are identical with and without --no-configuration-cache."
+  - "The configuration cache report lists zero problems."
+traps:
+  - "Every environment variable, system property, and file read during configuration becomes an input; a value that changes per run (timestamps, build numbers) invalidates the entry on every invocation."
+  - "Entries are encrypted but values read from env or system properties are stored, so do not feed secrets through them; use GRADLE_USER_HOME/gradle.properties or the credentials API."
+  - "IDE syncs do not use the cache, only task runs started from the IDE."
+  - "Tasks that share mutable state by reference see isolated copies after deserialization; use a Build Service for deliberate sharing."
+  - "Dependency resolution becomes eager, so latent errors in unused configurations can surface only with the cache on."
+expectedEffect: "Skips the configuration phase on repeat invocations with unchanged inputs; the saving scales with configuration time and project count, so measure."
+sources:
+  - https://docs.gradle.org/current/userguide/configuration_cache.html
+  - https://docs.gradle.org/current/userguide/performance.html
+  - https://docs.gradle.org/current/userguide/configuration_cache_debugging.html
+  - https://docs.gradle.org/current/userguide/command_line_interface.html
+verifiedIn: unverified

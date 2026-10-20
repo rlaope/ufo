@@ -1,0 +1,33 @@
+id: server.python-uvloop
+domain: server
+title: Run asyncio services on uvloop
+kind: guided
+riskClass: upgrade
+stacks: [python, fastapi]
+bottlenecks: [io, network, cpu]
+signals:
+  - "py-spy top or record shows significant time in asyncio selector_events, base_events, or streams frames while the service is I/O heavy with many connections"
+  - "The service uses asyncio (aiohttp, FastAPI/Starlette on uvicorn, raw asyncio servers) and does not already use uvloop"
+  - "pip list or the lockfile has no uvloop; uvicorn started with --loop asyncio"
+preconditions:
+  - "uvloop requires Python 3.9 or newer; installing it adds a dependency (upgrade class)"
+  - "uvicorn documents uvloop as not compatible with Windows or PyPy; check platform support for the target"
+steps:
+  - "Add uvloop to dependencies and pin it in the lockfile"
+  - "For scripts use uvloop.run(main()) (uvloop 0.18+); on Python 3.11+ asyncio.Runner(loop_factory=uvloop.new_event_loop) is the alternative; before 3.11 call uvloop.install() before asyncio.run"
+  - "For uvicorn, use --loop uvloop (the documented default is auto, so check which loop it selects); UvicornWorker under gunicorn already uses uvloop"
+  - "Re-run the load test and compare throughput and latency"
+verification:
+  - "Loop implementation confirmed at runtime (type of asyncio.get_running_loop() is uvloop.Loop)"
+  - "Test suite passes, including code that touches loop internals or subprocess handling"
+  - "Throughput or latency improves in the load test"
+traps:
+  - "Libraries that depend on asyncio internals or specific loop policies may misbehave"
+  - "Gains apply to I/O and event loop overhead, not to CPU time in application code"
+  - "The project claims 2-4x for echo-server microbenchmarks; real services see less"
+expectedEffect: "Lower event-loop overhead for connection-heavy asyncio services; microbenchmarks claim 2-4x, real gain varies, measure."
+sources:
+  - https://github.com/MagicStack/uvloop
+  - https://uvicorn.dev/deployment/
+  - https://uvicorn.dev/settings/
+verifiedIn: unverified

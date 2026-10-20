@@ -1,0 +1,38 @@
+id: data.query-result-caching
+domain: data
+title: Cache the results of hot, read-mostly queries with explicit invalidation
+kind: guided
+riskClass: lossy
+stacks: [spring-boot, django, postgres, mysql]
+bottlenecks: [caching, query]
+signals:
+  - "pg_stat_statements shows the same normalized read statement with extremely high calls and identical parameters repeated within seconds."
+  - "Application tracing or ORM SQL logging shows the same query with the same bind values issued many times per request or across requests."
+  - "The underlying table changes rarely compared with how often it is read (low n_tup_upd/n_tup_ins in pg_stat_user_tables against high calls)."
+preconditions:
+  - "The owner accepts that readers may see data up to the TTL old, or that every write path can invalidate the entry. This changes observable behavior, so it needs opt-in and a staleness oracle (a test that writes then reads)."
+  - "The result does not depend on the user, tenant, or session, or the cache key includes those."
+  - "A shared cache (Redis, Memcached) if multiple processes serve requests; per-process caches diverge."
+steps:
+  - "Identify the one statement with the highest repeat rate and the loosest freshness need from pg_stat_statements."
+  - "Spring: enable `@EnableCaching`, put `@Cacheable(cacheNames=..., key=..., sync=true)` on the service method that wraps the query, and pair every write method with `@CacheEvict` or `@CachePut` for the affected keys; configure TTL and size in the cache provider."
+  - "Django: `cache.get_or_set(key, callable, timeout)` with a key that includes the query arguments; delete or version the key on write with `cache.delete` or key `version`."
+  - "Set a TTL that is the maximum staleness the owner accepted; do not use infinite timeouts."
+  - "Add a metric for hit ratio and a test proving that a write is visible within the stated bound."
+verification:
+  - "pg_stat_statements calls for the statement drop by roughly the cache hit ratio; latency of the endpoint falls."
+  - "The staleness test passes: write then read returns the new value within the TTL or immediately after eviction."
+  - "Responses for different users or tenants never leak across keys."
+traps:
+  - "Stale reads are the cost; any write path missed by invalidation serves old data until TTL."
+  - "Spring proxies intercept only external calls to public methods; self-invocation bypasses the cache. `@Cacheable` and `@CachePut` on the same method conflict."
+  - "Without `sync=true` (or an add()-based lock in Django), concurrent misses all hit the database at once when a hot key expires."
+  - "Django `cache_page` does not vary by user or cookie by default; add vary decorators. `cache.clear()` wipes unrelated keys. The local-memory backend is per process."
+  - "Cached ORM entities with lazy associations can break outside their session; cache DTOs or plain values."
+  - "Keys built from objects without proper equals/hashCode or str produce collisions or misses."
+expectedEffect: "Removes repeated database work for hot read-mostly queries; gain is proportional to hit ratio, at the cost of bounded staleness; measure."
+sources:
+  - https://docs.spring.io/spring-framework/reference/integration/cache/annotations.html
+  - https://docs.djangoproject.com/en/stable/topics/cache/
+  - https://www.postgresql.org/docs/current/pgstatstatements.html
+verifiedIn: unverified

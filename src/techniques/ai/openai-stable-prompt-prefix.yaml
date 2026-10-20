@@ -1,0 +1,35 @@
+id: ai.openai-stable-prompt-prefix
+domain: ai
+title: Order prompts so the stable prefix is cacheable (OpenAI-compatible APIs)
+kind: guided
+riskClass: lossless
+stacks:
+  - openai-client
+bottlenecks:
+  - caching
+  - network
+signals:
+  - usage.input_tokens_details.cached_tokens (or the provider equivalent) is zero or small on requests whose first part repeats across calls
+  - Request logs show a timestamp, user id or request id near the start of the system or developer message
+  - Tool definitions or their order differ between calls of the same agent
+preconditions:
+  - Provider supports prompt caching and returns cached-token usage; minimum prompt length applies (1,024 tokens for the newest OpenAI models, varies for earlier ones)
+  - Cache reuse needs the entire rendered prefix up to a breakpoint to match
+steps:
+  - Print usage cached-token counts for a sample of requests as the baseline
+  - "Move stable content first: instructions, tool definitions, shared reference material; move timestamps and per-user details to the end or to a later message"
+  - Keep tool definitions, ordering and schemas identical across calls; restrict tools with tool_choice or allowed_tools instead of removing definitions
+  - Append new messages instead of rewriting earlier turns; avoid summarizing or truncating history on every turn
+  - Optionally set a stable prompt_cache_key for requests that share a prefix (routing hint, not a guarantee)
+verification:
+  - Cached-token count rises toward the shared prefix length on the second and later calls
+  - Latency and input cost drop while answers stay equivalent
+traps:
+  - Anything changed before a breakpoint prevents reuse of what follows
+  - Compaction, summarization or truncation can reset reuse
+  - Cached tokens still count toward tokens-per-minute limits; caching does not change output generation
+  - Retention windows differ by model and settings; idle time evicts entries
+expectedEffect: Lower input cost and time to first token on repeated prefixes; varies with prefix length and traffic pattern, measure.
+sources:
+  - https://developers.openai.com/api/docs/guides/prompt-caching
+verifiedIn: unverified

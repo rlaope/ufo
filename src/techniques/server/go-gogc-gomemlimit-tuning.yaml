@@ -1,0 +1,33 @@
+id: server.go-gogc-gomemlimit-tuning
+domain: server
+title: Tune GOGC and GOMEMLIMIT for the container memory budget
+kind: guided
+riskClass: lossless
+stacks: [go, docker]
+bottlenecks: [allocation, cpu]
+signals:
+  - "CPU profile shows runtime.gcBgMarkWorker with a large cumulative share, or GODEBUG=gctrace=1 shows frequent cycles with a small live heap"
+  - "Container memory limit is much larger than the process RSS, so GC runs often while memory sits unused"
+  - "Alternatively the process is OOM-killed by the container at a heap peak while GOGC is at the default 100"
+preconditions:
+  - "Go 1.19+ for GOMEMLIMIT"
+  - "The process owns its memory budget (a service in a fixed-memory container)"
+  - "Allocation reduction has been considered first because it is usually the bigger win"
+steps:
+  - "Measure GC cost with the CPU profile, gctrace, and /cpu/classes/gc/total:cpu-seconds from runtime/metrics"
+  - "Set GOMEMLIMIT below the container limit, leaving roughly 5-10 percent headroom for memory the Go runtime is unaware of, as the GC guide suggests (for example GOMEMLIMIT=900MiB for a 1 GiB limit)"
+  - "Raise GOGC (for example 200) to trade memory for less GC CPU when headroom exists, or lower it when memory is tight"
+  - "Watch RSS (not virtual memory) and p99 latency in the load test"
+verification:
+  - "GC CPU share and cycle count fall at equal or better latency"
+  - "RSS stays under the container limit during peak load with no OOM kills"
+traps:
+  - "GOMEMLIMIT is soft; a limit near the live heap causes thrashing, where the GC CPU use is limited to roughly 50 percent and the program makes little progress"
+  - "GOGC=off with a limit is only safe when no other process shares the memory"
+  - "Do not set a limit to dodge OOM when live heap is already near the container limit; raise the limit or lower GOGC"
+  - "Heap target is live heap plus GC roots times GOGC/100, so doubling GOGC roughly doubles heap overhead"
+  - "Do not set a memory limit in tools whose input and environment you do not control"
+expectedEffect: "Less GC CPU at the cost of memory, and OOM protection near the limit; varies, measure."
+sources:
+  - https://go.dev/doc/gc-guide
+verifiedIn: unverified

@@ -1,0 +1,33 @@
+id: server.go-gomaxprocs-containers
+domain: server
+title: Match GOMAXPROCS to the container CPU limit
+kind: guided
+riskClass: lossless
+stacks: [go, docker]
+bottlenecks: [contention, cpu]
+signals:
+  - "Container metrics show CPU throttling (cgroup cpu.stat nr_throttled rising) while the Go service has a CPU limit below the node core count"
+  - "runtime.GOMAXPROCS(0) printed at startup equals the host core count, not the container CPU limit"
+  - "Tail latency spikes in periodic bursts in a CPU-limited pod; go.mod declares Go older than 1.25 and automaxprocs is absent"
+preconditions:
+  - "Linux container with a CPU limit (not only a request)"
+  - "Go 1.25+ with go 1.25.0 or higher in go.mod gets the container-aware default; earlier versions need go.uber.org/automaxprocs"
+steps:
+  - "Check runtime.GOMAXPROCS(0) inside the container and compare with the CPU limit"
+  - "On Go 1.25+ set the go directive in go.mod to 1.25.0 or later and remove GOMAXPROCS env settings and runtime.GOMAXPROCS calls so the default applies"
+  - "On older Go add import _ go.uber.org/automaxprocs in the main package, or set the GOMAXPROCS env var to the rounded-up limit"
+  - "Re-run the load test and compare throttling and p99 latency"
+verification:
+  - "GOMAXPROCS reported at runtime equals the (rounded-up) CPU limit"
+  - "nr_throttled and throttled time fall; tail latency improves"
+traps:
+  - "Setting the GOMAXPROCS env var or calling runtime.GOMAXPROCS disables the Go 1.25 automatic behavior"
+  - "CPU requests do not influence the default; only limits do"
+  - "Fractional limits round up, so throttling can remain at limits like 1.5"
+  - "Without a CPU limit the default stays at the core count"
+  - "automaxprocs benchmark on a 2-core quota showed P99 and throttling worse with the default 24 procs, but results vary per service"
+expectedEffect: "Less CFS throttling and lower tail latency for CPU-limited Go containers; varies, measure."
+sources:
+  - https://go.dev/blog/container-aware-gomaxprocs
+  - https://pkg.go.dev/go.uber.org/automaxprocs
+verifiedIn: unverified

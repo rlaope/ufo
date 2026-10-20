@@ -1,0 +1,35 @@
+id: build.cargo-fast-linker
+domain: build
+title: Cut Rust link time with lld or mold
+kind: guided
+riskClass: lossless
+stacks: [rust, cargo]
+bottlenecks: [build, io, cpu]
+signals:
+  - "cargo build --timings shows the final binary or test-binary units spending most of their time after codegen with little parallelism in the concurrency graph."
+  - "Incremental edit-compile-test cycles are dominated by linking a large binary (rustc -Z time-passes or timings unit table shows long link tail)."
+  - "The target links with a slower default linker, such as GNU ld on a toolchain older than 1.90 or on a Linux target other than x86_64-unknown-linux-gnu."
+preconditions:
+  - "rustc 1.90.0 or newer already uses rust-lld by default on x86_64-unknown-linux-gnu (the Rust blog announced this for the 1.90.0 stable release); on that target there is nothing to do for lld, and mold is the optional faster alternative."
+  - "mold is a drop-in replacement for Unix linkers; its README lists the supported CPU architectures (x86-64, ARM, RISC-V and others), so confirm the target architecture there."
+  - "For mold: clang, or GCC 12.1.0 or newer, as the linker driver (-fuse-ld=mold)."
+steps:
+  - "Check the rustc version and target: if lld is already the default (see preconditions), measure link time first and only try mold if links still dominate."
+  - "For mold add to .cargo/config.toml under [target.'cfg(target_os = \"linux\")']: rustflags = [\"-C\", \"link-arg=-fuse-ld=mold\"] (for GCC before 12.1.0 pass -B with the directory holding mold's ld symlink instead of -fuse-ld, per the mold README)."
+  - "For lld use -C link-arg=-fuse-ld=lld or -Clinker-features=+lld where supported."
+verification:
+  - "cargo build --timings shows shorter link time for binary units after a small edit."
+  - "For mold, readelf -p .comment on the output contains a mold string; binaries pass the same tests."
+traps:
+  - "Config set globally affects every project on the machine; prefer project-level .cargo/config.toml or CI-only config."
+  - "lld is not bug-for-bug compatible with GNU ld; the Rust team documents -C linker-features=-lld to revert, and some crates may need extra link args."
+  - "GCC before 12.1.0 rejects -fuse-ld=mold; use clang or the -B workaround from the mold README."
+  - "Not verified for macOS or Windows MSVC targets; this card's flags assume a Unix-style cc linker driver."
+  - "A flag change invalidates cached artifacts, causing one full rebuild."
+expectedEffect: "Shortens the link step for large binaries; no benefit when compile time dominates, so check timings first."
+sources:
+  - https://github.com/rui314/mold
+  - https://doc.rust-lang.org/rustc/codegen-options/index.html
+  - https://blog.rust-lang.org/2025/09/01/rust-lld-on-1.90.0-stable/
+  - https://doc.rust-lang.org/cargo/reference/timings.html
+verifiedIn: unverified

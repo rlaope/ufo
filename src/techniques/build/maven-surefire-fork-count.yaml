@@ -1,0 +1,30 @@
+id: build.maven-surefire-fork-count
+domain: build
+title: Tune Surefire forkCount and keep reuseForks true
+kind: guided
+riskClass: lossless
+stacks: [maven, jvm]
+bottlenecks: [build, cpu, startup]
+signals:
+  - "Surefire test phase dominates the reactor summary time while CPU utilization stays near one core."
+  - "pom or settings configure reuseForks=false so every test class starts a fresh JVM (many 'Forking command line' lines in mvn -X output)."
+  - "forkCount is unset (default 1) in a module with a large independent test suite."
+preconditions:
+  - "Test classes are independent of each other and do not rely on static state shared across classes unless reuseForks stays true knowingly."
+steps:
+  - "Set forkCount to a core multiple, for example 1C or 0.5C, to run test classes in several JVMs concurrently."
+  - "Keep reuseForks=true (the default) so each JVM runs many classes and expensive setup is reused; use false only as a last resort for isolation."
+  - "Isolate shared resources per fork using ${surefire.forkNumber} in systemPropertyVariables, argLine, and workingDirectory (for example a per-fork database schema or temp dir)."
+  - "When combining with mvn -T, remember forks multiply: total JVMs is forkCount times the thread count."
+verification:
+  - "Test phase wall time decreases and the surefire reports list the same tests with the same results over repeated runs."
+traps:
+  - "forkCount=0 disables forking and runs tests in the Maven JVM; the Maven parallel-builds page lists surefire without forking (forkMode=never) as incompatible with -T."
+  - "Fixed ports, files, and database schemas collide across concurrent forks."
+  - "With forkCount above 1 and reuseForks=true, classes are handed out one at a time, so parallel=classes adds nothing; thread-level parallel=methods needs thread-safe tests."
+  - "Heap per fork multiplies; set -Xmx in argLine with total memory in mind."
+expectedEffect: "Test time shrinks for isolated CPU-bound suites; shared resources, JVM start cost and memory limit it, so measure."
+sources:
+  - https://maven.apache.org/surefire/maven-surefire-plugin/examples/fork-options-and-parallel-execution.html
+  - https://cwiki.apache.org/confluence/display/MAVEN/Parallel+builds+in+Maven+3
+verifiedIn: unverified

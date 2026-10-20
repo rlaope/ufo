@@ -1,0 +1,42 @@
+id: frontend.vite-manual-chunks-vendor-split
+domain: frontend
+title: "Vite: control chunking for stable vendor chunks"
+kind: guided
+riskClass: lossless
+stacks:
+  - vite
+  - typescript
+  - node
+bottlenecks:
+  - bundle
+  - caching
+signals:
+  - Vite build warns that chunks are larger than 500 kB after minification
+  - Visualizer treemap shows one monolithic entry chunk mixing app code and rarely changing vendor code
+  - Returning visitors re-download the large entry chunk after every deploy because vendor code shares its hash with app code
+preconditions:
+  - "Vite version noted: Vite 8 bundles with Rolldown and documents build.rolldownOptions (build.rollupOptions is a deprecated alias); earlier Vite uses build.rollupOptions"
+  - "Rollup/Vite 7 and earlier: output.manualChunks; Rolldown: output.codeSplitting.groups"
+steps:
+  - Identify vendor groups from the analyzer (framework runtime, large UI kit) that change rarely
+  - 'Vite on Rollup: build.rollupOptions.output.manualChunks as an object { react: ["react", "react-dom"] } or a function returning a chunk name per module id'
+  - 'Vite 8 on Rolldown: build.rolldownOptions.output.codeSplitting = { groups: [{ name: "react", test: /node_modules\/react/ }] }'
+  - Group only what is needed on first load; keep lazy routes out of manual chunks so they stay async
+  - Rebuild and check that entry and vendor chunks have separate hashes
+  - Raise or tune build.chunkSizeWarningLimit only after the split, not instead of it
+verification:
+  - Build output lists the named vendor chunks and the entry chunk shrinks
+  - After changing only app code, the vendor chunk filename hash stays the same
+  - No new circular-chunk or execution-order warnings; app boots in a production preview (vite preview)
+traps:
+  - Manual chunks can change behavior when side effects run earlier than before; Rollup docs warn about this
+  - Rollup function form pulls dependencies of returned ids into the chunk by default
+  - A single module larger than maxSize cannot be split by Rolldown, and group capture is recursive over dependencies by default
+  - Putting a lazy-loaded library into a manual chunk can make it load eagerly via modulepreload
+  - A single big vendor chunk can be worse than automatic splitting; measure both
+expectedEffect: Better long-term caching of vendor code and smaller entry chunk; initial bytes may not shrink; varies; measure cache-hit transfer size on a second deploy.
+sources:
+  - https://rollupjs.org/configuration-options/#output-manualchunks
+  - https://rolldown.rs/in-depth/advanced-chunks
+  - https://vite.dev/config/build-options.html
+verifiedIn: unverified

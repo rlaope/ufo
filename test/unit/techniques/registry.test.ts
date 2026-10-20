@@ -43,13 +43,11 @@ async function writeCard(domain: string, name: string, text: string): Promise<vo
 describe("loadCatalog", () => {
   it("loads the built-in generic card, then extra directories in order", async () => {
     const catalog = await loadCatalog([FIXTURE_CARDS]);
-    expect([...catalog.cards.keys()]).toEqual([
-      "generic.code-change",
-      "toy.cache-items",
-      "toy.fast-path",
-      "toy.fewer-requests",
-      "toy.no-delay",
-    ]);
+    const keys = [...catalog.cards.keys()];
+    const toy = ["toy.cache-items", "toy.fast-path", "toy.fewer-requests", "toy.no-delay"];
+    // The built-in cards (generic among them) come first, then each extra directory's.
+    expect(keys).toContain("generic.code-change");
+    expect(keys.slice(-toy.length)).toEqual(toy);
     expect(catalog.cards.get("generic.code-change")).toMatchObject({
       kind: "guided",
       riskClass: "lossless",

@@ -1,0 +1,33 @@
+id: server.node-stream-large-responses
+domain: server
+title: Stream large responses with pipeline instead of buffering them
+kind: guided
+riskClass: lossy
+stacks: [node]
+bottlenecks: [allocation, io]
+signals:
+  - "Heap snapshot or process RSS grows with response or file size; memory spikes per request that reads a whole file or builds a large array before sending"
+  - "Code uses fs.readFile, await response.text(), or accumulates chunks into an array before res.end"
+  - "GC trace or profile shows frequent major collections during large transfers"
+preconditions:
+  - "The payload can be produced or consumed incrementally (files, database cursors, proxied upstream bodies, compression)"
+  - "Consumers accept chunked transfer encoding"
+  - "The owner accepts that once streaming has started a failure can no longer change the response status (error timing changes)"
+steps:
+  - "Replace readFile-then-send with stream.pipeline (node:stream/promises) from fs.createReadStream through optional transforms to the response"
+  - "Honor backpressure: when write returns false wait for drain; do not push when push returns false"
+  - "Use pipeline rather than pipe so errors destroy every stream and free resources"
+  - "Do not raise highWaterMark to hide a slow consumer"
+verification:
+  - "Peak RSS and heapUsed stay roughly flat as payload size grows (the Node docs show about 88 MB versus 1.5 GB for a 9 GB gzip with and without backpressure)"
+  - "Response bytes are identical to the buffered version"
+  - "Aborted client connections release file handles"
+traps:
+  - "Streaming changes error timing: headers may be sent before a mid-stream failure"
+  - "Content-Length is unknown unless set; clients and proxies may behave differently with chunked encoding"
+  - "pipe() does not forward errors or clean up"
+  - "Many tiny chunks add per-chunk overhead; keep sensible chunk sizes"
+expectedEffect: "Bounded memory per request and fewer GC pauses for large payloads; throughput on small payloads is unchanged or varies, measure."
+sources:
+  - https://nodejs.org/en/learn/modules/backpressuring-in-streams
+verifiedIn: unverified

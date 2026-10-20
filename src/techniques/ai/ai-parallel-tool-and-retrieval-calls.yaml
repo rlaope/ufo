@@ -1,0 +1,37 @@
+id: ai.ai-parallel-tool-and-retrieval-calls
+domain: ai
+title: Run independent tool calls and retrieval queries concurrently
+kind: guided
+riskClass: lossless
+stacks:
+  - openai-client
+  - python
+bottlenecks:
+  - network
+  - contention
+signals:
+  - Tracing or timing logs show tool calls, retrieval queries or sub-requests executed one after another although they do not depend on each other
+  - The response output holds several function_call entries that the client executes in a sequential loop
+  - Wall time of an agent turn is close to the sum of its downstream call latencies
+preconditions:
+  - Calls are independent (no call needs another call output)
+  - parallel_tool_calls is not set to false; parallel function calling is documented for supported models
+  - Downstream services tolerate the extra concurrency
+steps:
+  - Collect all function_call items from one response and run them concurrently (asyncio.gather, a thread pool or the language equivalent), with a concurrency limit
+  - Return one function_call_output per call, matched by call_id, in a single follow-up request
+  - Issue independent retrieval or embedding queries concurrently instead of in a loop
+  - Per-call timeouts and error isolation so one failure does not cancel the others unless required
+verification:
+  - Wall time per turn approaches the slowest call instead of the sum
+  - Tool outputs and final answers are equivalent to the sequential run
+traps:
+  - Setting parallel_tool_calls to false forces zero or one call per turn; leave it default if you want parallel calls
+  - Built-in tools cannot be part of a parallel function-call batch; a fine-tuned model calling several functions loses strict mode for those calls (per the function calling guide)
+  - Do not parallelize calls with side effects that depend on order
+  - Unbounded concurrency can hit rate limits; cap it
+expectedEffect: Latency of a turn falls from the sum to roughly the maximum of independent call latencies; varies, measure.
+sources:
+  - https://developers.openai.com/api/docs/guides/function-calling
+  - https://developers.openai.com/api/docs/guides/latency-optimization
+verifiedIn: unverified

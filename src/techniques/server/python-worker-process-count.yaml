@@ -1,0 +1,37 @@
+id: server.python-worker-process-count
+domain: server
+title: Run several server worker processes sized to the CPU limit
+kind: guided
+riskClass: lossless
+stacks: [python, fastapi, flask, django]
+bottlenecks: [cpu, contention]
+signals:
+  - "Container or host metric shows one core saturated while other cores idle; py-spy dump shows the GIL-holding thread busy in application code"
+  - "The service is started as a single process (uvicorn app:app without --workers, python -m ... or gunicorn with default -w 1)"
+  - "Load test throughput does not rise with client concurrency while the one process stays at 100 percent CPU"
+preconditions:
+  - "The app keeps no required in-process state (sessions, caches, locks) across requests"
+  - "Memory budget allows N copies of the application"
+steps:
+  - "Use gunicorn with uvicorn workers or uvicorn --workers N (mutually exclusive with --reload), or gunicorn sync/gthread workers for WSGI apps"
+  - "Pick N from the CPU cores allocated to the container, not the host: gunicorn documents 2-4 x cores (settings) or (2 x cores) + 1 (design) for its default sync workers and says 4-12 workers usually handle heavy traffic; for async (ASGI) workers these docs give no figure, so start low and raise N by load test"
+  - "For gunicorn consider --preload (loads application code before forking; documented as saving RAM and speeding boot, at the cost of easy per-worker code reload) and --max-requests with --max-requests-jitter (restarts workers to limit the damage of memory leaks, with staggered restarts)"
+  - "If workers stall or are killed by the timeout on a disk-backed temp dir, point gunicorn's heartbeat file at a RAM-backed tmpfs with --worker-tmp-dir (the FAQ documents os.fchmod blocking on disk-backed filesystems)"
+  - "Move shared state to an external store"
+verification:
+  - "Throughput scales with worker count up to the CPU limit under the same load test"
+  - "Memory per container stays under the limit; no worker restarts from OOM"
+  - "Correctness tests pass when requests of one session hit different workers"
+traps:
+  - "Each worker imports the app: memory and database connections multiply (size pool per worker)"
+  - "Too many workers on a throttled CPU quota raises latency"
+  - "The uvicorn.workers module is deprecated in favor of the uvicorn-worker package"
+  - "Some uvicorn options (such as --limit-concurrency) are not supported under gunicorn"
+  - "Per-process caches and background tasks run N times"
+expectedEffect: "Uses all allocated cores for CPU-bound request handling; throughput gain bounded by core count; varies, measure."
+sources:
+  - https://uvicorn.dev/deployment/
+  - https://docs.gunicorn.org/en/stable/settings.html
+  - https://docs.gunicorn.org/en/stable/design.html
+  - https://docs.gunicorn.org/en/stable/faq.html
+verifiedIn: unverified

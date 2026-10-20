@@ -1,0 +1,37 @@
+id: data.planner-statistics-analyze
+domain: data
+title: Fix bad plans by refreshing and extending planner statistics
+kind: guided
+riskClass: lossless
+stacks: [postgres, mysql]
+bottlenecks: [query]
+signals:
+  - "EXPLAIN (ANALYZE, BUFFERS) shows estimated `rows=` differing from `actual rows=` by orders of magnitude on a node, followed by a poor join order, wrong join method, or Seq Scan chosen over an available index."
+  - "A query regressed right after a bulk load, mass delete, or large data skew change, with no schema change."
+  - "pg_stat_user_tables shows an old or null last_analyze/last_autoanalyze and a large n_mod_since_analyze for the table; pg_class.reltuples is far from the real count."
+  - "MySQL EXPLAIN shows `rows` estimates that disagree with real counts, or an unexpected `key`."
+preconditions:
+  - "The estimate error is on a filter or join the planner can describe with statistics; confirm by comparing estimated to actual rows per node."
+  - "Permission to run ANALYZE and, for extended statistics, CREATE STATISTICS on the table."
+steps:
+  - "Run `ANALYZE table` (PostgreSQL) or `ANALYZE TABLE table` (MySQL) and re-check the plan; this alone fixes post-load staleness."
+  - "If a skewed column is still misestimated, raise its sample: `ALTER TABLE t ALTER COLUMN c SET STATISTICS 500` (default_statistics_target is 100), then ANALYZE again."
+  - "If several columns are correlated and filtered together (for example city and zip), add `CREATE STATISTICS name (dependencies, ndistinct, mcv) ON a, b FROM t` and ANALYZE; the planner otherwise multiplies selectivities as if independent."
+  - "Inspect `pg_stats` for the column to see n_distinct and most_common_vals when deciding what to adjust."
+  - "Re-run EXPLAIN (ANALYZE, BUFFERS) and compare estimate versus actual per node."
+verification:
+  - "Estimated and actual rows on the previously wrong nodes agree within a small factor; the plan shape changes accordingly."
+  - "Query time falls versus the baseline; result set is unchanged."
+  - "pg_stat_statements mean_exec_time for the statement falls without regressions in other statements."
+traps:
+  - "Statistics come from a random sample, so estimates can vary between ANALYZE runs."
+  - "Higher statistics targets and extended statistics increase ANALYZE and planning time; create them only for column groups that are queried together and cause bad plans."
+  - "Functional dependency statistics help only equality comparisons with constants and IN lists, not ranges or LIKE."
+  - "Estimates being wrong is sometimes legitimate (LIMIT early stop, merge join rescans, BitmapAnd/Or show zero actual rows); read the node before acting."
+  - "Do not paper over a bad estimate with enable_* planner switches in production."
+expectedEffect: "Planner picks a better plan where estimates were wrong; gain depends on the plan change, varies; measure."
+sources:
+  - https://www.postgresql.org/docs/current/planner-stats.html
+  - https://www.postgresql.org/docs/current/using-explain.html
+  - https://www.postgresql.org/docs/current/row-estimation-examples.html
+verifiedIn: unverified

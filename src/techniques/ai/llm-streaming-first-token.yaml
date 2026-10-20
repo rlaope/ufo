@@ -1,0 +1,31 @@
+id: ai.llm-streaming-first-token
+domain: ai
+title: Stream model output to cut time to first visible token
+kind: guided
+riskClass: lossless
+stacks:
+  - openai-client
+bottlenecks:
+  - network
+signals:
+  - Users or downstream code wait for the full response; time to first byte equals total generation time in request traces
+  - Long outputs (hundreds of tokens) with non-streaming calls
+preconditions:
+  - Consumer can process partial output; streaming over server-sent events is supported (stream=True)
+steps:
+  - Set stream=True on the request and iterate over events
+  - Forward or render text delta events (response.output_text.delta on the Responses API) as they arrive, and treat response.completed as the end
+  - Handle the error event and client disconnects; keep the final assembled text for logging
+  - Measure time to first token separately from total time
+verification:
+  - Time to first token is near the model first-token latency rather than the full generation time
+  - Concatenated deltas equal the non-streamed answer for the same inputs and sampling settings
+traps:
+  - Total completion time does not shrink; only perceived latency does
+  - Moderation and validation of partial output is harder (the guide notes this); structured outputs and tool-call arguments arrive as deltas and need accumulation before parsing
+  - Proxies or buffering middleware can hold chunks back
+expectedEffect: Perceived latency drops to first-token time; end-to-end time roughly unchanged; measure.
+sources:
+  - https://developers.openai.com/api/docs/guides/streaming-responses
+  - https://developers.openai.com/api/docs/guides/latency-optimization
+verifiedIn: unverified

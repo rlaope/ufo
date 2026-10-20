@@ -1,0 +1,34 @@
+id: ai.llama-server-cache-reuse
+domain: ai
+title: Reuse prompt-cache chunks in llama-server with --cache-reuse
+kind: guided
+riskClass: lossy
+stacks:
+  - llama-cpp
+bottlenecks:
+  - caching
+  - inference
+signals:
+  - Requests that share a long common prefix (system prompt, document, chat history) with a changing part before or inside it show full prompt re-processing in llama-server timing logs (prompt eval token count close to the full prompt length each time)
+  - Slot logs report a small cached/similarity portion even though most of the prompt is repeated text shifted by a few tokens
+preconditions:
+  - llama-server with prompt caching enabled (--cache-prompt is the default; --cache-reuse requires it)
+  - --cache-reuse defaults to 0, which disables KV shifting reuse
+steps:
+  - Confirm the client sends cache_prompt true (default) and sends the shared text in the same order each time
+  - Start llama-server with --cache-reuse N where N is the minimum chunk length in tokens worth reusing (for example 256) so smaller coincidental matches are ignored
+  - Keep requests of the same conversation on the same slot where possible, and size -np for the number of distinct conversations
+  - Replay a request sequence with a shared prefix and compare the prompt tokens processed per request before and after
+verification:
+  - Prompt tokens evaluated per request drop for repeated or shifted prefixes and time to first token falls
+  - For deterministic sampling settings, compare generated text against the baseline on a fixed prompt set and accept only differences your quality oracle tolerates
+traps:
+  - "--cache-reuse reuses cached chunks via KV shifting: a reused chunk was computed after a different preceding context than the new prompt has, so outputs can change beyond floating-point noise (this is an inference from the mechanism; the server docs describe the flag only as reusing chunks via KV shifting), hence needs an opt-in and a quality oracle"
+  - The API docs warn that prompt caching can cause nondeterministic results because logits may not be bit-for-bit identical across batch sizes, so outputs can differ slightly
+  - If the changing part of the prompt comes first, no prefix is shared and nothing is reused
+  - Too small N reuses tiny chunks with little gain; the docs give no recommended value, so measure
+  - Many slots with few prompts evict each other; cached prompts live per slot
+expectedEffect: Skips re-processing of repeated prompt text, shortening time to first token for long shared prefixes; varies with shared-prefix length, measure.
+sources:
+  - https://raw.githubusercontent.com/ggml-org/llama.cpp/master/tools/server/README.md
+verifiedIn: unverified

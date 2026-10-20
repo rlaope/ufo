@@ -1,0 +1,35 @@
+id: server.go-reduce-allocations
+domain: server
+title: Cut hot-path allocations with preallocation and sync.Pool
+kind: guided
+riskClass: lossless
+stacks: [go]
+bottlenecks: [allocation, cpu]
+signals:
+  - "CPU profile (go tool pprof top -cum) shows runtime.mallocgc or runtime.gcAssistAlloc with a large cumulative share"
+  - "Heap profile with alloc_space (go tool pprof -sample_index=alloc_space) names a few functions allocating most bytes or objects"
+  - "go test -bench -benchmem shows high allocs/op; go build -gcflags=-m shows values escaping to heap"
+preconditions:
+  - "Allocation is confirmed by profile before changing code"
+  - "Pooled objects can be fully reset before reuse"
+steps:
+  - "Preallocate slices and maps with make(T, 0, n) when the size is known or estimable"
+  - "Reuse temporary buffers (bytes.Buffer, scratch slices) through a sync.Pool whose New returns a pointer; call Reset before use and Put after"
+  - "Avoid conversions that copy (string to []byte in loops), and use strings.Builder or append for building output"
+  - "Keep values on the stack by avoiding returning pointers or storing in interfaces on the hot path, checking with -gcflags=-m"
+  - "Re-run the benchmark with -benchmem and the profile to confirm lower allocs/op"
+verification:
+  - "allocs/op and B/op fall in go test -bench -benchmem"
+  - "mallocgc and GC shares fall in the CPU profile; GODEBUG=gctrace=1 shows fewer cycles"
+  - "Outputs identical; race detector (go test -race) clean"
+traps:
+  - "Items in a sync.Pool can be dropped at any time; never rely on persistence"
+  - "Forgetting to reset a pooled object leaks data between requests (security and correctness issue)"
+  - "Putting objects with huge retained capacity back into the pool pins memory"
+  - "Do not copy a Pool after first use; per-short-lived-object pools do not amortize"
+  - "Premature pooling adds complexity without gain when allocation share is small"
+expectedEffect: "Lower GC CPU and allocation latency in proportion to the allocation share; varies, measure."
+sources:
+  - https://pkg.go.dev/sync#Pool
+  - https://go.dev/doc/gc-guide
+verifiedIn: unverified

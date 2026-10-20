@@ -1,0 +1,37 @@
+id: ai.pytorch-dataloader-workers
+domain: ai
+title: Overlap input loading with training using DataLoader workers and pinned memory
+kind: guided
+riskClass: lossless
+stacks:
+  - pytorch
+  - python
+bottlenecks:
+  - data_loading
+signals:
+  - torch.profiler or step timing shows the GPU idle while the main process loads or preprocesses a batch (gaps between kernels, long DataLoader next time)
+  - DataLoader is built with the default num_workers=0 (synchronous loading)
+  - GPU utilization sampled during training drops periodically
+preconditions:
+  - PyTorch with torch.utils.data.DataLoader
+  - Dataset is safe to read from several processes
+steps:
+  - Profile first with torch.profiler (schedule with wait, warmup, active and prof.step() per iteration) or time the data loop alone to confirm loading is the bottleneck
+  - Set num_workers to a positive value and tune it against core count and storage speed
+  - Set pin_memory=True for GPU training and copy tensors to the device with non_blocking=True
+  - Set persistent_workers=True when epochs are short so workers are not recreated each epoch; tune prefetch_factor (default 2 per worker)
+  - On macOS and Windows (spawn start method) guard the entry point with if __name__ == "__main__"
+verification:
+  - Step time or samples per second improves and GPU idle gaps shrink in the profiler trace
+  - Data order and content are as before (same seeds, same transformations)
+traps:
+  - Each worker can hold a copy of Python objects it touches; memory may grow towards workers times parent size (use NumPy or Arrow style non-refcounted storage)
+  - Too many workers hurt on few cores or slow disks
+  - Spawn start method pickles the dataset and costs startup time
+  - Random augmentations need per-worker seeding to avoid duplicates (PyTorch seeds workers by default)
+expectedEffect: Removes GPU idle time caused by synchronous loading; varies with workload, measure.
+sources:
+  - https://docs.pytorch.org/docs/2.14/data.html
+  - https://docs.pytorch.org/tutorials/recipes/recipes/tuning_guide.html
+  - https://docs.pytorch.org/tutorials/recipes/recipes/profiler_recipe.html
+verifiedIn: unverified

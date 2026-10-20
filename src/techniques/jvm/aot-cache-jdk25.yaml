@@ -1,0 +1,40 @@
+id: jvm.aot-cache-jdk25
+domain: jvm
+title: JDK AOT cache (class loading and linking) built from a training run
+kind: guided
+riskClass: lossless
+stacks: [jvm, spring-boot]
+bottlenecks: [startup]
+signals:
+  - "JFR or startup logs show most startup time spent in class loading, linking and static initialization before the application is ready (Spring Boot startup actuator endpoint or BufferingApplicationStartup show many framework steps dominated by class load)."
+  - "Process is short-lived or restarted often (CLI, serverless, autoscaled pod), so time-to-ready is the primary metric."
+  - "The run already uses JDK 25 or newer (java -version), with no -XX:AOTCache flag present."
+preconditions:
+  - "JDK 24 or newer for -XX:AOTMode record/create (JEP 483); JDK 25 or newer for the one-step -XX:AOTCacheOutput workflow (JEP 514). If the project runs an older JDK, moving to one is a separate upgrade change, not part of this card."
+  - "Training run and production run use the same JDK release, CPU architecture and OS, and a matching class path (directories on the class path are not supported; extra trailing JARs are allowed in the production run)."
+  - "Not combined with --add-opens, --patch-module, or JVMTI agents that rewrite classes; ZGC is not supported for archived objects, other classes still load normally."
+  - "Spring Boot applications: run from the extracted jar layout, otherwise the cache has no effect."
+steps:
+  - "Spring Boot: extract with `java -Djarmode=tools -jar app.jar extract --destination application` and cd into it."
+  - "Training run that creates the cache in one step: `java -XX:AOTCacheOutput=app.aot -Dspring.context.exit=onRefresh -jar app.jar` (non-Spring: run a representative smoke workload and let it exit)."
+  - "On JDK 24 use the two-step form: `-XX:AOTMode=record -XX:AOTConfiguration=app.aotconf` then `-XX:AOTMode=create -XX:AOTConfiguration=app.aotconf -XX:AOTCache=app.aot`."
+  - "Launch with `java -XX:AOTCache=app.aot -jar app.jar`; keep the same JVM options that affect the class path or modules."
+  - "Make the training run exercise the classes production loads (startup plus one typical request), not a large test suite; mock remote dependencies where possible."
+  - "Regenerate the cache in the build or image-build step whenever the application jar or JDK changes."
+verification:
+  - "Compare time-to-ready of the A/B arms over several launches with a cold OS cache and a warm one."
+  - "Run with `-XX:AOTMode=on` once: the JVM exits with an error if the cache is unusable, instead of silently running without it."
+  - "Check `-Xlog:class+load` or `-Xshare` output shows classes loaded from the shared archive."
+  - "Functional smoke test passes unchanged."
+traps:
+  - "With the default AOTMode=auto a mismatched class path, JDK or extra flags silently disables the cache, so a missing speedup can look like no effect."
+  - "The one-step AOTCacheOutput workflow needs about twice the training-run heap during cache creation; use the two-step form on small builders."
+  - "The cache is large (the JEP cites about 130 MB for a Spring PetClinic sample), which matters for image size."
+  - "Training that touches rarely used code paths bloats the cache; training that misses paths leaves those classes loading normally."
+expectedEffect: "Lower startup time when class loading and linking dominate; the JEP 483 sample reports about 42 percent for PetClinic, varies by application; measure."
+sources:
+  - https://openjdk.org/jeps/483
+  - https://openjdk.org/jeps/514
+  - https://docs.spring.io/spring-boot/reference/packaging/aot-cache.html
+  - https://docs.oracle.com/en/java/javase/25/docs/specs/man/java.html
+verifiedIn: unverified

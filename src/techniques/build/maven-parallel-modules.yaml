@@ -1,0 +1,31 @@
+id: build.maven-parallel-modules
+domain: build
+title: Build independent Maven modules in parallel with -T
+kind: guided
+riskClass: lossless
+stacks: [maven, jvm]
+bottlenecks: [build, cpu]
+signals:
+  - "mvn console output (or the reactor summary) shows many independent modules built strictly one after another."
+  - "Multi-module reactor with modules that do not depend on each other and no -T option in .mvn/maven.config or the CI command."
+  - "CPU utilization during a multi-module build, as seen in top or the CI agent metrics, stays near one core."
+preconditions:
+  - "Multi-module reactor with branches that do not depend on each other."
+  - "Plugins used are marked thread-safe; Maven 3 warns at start-up about plugins that are not."
+steps:
+  - "Run mvn -T 1C verify (one thread per core) or a fixed count such as -T 4; to make it the default put -T 1C in .mvn/maven.config (project top-level directory; from Maven 3.9.0 each argument goes on its own line, and # comments need 3.9.3 or newer)."
+  - "Read the thread-safety warnings printed at start; upgrade the flagged plugins to versions that are thread-safe or serialize that plugin's logic."
+  - "Avoid forkCount=0 for Surefire when using -T."
+verification:
+  - "Reactor summary shows overlapping module build times and total wall time drops versus a baseline."
+  - "Built artifacts and test results match a sequential build."
+traps:
+  - "Many plugins and libraries are not thread-safe; failures can be intermittent and appear only under -T."
+  - "Tests that share ports, files, or system properties collide when modules run concurrently."
+  - "Console output is interleaved; use per-module logs to debug failures."
+  - "Gain is limited by the longest dependency chain; a linear module chain shows no improvement."
+expectedEffect: "Overlaps independent modules; the Maven wiki says a 20-50% improvement is quite common but depends greatly on module structure, so measure on this reactor."
+sources:
+  - https://cwiki.apache.org/confluence/display/MAVEN/Parallel+builds+in+Maven+3
+  - https://maven.apache.org/configure.html
+verifiedIn: unverified

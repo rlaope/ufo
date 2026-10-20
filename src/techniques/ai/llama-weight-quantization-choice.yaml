@@ -1,0 +1,34 @@
+id: ai.llama-weight-quantization-choice
+domain: ai
+title: Choose a lower-bit GGUF weight quantization for a memory- or bandwidth-bound model
+kind: guided
+riskClass: lossy
+stacks:
+  - llama-cpp
+bottlenecks:
+  - inference
+  - allocation
+signals:
+  - Model weights do not fit in VRAM and layers spill to CPU (startup log shows fewer offloaded layers than the model has with -ngl)
+  - Decode speed is bound by memory bandwidth on a large F16 or Q8_0 model
+preconditions:
+  - Quality oracle on the target task; user opted into lossy changes
+  - llama-quantize available, or a published GGUF of the target quantization from the model author
+steps:
+  - Measure baseline quality and tokens per second at the current quantization
+  - Quantize from the highest-precision source (16 or 32 bit) with llama-quantize SRC.gguf OUT.gguf Q4_K_M (or another type); do not requantize an already-quantized file
+  - Optionally pass an importance matrix with --imatrix to reduce quality loss
+  - Raise -ngl so more layers are offloaded now that the model is smaller
+  - Compare perplexity or task accuracy and speed across two or three types
+verification:
+  - Quality oracle within tolerance (the llama.cpp docs name perplexity and KL divergence as the usual measures)
+  - Tokens per second and offloaded layer count improved against the baseline
+traps:
+  - The quantize README warns that --allow-requantize can severely reduce quality versus quantizing from 16 or 32 bit
+  - "Lower is not always faster: the README shows speed does not track file size monotonically across types"
+  - Smaller types (below about 4 bits) can fail on reasoning or code tasks even when perplexity looks acceptable
+  - Multimodal projector files are usually kept at bf16 or q8_0
+expectedEffect: Smaller model and often higher decode speed or full GPU offload; quality drops grow as bits fall; measure on the real task.
+sources:
+  - https://raw.githubusercontent.com/ggml-org/llama.cpp/master/tools/quantize/README.md
+verifiedIn: unverified

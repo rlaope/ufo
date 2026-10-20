@@ -1,0 +1,37 @@
+id: server.node-http-keepalive-undici
+domain: server
+title: Reuse outbound HTTP connections with keep-alive agents or an undici pool
+kind: guided
+riskClass: lossless
+stacks: [node]
+bottlenecks: [network, io]
+signals:
+  - "Packet capture, strace, or a netstat/ss count shows many short-lived outbound TCP/TLS connections to the same upstream host, with TIME_WAIT growth"
+  - "Profile or trace shows time in connect and TLS handshake for each upstream call"
+  - "Code creates a new http.Agent, undici Agent, or client per request, or passes agent: false"
+preconditions:
+  - "Upstream servers support HTTP/1.1 keep-alive"
+  - "new http.Agent() defaults keepAlive to false; per the Node docs http.globalAgent has keep-alive enabled with a 5 second timeout since v19.0.0, so on older versions the global agent does not reuse idle sockets"
+steps:
+  - "Create one http.Agent or https.Agent with keepAlive: true and sensible maxSockets, maxFreeSockets and timeout, and share it across requests (not needed on v19+ if the default http.globalAgent already serves the calls)"
+  - "Alternatively create one undici Pool or Agent per origin and pass it as the dispatcher, or call setGlobalDispatcher once; connections caps the number of Client instances (sockets) per origin and keepAliveTimeout (default 4 seconds, overridable by the server keep-alive hint) bounds idle socket lifetime"
+  - "Always consume or cancel response bodies (for undici request call body.dump() if unused) so the connection returns to the pool"
+  - "Keep the client idle timeout below the server keep-alive timeout to avoid reusing sockets the server has closed"
+  - "Enable undici pipelining greater than 1 only for trusted servers and pass blocking: false"
+verification:
+  - "Count of new outbound connections per request drops (ss/netstat or the pool stats)"
+  - "Upstream call latency percentiles drop under the same load"
+  - "No increase in ECONNRESET or socket hang up errors"
+traps:
+  - "Unread response bodies keep sockets busy and starve the pool"
+  - "Reusing a socket the server already closed gives ECONNRESET; keep the agent timeout below the server timeout (the lifo scheduling default reduces this at low rates)"
+  - "maxSockets limits concurrency per host, so too small a value queues requests"
+  - "Unused agents hold sockets; call agent.destroy() on shutdown"
+  - "Pipelining on untrusted or non-compliant servers can misorder responses"
+expectedEffect: "Removes connect and TLS setup per call; gain grows with upstream latency and call rate; varies, measure."
+sources:
+  - https://nodejs.org/api/http.html
+  - https://github.com/nodejs/undici/blob/main/docs/docs/api/Pool.md
+  - https://github.com/nodejs/undici/blob/main/docs/docs/api/Client.md
+  - https://github.com/nodejs/undici/blob/main/docs/docs/api/Agent.md
+verifiedIn: unverified

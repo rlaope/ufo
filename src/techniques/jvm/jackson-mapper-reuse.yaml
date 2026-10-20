@@ -1,0 +1,32 @@
+id: jvm.jackson-mapper-reuse
+domain: jvm
+title: Reuse a single configured Jackson ObjectMapper (optionally with Blackbird)
+kind: guided
+riskClass: lossless
+stacks: [jvm, spring-boot]
+bottlenecks: [serialization, allocation]
+signals:
+  - "async-profiler cpu or alloc mode, or JFR, shows time or allocation in ObjectMapper construction, module discovery (findAndRegisterModules) or serializer cache building in per-request paths."
+  - "Code creates `new ObjectMapper()` inside methods or per request, and the heap histogram shows many ObjectMapper or serializer cache instances."
+  - "Profile shows Jackson reflection-based property access (BeanSerializer, SettableBeanProperty) in the top frames of a serialization-heavy endpoint."
+preconditions:
+  - "Jackson 2.x; the mapper configuration is not mutated after first use."
+  - "Blackbird needs Java 11 or newer (jackson-module-blackbird); Afterburner is its predecessor."
+steps:
+  - "Create the ObjectMapper once (a Spring bean, or the Spring Boot auto-configured one) and inject it; derive ObjectReader and ObjectWriter once for hot types."
+  - "Finish configuration before first use; the ObjectMapper javadoc states instances are fully thread-safe provided all configuration happens before any read or write call."
+  - "Optionally register Blackbird: `JsonMapper.builder().addModule(new BlackbirdModule()).build()`, or add the dependency so Spring Boot registers the module."
+  - "Remove per-call module scanning and mappers built in loops."
+verification:
+  - "Profiler shows the construction frames gone; allocation rate falls."
+  - "Serialized JSON byte-for-byte identical on a representative corpus; tests pass."
+  - "A/B throughput or latency of the endpoint improves."
+traps:
+  - "Blackbird lambdas are tied to the ClassLoader and not unloaded until it is collected; creating many ObjectMapper instances with Blackbird can exhaust class space."
+  - "Blackbird is a Java 11+ replacement for Afterburner that generates accessors with LambdaMetafactory; treat any gain as unproven for this workload and measure."
+  - "Mutating a shared mapper after first use is not safe: the javadoc says such changes may or may not take effect and configuration calls may fail; derive ObjectReader or ObjectWriter instances for different settings."
+expectedEffect: "Removes repeated mapper construction cost; Blackbird gives a modest speedup on bean serialization; varies; measure."
+sources:
+  - https://github.com/FasterXML/jackson-modules-base/blob/2.x/blackbird/README.md
+  - https://github.com/FasterXML/jackson-databind/blob/2.x/src/main/java/com/fasterxml/jackson/databind/ObjectMapper.java
+verifiedIn: unverified

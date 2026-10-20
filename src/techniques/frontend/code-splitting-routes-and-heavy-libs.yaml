@@ -1,0 +1,50 @@
+id: frontend.code-splitting-routes-and-heavy-libs
+domain: frontend
+title: Split routes and lazy-load heavy libraries with dynamic import
+kind: guided
+riskClass: lossless
+stacks:
+  - node
+  - typescript
+  - nextjs
+  - vite
+  - webpack
+bottlenecks:
+  - bundle
+  - startup
+signals:
+  - Lighthouse "Reduce unused JavaScript" lists first-party or vendor scripts with a large share of unused bytes (see the current audit for the reporting threshold)
+  - Chrome DevTools Coverage tab shows a large unused-bytes share in the entry chunk on first load
+  - Bundle analyzer treemap shows a heavy library (charting, editor, PDF, markdown, syntax highlighting, maps) inside the entry or a shared chunk although it is used on one route or behind a click
+  - Build output reports a single entry chunk far above the chunk size warning limit (Vite default 500 kB)
+  - Field or lab INP/TBT is dominated by script evaluation of the main bundle during load
+preconditions:
+  - Bundler supports dynamic import() code splitting (webpack, Rollup, Vite, Turbopack)
+  - The heavy module is not needed for the first render of the route, or its loading state can be shown
+  - For Next.js App Router, next/dynamic with ssr:false must be called inside a Client Component
+steps:
+  - Find the chunk owner with a bundle analyzer and list modules over a few tens of kB that are not needed for first paint
+  - 'Route level: use framework route splitting (Next.js splits per route automatically) or React.lazy(() => import("./Route")) wrapped in Suspense for SPA routers'
+  - 'Component level in Next.js: const Heavy = dynamic(() => import("../components/Heavy")) inside a Client Component; add loading: () => <Skeleton/> to avoid layout jump'
+  - 'Library level: load on demand with await import("lib") inside the event handler or effect that needs it, then use the default or named export from the result'
+  - For named exports use dynamic(() => import("./mod").then((m) => m.Named)) or React.lazy with a default-export wrapper
+  - Keep a static import for anything needed above the fold; do not lazy-load the LCP element or its component
+  - Rebuild and confirm the heavy module moved to its own async chunk and left the entry chunk
+verification:
+  - Bundle analyzer or build output shows the library in an async chunk and the entry/route chunk smaller (compare sizes before and after)
+  - Network panel shows the chunk requested only after the trigger (route visit, click, scroll)
+  - Lighthouse unused-JavaScript savings fall and TBT or INP do not regress
+  - Feature still works on first use including the loading state; run the existing UI tests
+traps:
+  - A static import of the same module elsewhere keeps it in the entry chunk and defeats the split; grep for all importers
+  - ssr:false removes the component from server-rendered HTML, so content moves to client-only and can hurt LCP or SEO; it is also rejected in Server Components
+  - Next.js docs state automatic code splitting is not supported when a Server Component dynamically imports a Client Component
+  - First use now pays a network round trip; prefetch on hover or idle for latency-sensitive actions
+  - After a deploy, stale clients may request deleted chunks; Vite emits vite:preloadError so the app can reload
+  - Over-splitting creates many small requests and waterfall chains
+expectedEffect: Smaller initial JavaScript and less main-thread parse/evaluate time on routes that do not use the deferred code; magnitude varies; measure per route.
+sources:
+  - https://nextjs.org/docs/app/guides/lazy-loading
+  - https://developer.chrome.com/docs/lighthouse/performance/unused-javascript
+  - https://vite.dev/guide/build.html
+verifiedIn: unverified

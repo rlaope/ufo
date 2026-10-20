@@ -1,0 +1,46 @@
+id: frontend.tree-shaking-sideeffects
+domain: frontend
+title: "Enable tree shaking: ESM output and package.json sideEffects"
+kind: guided
+riskClass: lossless
+stacks:
+  - node
+  - npm
+  - pnpm
+  - yarn
+  - webpack
+  - vite
+  - typescript
+bottlenecks:
+  - bundle
+signals:
+  - Bundle analyzer shows whole libraries or barrel-file re-exports in the bundle although only a few exports are imported
+  - Webpack stats or analyzer show modules present only because a barrel index file has no sideEffects flag
+  - Dependency in node_modules ships CommonJS only (require/module.exports), so named imports cannot be shaken
+  - Babel or TypeScript config compiles import/export to CommonJS before the bundler (preset-env modules transform or tsconfig module commonjs)
+preconditions:
+  - "Production build mode (webpack mode: production enables usedExports, minification and module concatenation)"
+  - Source uses ES module import/export
+  - The package whose sideEffects you edit is your own or a vendored workspace package
+steps:
+  - "Ensure compilers keep ES modules: Babel preset-env modules: false; TypeScript module set to ESNext or ES2020+ for bundled code"
+  - 'Add "sideEffects": false to the package.json of your own library when no file mutates globals or runs code on import'
+  - 'If some files do have side effects, list them: "sideEffects": ["*.css", "./src/polyfills.js"] (globs allowed)'
+  - Replace deep barrel imports with direct module imports where the bundler still includes the whole barrel
+  - Mark pure call sites the bundler cannot prove pure with /*#__PURE__*/, or /*#__NO_SIDE_EFFECTS__*/ on function declarations (webpack 5.107.0+)
+  - Prefer ESM builds of dependencies (lodash-es instead of lodash)
+  - Rebuild in production mode and diff bundle composition
+verification:
+  - Analyzer shows unused modules gone from the bundle; byte size of the chunk drops
+  - "Production build output still renders styles: check that CSS files imported for side effects are present"
+  - Run the existing test suite and a smoke render of the app from the production build, not dev server
+traps:
+  - '"sideEffects": false drops CSS imports, polyfills, global listeners and prototype patches; always list *.css and other side-effect files'
+  - A package that is correct can still be bloated by a dependency that mis-declares sideEffects
+  - Tree shaking only fully works in production mode; dev builds hide the effect and the problems
+  - Re-exporting files with side effects may be skipped if they are not flagged
+  - HOC patterns such as withX()(Component) are not provable as pure without a /*#__PURE__*/ annotation
+expectedEffect: Removes dead exports from the shipped bundle; saving depends on how much of the imported libraries is unused; varies; measure with a bundle analyzer.
+sources:
+  - https://webpack.js.org/guides/tree-shaking/
+verifiedIn: unverified

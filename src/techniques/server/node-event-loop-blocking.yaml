@@ -1,0 +1,37 @@
+id: server.node-event-loop-blocking
+domain: server
+title: Remove event-loop blocking work found with --cpu-prof and event-loop delay
+kind: guided
+riskClass: lossless
+stacks: [node]
+bottlenecks: [cpu, contention]
+signals:
+  - "perf_hooks monitorEventLoopDelay histogram shows high p99 or max (values are nanoseconds) while CPU of the process is near one core"
+  - "A .cpuprofile written by node --cpu-prof shows a single JS function, JSON.parse/stringify, a regexp, or an fs/crypto/zlib *Sync call with large self time on the main thread"
+  - "Request latency grows for all endpoints together when one endpoint is hit, which points at the shared event loop"
+preconditions:
+  - "Node.js 12.2+ for --cpu-prof-interval; --cpu-prof flags are stable from v20.16 and v22.4"
+  - "The slow section runs on the main thread, not inside a worker or child process"
+steps:
+  - "Start the server with node --cpu-prof --cpu-prof-dir=<dir> and drive representative load; stop it cleanly so the profile is written on exit"
+  - "Open the .cpuprofile in Chrome DevTools or speedscope and sort by self time to find the long synchronous frames"
+  - "Add monitorEventLoopDelay({ resolution: 20 }) (sampling interval in milliseconds, default 10) with enable(), and read percentile(99) and max divided by 1e6 for milliseconds (the histogram reports nanoseconds), as the before/after metric"
+  - "Replace synchronous core APIs on request paths (fs.*Sync, crypto.pbkdf2Sync, randomBytesSync, zlib *Sync, child_process execSync/spawnSync) with their async or promise forms"
+  - "For O(n) or O(n^2) loops over large inputs, bound the input size or partition the work and yield between chunks with setImmediate"
+  - "For vulnerable regular expressions (nested quantifiers, overlapping alternation, backreferences) rewrite them or use indexOf for simple matching"
+  - "Re-profile and confirm the frame is gone and event-loop delay percentiles dropped"
+verification:
+  - "Event-loop delay p99 and max drop under the same load"
+  - "Latency of unrelated endpoints no longer degrades when the heavy endpoint is exercised"
+  - "Responses are byte-identical and existing tests pass"
+traps:
+  - "Async variants of fs, crypto, and zlib run on the libuv worker pool (default 4 threads); many long tasks can saturate it, so keep tasks short and uniform"
+  - "An async API can still block per partition; check the cost of each chunk"
+  - "Startup-time sync calls (config load, require) are fine; only per-request paths matter"
+  - "Profiling overhead skews absolute timings; compare relative shares and use the delay histogram for the metric"
+expectedEffect: "Lower tail latency and higher throughput when the main thread is the saturated resource; varies, measure."
+sources:
+  - https://nodejs.org/en/learn/asynchronous-work/dont-block-the-event-loop
+  - https://nodejs.org/api/cli.html
+  - https://nodejs.org/api/perf_hooks.html
+verifiedIn: unverified

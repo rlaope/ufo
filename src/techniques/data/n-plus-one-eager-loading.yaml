@@ -1,0 +1,38 @@
+id: data.n-plus-one-eager-loading
+domain: data
+title: Remove N+1 queries with explicit eager loading in the ORM
+kind: guided
+riskClass: lossless
+stacks: [hibernate, django, sqlalchemy]
+bottlenecks: [query, io]
+signals:
+  - "ORM SQL logging (Hibernate org.hibernate.SQL debug or hibernate.show_sql, Django connection.queries or django.db.backends logger, SQLAlchemy echo=True) shows the same SELECT shape repeated once per parent row with only the bound id changing."
+  - "Query count per request grows linearly with the size of a result list (Hibernate hibernate.generate_statistics prepared statement count, Django assertNumQueries or django-debug-toolbar, SQLAlchemy before_cursor_execute event counter)."
+  - "pg_stat_statements shows a cheap single-row or IN-list lookup with very high calls and a small mean_exec_time, dominating total_exec_time."
+preconditions:
+  - "The loop that triggers the extra queries reads a relationship attribute that is lazy by default."
+  - "Hibernate 6.x, Django (any supported release), or SQLAlchemy 1.4/2.x."
+steps:
+  - "Count queries for one representative request or unit of work first, so the before number is on record."
+  - "Hibernate/JPA: fetch the needed association in the query itself with `left join fetch` in HQL/JPQL, or pass an entity graph (@EntityGraph on a Spring Data repository method or the jakarta.persistence.fetchgraph hint). Join fetching is the documented preferred fix."
+  - "Hibernate/JPA, collections where a join would produce a cartesian product or you page the parent: set `hibernate.default_batch_fetch_size` (or @BatchSize on the association) so lazy loads are issued as IN-list batches instead of one per row. Batch and subselect fetching are documented as mitigations, disabled by default."
+  - "Django: use `select_related('fk_field')` for ForeignKey and OneToOne (single JOIN), and `prefetch_related('reverse_or_m2m')` for reverse FKs and many-to-many (one extra IN query per lookup). Use `Prefetch(..., queryset=...)` to filter or order the related rows, with `to_attr` when the same relation is needed two ways."
+  - "SQLAlchemy: use `selectinload(Model.collection)` for collections and `joinedload(Model.many_to_one)` for many-to-one. Prefer selectinload over subqueryload."
+  - "Optionally add a guard so regressions fail loudly: SQLAlchemy `raiseload('*')` or `lazy='raise'` on the mapping; a query-count assertion in the test for the endpoint."
+verification:
+  - "Re-count queries for the same request; the count must be constant (independent of list size) rather than proportional to it."
+  - "Compare the response payload (or the entity state read) with the version before the change; results must be identical."
+  - "In pg_stat_statements the per-row lookup statement drops out of the top by calls."
+  - "Check one new EXPLAIN (ANALYZE, BUFFERS) of the fetch-join or IN query; confirm it uses an index on the foreign key column."
+traps:
+  - "Join fetching a collection together with LIMIT/pagination makes the ORM paginate in memory (Hibernate warns about it) or return duplicated parent rows; page the parent ids first, then fetch, or use batch fetching."
+  - "Joining two or more collections in one query multiplies rows (cartesian product); fetch one collection per query."
+  - "Django: calling `.filter()` on a prefetched relation issues a new query and ignores the prefetch cache; use Prefetch with a queryset or to_attr instead."
+  - "Eager loading what the code path never touches adds work; load only what the measured path reads."
+  - "The foreign key column needs an index or the batched lookup becomes a sequential scan."
+expectedEffect: "Query count per request falls from 1+N to a small constant; latency gain grows with N and per-query round-trip cost, varies; measure."
+sources:
+  - https://docs.hibernate.org/orm/6.6/introduction/html_single/Hibernate_Introduction.html
+  - https://docs.djangoproject.com/en/stable/ref/models/querysets/
+  - https://docs.sqlalchemy.org/en/20/orm/queryguide/relationships.html
+verifiedIn: unverified

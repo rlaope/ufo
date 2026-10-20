@@ -1,0 +1,33 @@
+id: build.node-install-frozen-lockfile
+domain: build
+title: Use lockfile-frozen installs with a persistent package cache in CI
+kind: guided
+riskClass: lossless
+stacks: [node, npm, pnpm, yarn]
+bottlenecks: [build, network, caching]
+signals:
+  - "CI logs show npm install or yarn install resolving dependencies and re-downloading tarballs on every run (long 'idealTree' or resolution phase, many registry GETs)."
+  - "The CI job has no cache step for the package manager cache or store directory."
+  - "Installs rewrite the lockfile in CI (git diff after install is non-empty)."
+preconditions:
+  - "A committed lockfile (package-lock.json, pnpm-lock.yaml, or yarn.lock) in sync with package.json."
+  - "Install flags that change the tree (legacy-peer-deps, install-links) are stored in a committed .npmrc so npm ci matches the lockfile."
+steps:
+  - "npm: replace npm install with npm ci; cache the ~/.npm directory keyed on the lockfile hash."
+  - "pnpm: run pnpm install --frozen-lockfile (default on in CI when a lockfile exists); cache the pnpm store and add --prefer-offline where staleness checks are not needed."
+  - "Yarn Berry: run yarn install --immutable (default on CI), optionally --immutable-cache; cache the folder reported by yarn config cacheFolder."
+  - "Key the cache on the lockfile hash and restore it before the install step."
+verification:
+  - "Install step time drops on the second run with a warm cache and network requests fall."
+  - "git status is clean after install and the resulting node_modules resolves identical versions."
+traps:
+  - "npm ci deletes an existing node_modules before installing and fails (rather than updating) if the lockfile and package.json disagree."
+  - "npm ci never installs single packages and never writes the lockfile."
+  - "Caching node_modules itself across OS or Node versions can break native modules; cache the package cache or store instead."
+  - "Yarn --check-cache refetches everything, so use it only for Zero-Installs security checks."
+expectedEffect: "Skips resolution and avoids re-downloading unchanged tarballs; depends on cache hit rate and dependency count, so measure install step time."
+sources:
+  - https://docs.npmjs.com/cli/v10/commands/npm-ci
+  - https://pnpm.io/cli/install
+  - https://yarnpkg.com/cli/install
+verifiedIn: unverified

@@ -1,0 +1,31 @@
+id: build.docker-layer-order
+domain: build
+title: Order Dockerfile layers by change frequency and trim the build context
+kind: guided
+riskClass: lossless
+stacks: [docker]
+bottlenecks: [build, caching, io]
+signals:
+  - "docker build output shows dependency install steps (npm install, pip install, mvn dependency:go-offline) re-executed on every build after only a source edit (no CACHED marker on those steps)."
+  - "Dockerfile has COPY . . before the dependency install step."
+  - "Build output 'transferring context' reports hundreds of MB or more, or the repo has no .dockerignore."
+preconditions:
+  - "Dependency manifests and lockfiles are separable from application source files."
+steps:
+  - "Copy only manifests/lockfiles first, run the dependency install, then COPY the remaining source."
+  - "Put rarely changing steps (base setup, system packages) earlier and frequently changing ones last."
+  - "Add a .dockerignore at the context root excluding node_modules, build output, VCS data, logs, and tmp files; use per-Dockerfile ignore files such as build.Dockerfile.dockerignore when several Dockerfiles share a context."
+  - "Use RUN --mount=type=bind for build-only inputs that should not enter a layer."
+verification:
+  - "After a source-only edit, the install steps are marked CACHED and the context transfer size drops."
+  - "The resulting image runs the same entrypoint and tests as before."
+traps:
+  - "A changed step invalidates every step after it."
+  - ".dockerignore patterns are anchored to depth (*.md matches only the root); the last matching rule wins, so a negation before a broader exclusion does nothing."
+  - "Files excluded from the context cannot be reached by COPY, ADD, or bind mounts."
+  - "Copying only the manifest must include every file the install step reads (lockfile, .npmrc, workspace manifests), or installs break or drift."
+expectedEffect: "Reuses dependency layers across source-only changes and sends less data to the builder; depends on change pattern, measure rebuild time."
+sources:
+  - https://docs.docker.com/build/cache/optimize/
+  - https://docs.docker.com/build/concepts/context/
+verifiedIn: unverified

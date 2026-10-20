@@ -1,0 +1,38 @@
+id: data.missing-index-explain
+domain: data
+title: Add the missing index shown by EXPLAIN (ANALYZE, BUFFERS)
+kind: guided
+riskClass: lossless
+stacks: [postgres, mysql]
+bottlenecks: [query, io]
+signals:
+  - "PostgreSQL EXPLAIN (ANALYZE, BUFFERS) shows a Seq Scan on a large table with a Filter line and a large `Rows Removed by Filter` relative to the rows returned, and high `Buffers: shared read` or hit counts."
+  - "MySQL EXPLAIN shows `type: ALL` with `key: NULL` and a large `rows` estimate, or `Using filesort` on an ORDER BY with LIMIT."
+  - "pg_stat_statements ranks the statement near the top by total_exec_time or shows high shared_blks_read per call."
+preconditions:
+  - "The predicate is selective: the query returns a small fraction of the table. Planners correctly pick a sequential scan when most rows match or the table is tiny."
+  - "Know the write rate of the table; each index adds cost to every insert and update."
+steps:
+  - "Capture the baseline plan: `EXPLAIN (ANALYZE, BUFFERS) <query>`. For INSERT/UPDATE/DELETE wrap in `BEGIN; ... ROLLBACK;` because ANALYZE really executes the statement."
+  - "Choose the index from the plan: equality columns first, then range or sort columns, matching the WHERE and ORDER BY of the hot query; use a partial index (`WHERE` predicate) when a small, stable subset is queried; use `INCLUDE (cols)` to make the query index-only when the selected columns are few."
+  - "Create it without blocking writes on a live table: `CREATE INDEX CONCURRENTLY name ON t (cols)` (PostgreSQL; cannot run inside a transaction block). MySQL InnoDB: `ALTER TABLE ... ADD INDEX` (online DDL for most cases)."
+  - "Run `ANALYZE t` (PostgreSQL) or `ANALYZE TABLE t` (MySQL) so the planner has statistics for the new index."
+  - "Re-run EXPLAIN (ANALYZE, BUFFERS) and confirm an Index Scan, Index Only Scan, or Bitmap Heap Scan replaces the Seq Scan."
+verification:
+  - "New plan uses the index and Buffers drop sharply versus the baseline plan; actual time falls."
+  - "Result rows are identical to the baseline query output."
+  - "pg_stat_statements mean_exec_time for the statement falls after `pg_stat_statements_reset` on that queryid, and write statements on the table do not regress."
+  - "Index Only Scan nodes show low `Heap Fetches`; high values mean the visibility map is stale and VACUUM is needed."
+traps:
+  - "CREATE INDEX CONCURRENTLY can fail and leave an INVALID index that still costs on writes; drop it or REINDEX INDEX CONCURRENTLY and retry."
+  - "Column order in a multicolumn B-tree matters: it is efficient only for conditions on the leading columns."
+  - "Functions or casts on the indexed column in the predicate (lower(col), implicit type conversion) prevent use of a plain index; MySQL type or collation mismatches in joins have the same effect."
+  - "The planner may still choose a Seq Scan if estimates say most rows match; check estimated vs actual rows before forcing anything. `SET enable_seqscan = off` is a diagnostic, never a fix."
+  - "Unused or redundant indexes slow writes and bloat storage; drop the index if the plan does not use it."
+expectedEffect: "Selective lookups change from a scan of the whole table to an index probe; gain grows with table size and selectivity, varies; measure."
+sources:
+  - https://www.postgresql.org/docs/current/using-explain.html
+  - https://www.postgresql.org/docs/current/sql-createindex.html
+  - https://www.postgresql.org/docs/current/indexes-index-only-scans.html
+  - https://dev.mysql.com/doc/refman/8.4/en/explain-output.html
+verifiedIn: unverified

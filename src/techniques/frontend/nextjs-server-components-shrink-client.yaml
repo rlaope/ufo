@@ -1,0 +1,41 @@
+id: frontend.nextjs-server-components-shrink-client
+domain: frontend
+title: "Next.js: move static or data-only UI to Server Components"
+kind: guided
+riskClass: lossless
+stacks:
+  - nextjs
+  - typescript
+  - node
+bottlenecks:
+  - bundle
+  - rendering
+signals:
+  - Next.js analyzer or bundle analyzer shows data-to-markup libraries (syntax highlighting, markdown parsing, chart or date formatting) in client chunks
+  - A "use client" directive sits at a page or layout root, pulling its whole import graph into the client bundle
+  - "Hydration cost: DevTools Performance shows long hydration tasks on pages that are mostly static"
+preconditions:
+  - Next.js App Router (layouts and pages are Server Components by default)
+  - The moved code needs no state, effects, event handlers or browser APIs
+steps:
+  - List files marked "use client" and what they import; everything a Client Component imports or renders directly ships to the browser
+  - Push the directive down to the smallest interactive leaf (for example only the search box in a layout)
+  - Move libraries that only transform data into markup (e.g. shiki, markdown renderers) into Server Components and pass rendered output
+  - Pass Server Components to Client Components as children or props to keep them out of the client module graph
+  - Render context providers as deep as possible, wrapping only {children}
+  - Mark server-only modules with the server-only package to get a build error if they leak into the client
+  - Rebuild and compare client bundle size per route
+verification:
+  - Analyzer client view no longer contains the moved library
+  - Rendered HTML and interaction behavior unchanged; run component and e2e tests
+  - First-load JS per route in build output decreases
+traps:
+  - Props passed from Server to Client Components must be serializable
+  - Context does not work in Server Components; keep providers in a Client Component
+  - Third-party components that use hooks without a "use client" directive need a thin Client wrapper
+  - Moving work to the server shifts CPU and latency to server rendering; check TTFB
+expectedEffect: Less client JavaScript to download, parse and hydrate; varies with how much code moves; measure first-load JS and INP.
+sources:
+  - https://nextjs.org/docs/app/getting-started/server-and-client-components
+  - https://nextjs.org/docs/app/guides/package-bundling
+verifiedIn: unverified

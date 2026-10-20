@@ -1,0 +1,29 @@
+id: build.typescript-skiplibcheck
+domain: build
+title: Skip type checking of declaration files with skipLibCheck
+kind: guided
+riskClass: lossless
+stacks: [typescript, node]
+bottlenecks: [build, cpu]
+signals:
+  - "tsc --extendedDiagnostics shows Check time dominated by a large count of lines from node_modules .d.ts files (Lines of Library and Lines of Definitions far exceed Lines of TypeScript)."
+  - "tsc --generateTrace with @typescript/analyze-trace shows time spent checking declaration files from dependencies."
+  - "tsconfig has skipLibCheck unset or false."
+preconditions:
+  - "Emitted JavaScript is unchanged; only diagnostics from declaration files are lost, so the team accepts that (first-party .d.ts files that must be validated are checked in another job)."
+steps:
+  - "Set compilerOptions.skipLibCheck to true in the tsconfig used for application builds."
+  - "Optionally set types to a minimal list (or an empty array) so unneeded @types packages are not pulled in."
+  - "Keep a periodic or CI job without skipLibCheck for packages that publish declaration files."
+verification:
+  - "--extendedDiagnostics shows lower Check time and fewer lines checked."
+  - "Type errors in first-party source are still reported (introduce one deliberately and confirm)."
+traps:
+  - "It can hide real errors in declaration files and conflicts between library typings; this is the cost of the speedup."
+  - "Library authors publishing .d.ts should not rely on it for their own declarations."
+  - "It does not speed up checking of your own source; if that dominates, use incremental or project references."
+expectedEffect: "Reduces checker work proportional to declaration volume; varies by dependency set, measure Check time."
+sources:
+  - https://www.typescriptlang.org/tsconfig/#skipLibCheck
+  - https://github.com/microsoft/TypeScript/wiki/Performance
+verifiedIn: unverified

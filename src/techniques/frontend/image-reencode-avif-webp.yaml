@@ -1,0 +1,40 @@
+id: frontend.image-reencode-avif-webp
+domain: frontend
+title: Re-encode raster images to AVIF or WebP
+kind: guided
+riskClass: lossy
+stacks: []
+bottlenecks:
+  - network
+  - rendering
+signals:
+  - Lighthouse image delivery insight (formerly "Efficiently encode images") flags JPEG or BMP images with enough potential savings (see the current insight for the threshold)
+  - Network panel shows large JPEG or PNG responses as the LCP resource
+  - LCP subpart "resource load duration" dominates in the trace
+preconditions:
+  - Owner accepts a quality change; images are re-encoded lossily so a visual quality check is required
+  - Browser support for AVIF/WebP matches the audience
+  - "Next.js: images.formats config; other stacks: build or CDN image pipeline"
+steps:
+  - Pick the LCP and largest images from the Network panel first
+  - Re-encode to WebP (broad support) or AVIF (smaller, slower to encode) with a lossy quality setting; keep originals
+  - Serve with <picture> and type-specific <source> elements, AVIF before WebP, with the original format as the <img> fallback
+  - 'Next.js: next.config images.formats ["image/avif","image/webp"]; order matters, first match to the Accept header wins; set quality only from the qualities allowlist (required in Next.js 16)'
+  - Replace animated GIFs with video
+  - Compare file size and visual quality at several quality values
+verification:
+  - Network panel shows image/avif or image/webp responses and lower transfer size
+  - Visual diff or SSIM threshold agreed with the owner passes on representative images
+  - LCP resource load duration decreases
+traps:
+  - "Lossy: quality loss on photos with fine gradients or text; define the quality oracle first"
+  - Next.js notes AVIF takes about 50% longer to encode though about 20% smaller than WebP, so first requests are slower; each format is cached separately
+  - Do not preload both AVIF and WebP; browsers may fetch both
+  - Already low-quality sources get bigger if quality is set high
+  - Next.js leaves SVG and animated images unoptimized and falls back to the original format
+expectedEffect: Smaller image bytes and shorter LCP resource load duration when images dominate the page; varies by image content; measure.
+sources:
+  - https://nextjs.org/docs/app/api-reference/components/image
+  - https://developer.chrome.com/docs/lighthouse/performance/uses-optimized-images
+  - https://web.dev/articles/optimize-lcp
+verifiedIn: unverified

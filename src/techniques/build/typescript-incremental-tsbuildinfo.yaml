@@ -1,0 +1,31 @@
+id: build.typescript-incremental-tsbuildinfo
+domain: build
+title: Enable TypeScript incremental builds with a persisted tsbuildinfo
+kind: guided
+riskClass: lossless
+stacks: [typescript, node]
+bottlenecks: [build, cpu, caching]
+signals:
+  - "tsc --extendedDiagnostics shows Check time and Parse time are large on every run even when few files changed."
+  - "tsconfig has neither incremental nor composite set and no .tsbuildinfo file is produced."
+  - "CI or local type-check reruns the whole program after a one-file change."
+preconditions:
+  - "TypeScript 3.4 or newer (the incremental and tsBuildInfoFile options were released in 3.4)."
+  - "The build output or cache directory persists between runs so the tsbuildinfo file survives."
+steps:
+  - "Set compilerOptions.incremental to true (default: true if composite, false otherwise)."
+  - "Optionally point tsBuildInfoFile at a stable, gitignored location (for example under the output or cache directory); by default the file is written next to the compilation output, with a name derived from outFile, outDir and the config name."
+  - "In CI, restore and save that file with the build cache."
+  - "For type-check-only runs combine incremental with noEmit and set tsBuildInfoFile explicitly so the file lands in a directory that is cached."
+verification:
+  - "Second tsc run reports lower Check and Total time in --extendedDiagnostics after a small edit."
+  - "Diagnostics and emitted JavaScript are identical to a run after deleting the tsbuildinfo."
+traps:
+  - "The tsbuildinfo file is not used at runtime and can be safely deleted; do not commit it."
+  - "As a precaution include the TypeScript version and tsconfig contents in the CI cache key so a stale file from a different compiler or option set is not restored."
+expectedEffect: "Rechecks only changed files and dependents on later runs; gain scales with project size and cache persistence, so measure."
+sources:
+  - https://www.typescriptlang.org/tsconfig/#incremental
+  - https://www.typescriptlang.org/tsconfig/#tsBuildInfoFile
+  - https://github.com/microsoft/TypeScript/wiki/Performance
+verifiedIn: unverified

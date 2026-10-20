@@ -1,0 +1,34 @@
+id: build.gradle-build-cache
+domain: build
+title: Turn on the Gradle build cache (local, then shared remote for CI)
+kind: guided
+riskClass: lossless
+stacks: [gradle, jvm]
+bottlenecks: [build, caching]
+signals:
+  - "A build scan Build Cache tab or console output shows cacheable tasks such as compileJava, test, or Javadoc executing instead of FROM-CACHE after a clean or on a fresh checkout or CI agent."
+  - "gradle.properties lacks org.gradle.caching=true."
+  - "Many CI jobs rebuild identical outputs for the same inputs (same commit modules compiled repeatedly across jobs)."
+preconditions:
+  - "Tasks to be cached are annotated cacheable and declare all inputs and outputs correctly; they must already be UP-TO-DATE on a second run."
+  - "For a remote cache, an HTTP build cache endpoint is available; remote push is off by default."
+steps:
+  - "Set org.gradle.caching=true in gradle.properties (or pass --build-cache to trial)."
+  - "Optionally tune the local cache under buildCache { local { ... } } in settings."
+  - "For sharing, add buildCache { remote(HttpBuildCache) { url = ...; push = <true only on CI> } } so CI populates and developers only read."
+  - "Use @PathSensitive(PathSensitivity.RELATIVE) and input normalization on custom tasks so outputs are relocatable across directories and machines."
+  - "Mark safe custom tasks cacheable with @CacheableTask or outputs.cacheIf { true }; leave tasks with undeclared inputs uncached."
+verification:
+  - "Run clean then assemble with --build-cache, clean again, rerun: cacheable tasks print FROM-CACHE."
+  - "Build scan Build Cache tab shows hits and avoided time; test and compile outputs are unchanged."
+traps:
+  - "Missing declared inputs cause incorrect cache hits; missing outputs cause failures. Fix task declarations before enabling for custom tasks."
+  - "Absolute paths or volatile values in inputs cause permanent misses."
+  - "Jar and Copy-style tasks are not cacheable by default; do not expect them to show FROM-CACHE."
+  - "If remote requests fail repeatedly, Gradle disables the remote cache for the rest of that build."
+  - "Never allow untrusted pushes to a shared remote cache, and do not use allowUntrustedServer beyond temporary testing."
+expectedEffect: "Avoids re-executing cacheable tasks whose inputs were seen before; gain depends on hit rate and task cost, so measure with cold and warm runs."
+sources:
+  - https://docs.gradle.org/current/userguide/build_cache.html
+  - https://docs.gradle.org/current/userguide/performance.html
+verifiedIn: unverified

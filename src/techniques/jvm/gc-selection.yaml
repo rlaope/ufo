@@ -1,0 +1,35 @@
+id: jvm.gc-selection
+domain: jvm
+title: Choose the garbage collector for the workload (G1, ZGC, Parallel, Serial)
+kind: guided
+riskClass: lossless
+stacks: [jvm, spring-boot]
+bottlenecks: [allocation, cpu]
+signals:
+  - "GC log (-Xlog:gc) or JFR shows long pauses (stop-the-world pause times) that line up with tail latency spikes, on a heap of several GB."
+  - "Batch or throughput-bound job where GC logs show GC time share is a notable fraction of wall time and latency does not matter."
+  - "Tiny container (1 CPU or under about 2 GB) where the default selection yields Serial GC, or where G1 overhead shows in async-profiler cpu mode."
+preconditions:
+  - "JDK 21 or newer for generational ZGC (`-XX:+UseZGC`); generational ZGC is the default ZGC mode from JDK 23."
+  - "Workload and latency goal are known: pause time or throughput."
+steps:
+  - "Capture a baseline: `-Xlog:gc*:file=gc.log` and a JFR recording."
+  - "Latency-sensitive service with large heap: try `-XX:+UseZGC`."
+  - "Throughput-oriented batch with no pause target: try `-XX:+UseParallelGC`."
+  - "Small and simple applications: `-XX:+UseSerialGC` can be the best choice per the java launcher docs."
+  - "Keep G1 (the default) as the balanced choice; tune only pause goal after evidence."
+  - "Change one thing at a time and compare A/B on the primary metric plus pause and RSS."
+verification:
+  - "GC log shows the selected collector and the expected pause or throughput change."
+  - "Latency percentiles or job wall time improve; RSS does not exceed the container limit."
+traps:
+  - "ZGC trades some throughput and memory for low pauses; a throughput job can regress."
+  - "Configurations tuned for one collector (G1 flags) are ignored or invalid under another."
+  - "The AOT cache does not support archived objects with ZGC; classes still load normally but part of the cache benefit is lost."
+  - "GC log format differs between collectors, which can break tooling that parses it."
+expectedEffect: "Lower pause times with ZGC, higher throughput with Parallel on batch; depends on heap and workload; measure."
+sources:
+  - https://docs.oracle.com/en/java/javase/21/docs/specs/man/java.html
+  - https://openjdk.org/jeps/474
+  - https://openjdk.org/jeps/483
+verifiedIn: unverified

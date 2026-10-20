@@ -1,0 +1,41 @@
+id: frontend.defer-third-party-scripts
+domain: frontend
+title: Defer or lazy-load third-party scripts
+kind: guided
+riskClass: lossy
+stacks: []
+bottlenecks:
+  - rendering
+  - startup
+signals:
+  - Lighthouse third-party code audit or insight (see the current audit for its threshold) reports significant third-party main-thread blocking time
+  - DevTools Performance bottom-up grouped by domain shows tag managers, chat, analytics or ad scripts in long tasks during load
+  - Render-blocking synchronous <script src> in <head> from another origin
+  - INP trace shows long input delay caused by third-party tasks
+preconditions:
+  - Owner agrees on when each third-party tool must start (analytics timing, consent, chat widget)
+  - Third-party scripts do not need to run before first paint
+steps:
+  - Inventory third-party origins and their main-thread time
+  - Add async for independent scripts and defer for ordered, less critical ones; remove synchronous blocking tags from <head>
+  - 'Next.js: next/script with strategy="lazyOnload" for idle-time widgets, "afterInteractive" (default) for analytics; place Script in the specific layout or page that needs it'
+  - Lazy-load below-the-fold embeds with loading="lazy" on iframes or IntersectionObserver; use a click-to-load facade for heavy widgets
+  - Add preconnect only for critical third-party origins and dns-prefetch for the rest
+  - Consider self-hosting or caching scripts where the license allows, accepting manual updates
+verification:
+  - Third-party blocking time falls in Lighthouse and the Performance panel
+  - The deferred tool still fires its events (check analytics receive page views; chat widget opens)
+  - LCP and INP do not regress
+traps:
+  - "Lossy: deferring analytics can drop events from very short visits; deferring consent or A/B tools can cause flicker or compliance issues"
+  - async scripts run in unpredictable order and can interrupt parsing
+  - Too many preconnects delay other resources; web.dev warns the browser closes a preconnected connection that is not used within 10 seconds
+  - Next.js worker strategy (Partytown) is experimental and not working with the App Router
+  - JS-based lazy loading may never load if the script fails on flaky networks
+expectedEffect: Less main-thread blocking during load and better INP/TBT when third parties dominate; varies by vendor; measure.
+sources:
+  - https://web.dev/articles/efficiently-load-third-party-javascript
+  - https://nextjs.org/docs/app/guides/scripts
+  - https://developer.chrome.com/docs/lighthouse/performance/third-party-summary
+  - https://web.dev/articles/preconnect-and-dns-prefetch
+verifiedIn: unverified

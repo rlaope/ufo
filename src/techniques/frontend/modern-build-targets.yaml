@@ -1,0 +1,45 @@
+id: frontend.modern-build-targets
+domain: frontend
+title: Raise the build target to browsers actually supported
+kind: guided
+riskClass: lossy
+stacks:
+  - vite
+  - webpack
+  - typescript
+  - node
+  - nextjs
+bottlenecks:
+  - bundle
+  - cpu
+signals:
+  - Lighthouse Legacy JavaScript insight or bundle inspection shows transpiled classes, async/await regenerators or polyfills for features all supported browsers have
+  - Babel preset-env or browserslist config includes very old browsers (for example IE 11 or a broad "defaults" plus old versions)
+  - Analyzer shows core-js or regenerator-runtime among top modules
+preconditions:
+  - Product owner confirms the minimum supported browsers; dropping older ones changes who can use the site (hence lossy)
+  - Browser usage analytics available to confirm the audience
+steps:
+  - "Read the current targets: browserslist file or package.json key, build.target in Vite, babel preset-env targets, tsconfig target"
+  - Agree a floor with the owner; Vite defaults to Baseline Widely Available (Chrome 111, Edge 111, Firefox 114, Safari 16.4 in Vite 8)
+  - 'Set the narrower target: .browserslistrc queries, Vite build.target (lowest allowed es2015, default "baseline-widely-available"), tsconfig target ES2020+'
+  - "Next.js: it supports Chrome 111+, Edge 111+, Firefox 111+ and Safari 16.4+ with zero configuration (its default browserslist); to target other browsers set a browserslist key in package.json, and add polyfills yourself for anything older"
+  - Remove polyfill injection that the new targets no longer need (Babel useBuiltIns, core-js imports)
+  - Rebuild and compare bundle size and output syntax
+verification:
+  - Output bundle no longer contains transpiled helpers for syntax in the target set
+  - Run the e2e suite on the lowest supported browser version
+  - Bundle size and parse time drop on the analyzer and Lighthouse
+traps:
+  - Dropping browsers removes users; needs explicit opt-in
+  - Vite does syntax transforms only, not polyfills; legacy support needs @vitejs/plugin-legacy
+  - Babel preset-env transforms everything the targets need, so wider targets mean more output
+  - Third-party dependencies in node_modules may ship pre-transpiled code that your target does not change
+  - A target above what some users run produces a blank page, not a graceful fallback
+expectedEffect: Smaller and faster-to-parse JavaScript when targets were older than the real audience; varies; measure.
+sources:
+  - https://vite.dev/guide/build.html
+  - https://vite.dev/config/build-options.html
+  - https://babeljs.io/docs/babel-preset-env
+  - https://nextjs.org/docs/architecture/supported-browsers
+verifiedIn: unverified

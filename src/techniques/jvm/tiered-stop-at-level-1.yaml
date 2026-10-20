@@ -1,0 +1,29 @@
+id: jvm.tiered-stop-at-level-1
+domain: jvm
+title: Limit JIT to C1 with TieredStopAtLevel=1 for short-lived processes
+kind: guided
+riskClass: lossless
+stacks: [jvm, spring-boot]
+bottlenecks: [startup, cpu]
+signals:
+  - "The process lives for seconds to a few minutes (CLI, batch step, test run, build tool) and JFR or async-profiler cpu mode shows C2 compiler threads (C2 CompilerThread) consuming significant CPU during the run."
+  - "On a CPU-limited container the JIT compiler threads compete with application threads during startup (high CPU at startup, low steady-state load)."
+preconditions:
+  - "Workload is short-lived or startup-bound; it will not run long enough to benefit from C2 optimizations."
+steps:
+  - "Add `-XX:TieredStopAtLevel=1` to the JVM options (JAVA_TOOL_OPTIONS or the launcher command). In HotSpot, the flag stops tiered compilation at the given level and level 1 is the C1 (simple) tier, so C2 never runs."
+  - "Measure the A/B arms on the real metric (total wall time or time-to-ready), several runs each."
+  - "Revert for long-running services where peak throughput matters."
+verification:
+  - "A/B wall time or time-to-ready improves with the flag on repeated runs."
+  - "Functional output identical."
+traps:
+  - "C1-only code is slower at peak; any run that gets long enough, or a CPU-heavy hot loop, regresses."
+  - "Do not apply to long-running servers; the gain is a startup-only effect."
+expectedEffect: "Less compile CPU time and faster completion for short runs; slower for long runs; varies; measure."
+sources:
+  - https://docs.oracle.com/en/java/javase/21/docs/specs/man/java.html
+  - https://docs.oracle.com/en/java/javase/21/vm/java-hotspot-virtual-machine-performance-enhancements.html
+  - https://github.com/openjdk/jdk/blob/master/src/hotspot/share/compiler/compiler_globals.hpp
+  - https://github.com/openjdk/jdk/blob/master/src/hotspot/share/compiler/compilerDefinitions.hpp
+verifiedIn: unverified

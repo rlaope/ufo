@@ -1,0 +1,35 @@
+id: server.go-profile-guided-optimization
+domain: server
+title: Build with profile-guided optimization using a default.pgo CPU profile
+kind: guided
+riskClass: lossless
+stacks: [go]
+bottlenecks: [cpu]
+signals:
+  - "go tool pprof top on a CPU profile shows a spread of hot functions with call overhead (inlining and devirtualization candidates) rather than one algorithmic hotspot"
+  - "No default.pgo exists in the main package directory; go version is 1.21 or newer"
+  - "A representative CPU profile can be collected from a production-like workload via net/http/pprof"
+preconditions:
+  - "Go 1.21+ (-pgo=auto is the default, so default.pgo is picked up by go build)"
+  - "The profile comes from a representative workload, not a microbenchmark"
+steps:
+  - "Import _ net/http/pprof (or use runtime/pprof) and collect a CPU profile of the real workload, for example curl -o cpu.pprof http://host:port/debug/pprof/profile?seconds=30"
+  - "Merge profiles from several instances with go tool pprof -proto a.pprof b.pprof > merged.pprof, using the same duration for each"
+  - "Save the result as default.pgo in the main package directory and commit it"
+  - "Build normally (go build) or pass -pgo=<path>; use -pgo=off for the baseline arm"
+  - "Refresh the profile each release from the PGO-built binary"
+verification:
+  - "go version -m <binary> shows -pgo=... in the build settings"
+  - "Benchmark or load-test primary metric improves versus -pgo=off on the same code"
+  - "Tests pass; output is identical"
+traps:
+  - "The first PGO build rebuilds every package in the dependency graph, so build time rises until cached"
+  - "Binary size may grow slightly from extra inlining"
+  - "An unrepresentative profile (idle instance, one operation) yields little or no gain"
+  - "Merged profiles of different durations overweight the longer one"
+  - "Renaming or moving hot functions weakens matching until the next profile"
+expectedEffect: "The Go docs report roughly 2-14 percent for Go 1.22 on representative workloads; varies, measure."
+sources:
+  - https://go.dev/doc/pgo
+  - https://go.dev/blog/pprof
+verifiedIn: unverified

@@ -1,0 +1,31 @@
+id: jvm.reduce-classpath-scanning
+domain: jvm
+title: Narrow component scanning and auto-configuration at startup
+kind: guided
+riskClass: lossless
+stacks: [spring-boot, jvm]
+bottlenecks: [startup]
+signals:
+  - "Spring Boot startup actuator endpoint or BufferingApplicationStartup shows large cumulative time in spring.context.component-scan, spring.context.config-classes.parse and condition evaluation steps."
+  - "Startup shows many auto-configurations evaluated for libraries the application does not use (debug report or --debug lists large negative-match set)."
+  - "@ComponentScan or @SpringBootApplication scans a broad root package, or the class path contains many unused starters."
+preconditions:
+  - "Spring Boot. The change must leave the needed bean set unchanged, verified against the bean list before and after; if a bean has to go, this is not the card."
+steps:
+  - "Use BufferingApplicationStartup (or the startup actuator endpoint, or FlightRecorderApplicationStartup with JFR) to identify the costly steps first."
+  - "Restrict scanning with `scanBasePackages` or explicit @Import of the configurations needed, instead of scanning a broad root."
+  - "Remove unused starters and dependencies from the build so their auto-configurations are not on the class path."
+  - "Exclude specific auto-configurations with `spring.autoconfigure.exclude` only where the evidence shows cost."
+  - "Prefer the Spring AOT processing card when the profiles and class path are fixed."
+verification:
+  - "Compare the bean list (actuator beans endpoint) before and after; no needed bean disappears."
+  - "Full test suite passes; A/B time-to-ready improves."
+traps:
+  - "Beans that were found only by broad scanning silently stop being registered; failures can appear only at runtime when a bean is requested."
+  - "Excluding an auto-configuration can drop behavior other components depend on."
+  - "Measure before editing: component scanning is often a small share compared with bean instantiation."
+expectedEffect: "Shorter configuration parsing time where scanning dominates; varies; measure."
+sources:
+  - https://docs.spring.io/spring-boot/reference/features/spring-application.html
+  - https://docs.spring.io/spring-framework/reference/core/aot.html
+verifiedIn: unverified

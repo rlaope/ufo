@@ -1,0 +1,33 @@
+id: build.docker-buildkit-cache-mounts
+domain: build
+title: Persist package manager caches across Docker builds with BuildKit cache mounts
+kind: guided
+riskClass: lossless
+stacks: [docker]
+bottlenecks: [build, network, caching]
+signals:
+  - "docker build logs show dependency steps re-downloading all packages (npm, pip, apt, go modules) whenever the lockfile changes, even though most packages are unchanged."
+  - "Dependency RUN steps have no --mount=type=cache."
+  - "Build is run with BuildKit (default in current Docker) on a persistent builder."
+preconditions:
+  - "BuildKit builder (default in current Docker Engine and Docker Desktop)."
+  - "A persistent builder: cache mounts live in the builder's local storage."
+steps:
+  - "Add --mount=type=cache,target=<tool cache dir> to the install RUN, for example /root/.npm for npm or /root/.cache/go-build for Go."
+  - "For apt use sharing=locked and mount /var/cache/apt and /var/lib/apt."
+  - "Set id when two stages should share or separate caches; set uid if the build runs as a non-root user."
+  - "Make the install command tolerate any cache content, including an empty one."
+verification:
+  - "Change the lockfile slightly and rebuild: logs show only new packages downloaded and the step is faster."
+  - "The final image is unchanged in content and runs the same tests."
+traps:
+  - "Cache mounts are performance only; another build or GC may remove them, so the build must work from an empty cache."
+  - "They are not exported by --cache-to and not restored by --cache-from, so fresh CI runners start empty unless the builder persists."
+  - "Without sharing=locked, tools that need exclusive access such as apt can corrupt state with parallel builds."
+  - "Cache contents are not in the image; do not rely on them at runtime."
+  - "Wrong target path means the tool never uses the cache; confirm the tool's real cache location."
+expectedEffect: "Avoids re-downloading unchanged packages when a layer is rebuilt; gain depends on download share of install time and builder persistence, so measure."
+sources:
+  - https://docs.docker.com/reference/dockerfile/
+  - https://docs.docker.com/build/cache/optimize/
+verifiedIn: unverified

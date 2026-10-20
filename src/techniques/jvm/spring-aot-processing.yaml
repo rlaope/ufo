@@ -1,0 +1,33 @@
+id: jvm.spring-aot-processing
+domain: jvm
+title: Spring AOT processing on the JVM (build-time bean definitions)
+kind: guided
+riskClass: lossless
+stacks: [spring-boot, jvm, maven, gradle]
+bottlenecks: [startup]
+signals:
+  - "Spring Boot startup actuator endpoint or a BufferingApplicationStartup dump shows large time in configuration class parsing, component scanning, condition evaluation and bean definition registration steps."
+  - "JFR shows reflection and annotation introspection (ConfigurationClassPostProcessor, ClassPathScanningCandidateComponentProvider) near the top of startup stacks."
+  - "The deployed artifact has a fixed class path and a fixed set of active profiles."
+preconditions:
+  - "Spring Boot 3 or newer with the Maven or Gradle plugin process-aot task."
+  - "Profiles and condition-relevant properties are known at build time; the class path at runtime equals the build class path. Under these conditions the bean set and behavior are the same as without AOT; if they cannot be fixed, do not apply this card."
+steps:
+  - "Run the Spring Boot plugin AOT task during the build (Maven `process-aot` goal; Gradle `processAot`) with the production profiles active."
+  - "Run the application with `-Dspring.aot.enabled=true` on the JVM so the generated initializers are used."
+  - "Remove patterns AOT cannot transform: declare precise @Bean return types, avoid circular dependencies (use @Lazy or ObjectProvider), avoid lambda instance suppliers and registerSingleton, avoid multiple constructors without @Autowired."
+  - "Combine with the AOT cache or CDS card; they are complementary."
+verification:
+  - "Startup log shows the AOT-generated context initializer in use; bean count and endpoints match the non-AOT run."
+  - "Run the integration test suite against the AOT-enabled build."
+  - "Compare time-to-ready of A/B arms."
+traps:
+  - "Conditions (@Conditional*, @Profile, property-driven bean presence) are evaluated at build time and hard-coded; changing profiles or properties at runtime no longer changes which beans exist."
+  - "Circular dependencies and manually registered singletons can fail or be skipped under AOT."
+  - "The runtime class path must not differ from the build class path."
+  - "Benefit on the JVM is smaller than in native image; the Spring docs describe the engine as targeting native images first."
+expectedEffect: "Less runtime configuration parsing and reflection at startup on the JVM; varies; measure."
+sources:
+  - https://docs.spring.io/spring-framework/reference/core/aot.html
+  - https://docs.spring.io/spring-boot/reference/packaging/efficient.html
+verifiedIn: unverified

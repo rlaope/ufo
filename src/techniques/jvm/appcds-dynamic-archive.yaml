@@ -1,0 +1,33 @@
+id: jvm.appcds-dynamic-archive
+domain: jvm
+title: Application Class Data Sharing archive for JDK 24 and earlier
+kind: guided
+riskClass: lossless
+stacks: [jvm, spring-boot]
+bottlenecks: [startup]
+signals:
+  - "JFR or -Xlog:class+load shows thousands of application and library classes loaded from jar files (source: file:/...jar) rather than from shared objects file."
+  - "JDK in use is below 25 and the AOT cache is therefore not the supported path (java -version)."
+  - "Time-to-ready is the primary metric and the application is restarted frequently."
+preconditions:
+  - "JDK 13 or newer for -XX:ArchiveClassesAtExit dynamic archives."
+  - "The archive is used with the same JDK build and the same class path as the training run."
+  - "Spring Boot: run from the extracted jar layout."
+steps:
+  - "Spring Boot: `java -Djarmode=tools -jar app.jar extract --destination application`, then cd application."
+  - "Training run: `java -XX:ArchiveClassesAtExit=application.jsa -Dspring.context.exit=onRefresh -jar app.jar` (non-Spring: a representative run that exits normally)."
+  - "Production launch: `java -XX:SharedArchiveFile=application.jsa -jar app.jar`."
+  - "Create the archive in the build or image-build step and regenerate it whenever the jar or JDK changes."
+verification:
+  - "Compare time-to-ready of A/B arms across repeated launches."
+  - "`-Xshare:on` makes the JVM fail instead of silently ignoring a bad archive; use it once to prove the archive is valid."
+  - "`-Xlog:class+load` shows application classes with source: shared objects file (top layer)."
+traps:
+  - "A JDK or class path mismatch makes the JVM ignore the archive without failing under the default -Xshare:auto."
+  - "The archive must be used with the extracted form of the application, otherwise it has no effect."
+  - "Prefer the AOT cache card when the JDK is 25 or newer; it covers more startup work."
+expectedEffect: "Reduces class parse and load time at startup; varies by class count; measure."
+sources:
+  - https://docs.spring.io/spring-boot/reference/packaging/aot-cache.html
+  - https://openjdk.org/jeps/483
+verifiedIn: unverified

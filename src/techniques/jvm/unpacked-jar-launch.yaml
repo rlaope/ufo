@@ -1,0 +1,28 @@
+id: jvm.unpacked-jar-launch
+domain: jvm
+title: Run Spring Boot from the extracted jar layout
+kind: guided
+riskClass: lossless
+stacks: [spring-boot, jvm, docker]
+bottlenecks: [startup]
+signals:
+  - "Application is launched with `java -jar app.jar` from a Spring Boot executable (nested) jar."
+  - "JFR or -Xlog:class+load shows classes loaded through the nested jar launcher (LaunchedClassLoader or jar-in-jar resources) at startup."
+preconditions:
+  - "Spring Boot with the jarmode tools available (Spring Boot 3.3 or newer for `-Djarmode=tools`, which supersedes `-Djarmode=layertools extract`; the jar must still include the tools jarmode, see includeTools)."
+steps:
+  - "Extract: `java -Djarmode=tools -jar app.jar extract --destination application`."
+  - "Run: `java -jar application/app.jar` (libraries are placed under lib/)."
+  - "In container builds, extract in the image build and copy the directory instead of the fat jar."
+  - "This layout is also required by the AOT cache and CDS cards."
+verification:
+  - "Application starts and serves the same responses."
+  - "A/B time-to-ready compared; steady-state performance should not differ."
+traps:
+  - "The Spring docs state no difference in execution time is expected after startup; only startup changes."
+  - "The gain is small on its own; its main value is enabling the AOT cache or CDS."
+expectedEffect: "Small startup reduction from avoiding nested-jar loading; none after startup; measure."
+sources:
+  - https://docs.spring.io/spring-boot/reference/packaging/efficient.html
+  - https://github.com/spring-projects/spring-boot/wiki/Spring-Boot-3.3-Release-Notes
+verifiedIn: unverified

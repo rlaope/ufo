@@ -1,0 +1,40 @@
+id: frontend.responsive-images-srcset-sizes
+domain: frontend
+title: Serve right-sized images with srcset, sizes and dimensions
+kind: guided
+riskClass: lossless
+stacks: []
+bottlenecks:
+  - network
+  - rendering
+signals:
+  - Lighthouse "Properly size images" flags images whose intrinsic size far exceeds displayed size
+  - Network panel shows the same large image requested on small viewports
+  - <img> elements lack width and height attributes and the page shows layout shift (CLS in the Performance panel)
+  - srcset with w descriptors exists but sizes is absent
+preconditions:
+  - Multiple pre-generated widths, an image CDN, or the Next.js image optimizer
+  - Layout width of the image per breakpoint is known
+steps:
+  - Generate several widths (for example 480, 800, 1200, 1600)
+  - 'Add srcset with w descriptors and a sizes attribute that states the slot width per breakpoint, last entry unconditional: sizes="(width <= 600px) 100vw, 50vw"'
+  - "Always include width and height attributes (or CSS aspect-ratio) so space is reserved; use CSS max-width: 100%; height: auto"
+  - "Next.js: <Image> with sizes; without sizes it assumes 100vw, fill images then get a srcset from deviceSizes only"
+  - Use <picture> only for art direction, not resolution switching
+  - Do not lazy-load the LCP image; below-the-fold images use loading="lazy"
+verification:
+  - Network panel on a narrow viewport loads a smaller candidate
+  - Lighthouse proper-size audit passes; no CLS from images
+  - Rendered layout is visually identical at each breakpoint
+traps:
+  - Missing sizes defaults to 100vw, so the browser may pick a larger file than needed
+  - srcset uses w units, not px; sizes does not accept percentages
+  - Swapping image sources with JS or CSS after load means the original was already fetched
+  - x descriptors only switch density, not layout size
+  - Viewport meta tag must exist or mobile reports a desktop width
+expectedEffect: Fewer image bytes on small viewports and less layout shift; varies with how oversized the originals are; measure transfer size per viewport.
+sources:
+  - https://developer.mozilla.org/en-US/docs/Web/HTML/Guides/Responsive_images
+  - https://nextjs.org/docs/app/api-reference/components/image
+  - https://web.dev/articles/optimize-lcp
+verifiedIn: unverified

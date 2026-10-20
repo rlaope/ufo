@@ -1,0 +1,33 @@
+id: server.python-orjson
+domain: server
+title: Replace stdlib json with orjson on hot serialization paths
+kind: guided
+riskClass: lossy
+stacks: [python, fastapi, flask, django]
+bottlenecks: [serialization, cpu]
+signals:
+  - "py-spy flame graph shows json.dumps, json.loads, or the framework JSON response encoder (jsonable_encoder, JSONResponse.render) with high self time"
+  - "Endpoints return large lists of dicts, dataclasses, datetimes, or UUIDs"
+preconditions:
+  - "CPython 3.10 or newer (orjson does not support PyPy)"
+  - "Callers can accept bytes from dumps, and the owner accepts the documented output differences (NaN and Infinity become null, integers beyond 64 bits raise, strict UTF-8); orjson also adds a dependency"
+steps:
+  - "Add orjson and use orjson.dumps(obj) and orjson.loads(data) on the hot paths, or the framework response class (for example ORJSONResponse) if the framework offers it"
+  - "Map options: OPT_SORT_KEYS for sort_keys, OPT_INDENT_2 for indent, OPT_NON_STR_KEYS for non-string dict keys, OPT_SERIALIZE_NUMPY for numpy"
+  - "Provide default= for types orjson does not serialize and make it raise for unknown types"
+  - "Diff outputs against json.dumps on real payloads"
+verification:
+  - "Round-trip parse of the new output equals the old parsed output on sample payloads"
+  - "Contract tests for clients that read the bytes or exact formatting pass"
+  - "Serialization share in the profile falls"
+traps:
+  - "dumps returns bytes, not str; call .decode() where str is required"
+  - "NaN and Infinity serialize as null (floats otherwise round-trip without precision loss), and loads rejects them with JSONDecodeError; this differs from json"
+  - "Datetime output follows RFC 3339; naive datetimes stay naive unless OPT_NAIVE_UTC; integers are limited to 64 bits by default"
+  - "Non-str keys raise unless OPT_NON_STR_KEYS; lone surrogates raise; only two-space indent exists"
+  - "A default function that returns None serializes as null silently"
+  - "No object_hook or file helpers"
+expectedEffect: "Faster JSON encode and decode on serialization-heavy endpoints; varies, measure."
+sources:
+  - https://github.com/ijl/orjson
+verifiedIn: unverified

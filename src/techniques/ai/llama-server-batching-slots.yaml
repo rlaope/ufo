@@ -1,0 +1,37 @@
+id: ai.llama-server-batching-slots
+domain: ai
+title: Tune llama-server batch sizes, parallel slots and continuous batching
+kind: guided
+riskClass: lossless
+stacks:
+  - llama-cpp
+bottlenecks:
+  - inference
+  - contention
+signals:
+  - llama-server logs show slots processing requests one after another while concurrent clients queue (GET /slots reports slots busy, GET /metrics shows deferred requests)
+  - Prompt processing of long prompts dominates time to first token in llama-server timings output (prompt eval tokens per second is low relative to the hardware)
+  - Server was started with -np 1 (or auto resolved to one slot) while several clients send requests at the same time
+preconditions:
+  - llama.cpp build recent enough to have llama-server with --parallel and --cont-batching (continuous batching is on by default)
+  - Enough RAM or VRAM for the KV cache of every slot
+  - Workload has concurrent clients, or long prompts, for the change to matter
+steps:
+  - "Record the current values with GET /slots and the startup log: -b (logical batch, default 2048), -ub (physical batch, default 512), -np (default auto), -t and -tb"
+  - Set -np to the expected number of concurrent clients and keep continuous batching enabled (-cb is the default; do not pass --no-cont-batching)
+  - "Size the context for slots: check n_ctx per slot in GET /slots after startup, and raise -c if per-slot context is too small for the longest prompt"
+  - For prompt-heavy workloads try a larger -ub (for example 1024 or 2048) within -b, one value at a time, and set -tb when prompt processing should use a different thread count than generation
+  - Restart llama-server and replay the same request mix for each variant
+verification:
+  - Throughput (tokens per second summed over clients) and p95 latency improve against the baseline run with the same request mix
+  - Outputs for a fixed seed and greedy sampling are unchanged, apart from the batch-size nondeterminism noted in the docs
+  - Memory use stays below the machine limit (no swapping, no out-of-memory on the GPU)
+traps:
+  - More slots split the context and KV memory; per-slot n_ctx can become too small and truncate long prompts, so read n_ctx per slot from GET /slots
+  - A larger -ub raises compute buffer memory and can slow small prompts or fail to allocate on small GPUs
+  - Raising -np helps only with concurrent requests; a single client sees no gain and may see per-request slowdown
+  - Benchmark with a representative mix; one long prompt next to many short ones behaves differently from uniform load
+expectedEffect: Higher aggregate throughput under concurrent load, and faster prompt processing for long prompts; varies with hardware and request mix, measure.
+sources:
+  - https://raw.githubusercontent.com/ggml-org/llama.cpp/master/tools/server/README.md
+verifiedIn: unverified

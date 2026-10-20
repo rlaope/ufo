@@ -1,0 +1,35 @@
+id: jvm.crac-checkpoint-restore
+domain: jvm
+title: CRaC checkpoint and restore for near-instant startup
+kind: guided
+riskClass: upgrade
+stacks: [spring-boot, jvm, docker]
+bottlenecks: [startup]
+signals:
+  - "Time-to-ready is dominated by JVM and Spring startup plus JIT warm-up (JFR shows interpreter and C1 heavy frames for the first seconds; latency drops after warm-up)."
+  - "Deployment runs on Linux, restarts or scales out frequently, and the runtime can be changed to a CRaC-enabled JDK."
+preconditions:
+  - "Linux and a CRaC-enabled JDK (for example Azul Zulu or BellSoft Liberica builds with CRaC); this changes the runtime, hence an upgrade."
+  - "org.crac:crac 1.4.0 or newer on the class path for Spring Framework integration."
+  - "The checkpoint files are produced and restored on a compatible OS and CPU architecture."
+steps:
+  - "Add the `org.crac:crac` dependency and switch to a CRaC-enabled JDK."
+  - "Automatic checkpoint at startup: `java -Dspring.context.checkpoint=onRefresh -XX:CRaCCheckpointTo=/path/to/crac-files -jar app.jar`."
+  - "On-demand warmed-up checkpoint: run the app with -XX:CRaCCheckpointTo, drive a warm-up load, then `jcmd <app> JDK.checkpoint`."
+  - "Restore with `java -XX:CRaCRestoreFrom=/path/to/crac-files`."
+  - "Make resources checkpoint-safe: Spring stops and starts Lifecycle beans; register org.crac.Resource for non-Spring libraries holding sockets, files or threads."
+  - "Test early with `-Dspring.context.exit=onRefresh` to find beans that connect to remote services before the lifecycle starts."
+verification:
+  - "Measure time from restore command to ready; the restored application serves the same endpoints and responses."
+  - "After restore, connection pools reconnect and scheduled jobs run normally."
+traps:
+  - "Checkpoint files are a memory image of the JVM and can contain secrets and environment-based configuration; do not ship them in shared images carelessly."
+  - "Open sockets, files and active threads must be closed and reopened by lifecycle handling or the checkpoint fails or the restored process misbehaves."
+  - "@Scheduled(fixedRate) runs all executions missed between checkpoint and restore; use fixedDelay or cron."
+  - "Automatic checkpoint at onRefresh skips startup cost but does not give a warmed-up JIT; only an on-demand checkpoint after load does."
+  - "Linux only, and the support scope varies by library."
+expectedEffect: "Restore in a small fraction of normal startup time, and a warmed JVM if checkpointed after load; varies; measure."
+sources:
+  - https://docs.spring.io/spring-framework/reference/integration/checkpoint-restore.html
+  - https://docs.spring.io/spring-boot/reference/packaging/checkpoint-restore.html
+verifiedIn: unverified

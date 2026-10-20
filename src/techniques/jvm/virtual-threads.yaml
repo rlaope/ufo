@@ -1,0 +1,36 @@
+id: jvm.virtual-threads
+domain: jvm
+title: Virtual threads for blocking request handling (Java 21+)
+kind: guided
+riskClass: lossless
+stacks: [jvm, spring-boot]
+bottlenecks: [contention, io]
+signals:
+  - "JFR or a thread dump shows the request thread pool saturated (all server threads in WAITING or blocked in socket or JDBC reads) while CPU stays low."
+  - "Request queue or latency grows with concurrency while CPU utilization is far below the limit."
+  - "Workload is thread-per-request with blocking I/O (JDBC, blocking HTTP clients) and high concurrency (thousands of concurrent requests)."
+preconditions:
+  - "Java 21 or newer; Spring Boot 3.2 or newer for `spring.threads.virtual.enabled`. If the project is below these versions, the version bump is a separate upgrade change, not part of this card."
+  - "Downstream limits are known (database pool size, remote rate limits), since more concurrent requests reach them."
+steps:
+  - "Set `spring.threads.virtual.enabled=true`; the auto-configured task executor and scheduler then use virtual threads, and the embedded servlet container handles requests with them."
+  - "Do not pool virtual threads; limit concurrent access to a resource with a Semaphore or the existing connection pool."
+  - "On Java 21 to 23, replace long-held `synchronized` blocks around blocking I/O with ReentrantLock; JDK 24 (JEP 491) removes most synchronized pinning."
+  - "Review ThreadLocal use: avoid caching expensive objects per thread."
+  - "Re-size the HikariCP pool deliberately; see the pool sizing card."
+verification:
+  - "Throughput at the same concurrency rises or queueing latency falls in the A/B arms; CPU rises toward saturation."
+  - "JFR event jdk.VirtualThreadPinned shows no frequent long pinning."
+  - "Tests pass; no ThreadLocal or request-context leaks."
+traps:
+  - "Virtual threads add scale, not speed; CPU-bound work gains nothing."
+  - "Unbounded concurrency can overwhelm the database or downstream services; the pool becomes the bottleneck and connection waits show up as timeouts."
+  - "`spring.task.execution.pool.*` settings no longer apply to the virtual-thread executor."
+  - "Pinning from synchronized (Java 21 to 23), native frames and class initialization can block carrier threads."
+  - "Thread identity and ThreadLocal lifetimes change (no pooled thread reuse); code that relies on thread names, thread-bound caches or thread-count limits needs review."
+expectedEffect: "Higher throughput for blocking I/O at high concurrency; none for CPU-bound work; measure."
+sources:
+  - https://openjdk.org/jeps/444
+  - https://openjdk.org/jeps/491
+  - https://docs.spring.io/spring-boot/reference/features/task-execution-and-scheduling.html
+verifiedIn: unverified

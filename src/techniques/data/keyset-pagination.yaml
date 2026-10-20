@@ -1,0 +1,34 @@
+id: data.keyset-pagination
+domain: data
+title: Replace deep OFFSET pagination with keyset (seek) pagination
+kind: guided
+riskClass: lossy
+stacks: [postgres, mysql]
+bottlenecks: [query]
+signals:
+  - "EXPLAIN (ANALYZE, BUFFERS) of a LIMIT/OFFSET query shows the scan node returning offset+limit rows (or more) while only limit rows leave the Limit node."
+  - "pg_stat_statements shows a paging statement whose mean_exec_time rises with later pages; endpoint latency grows with the page number."
+  - "MySQL EXPLAIN shows `Using filesort` or a large `rows` estimate for ORDER BY ... LIMIT n OFFSET m."
+preconditions:
+  - "A deterministic total order exists: ORDER BY on columns ending in a unique column such as the primary key."
+  - "The API can accept an opaque cursor (last seen sort key) instead of a page number. Changing the API contract is the lossy part and needs the owner's opt-in."
+steps:
+  - "Ensure an index matches the ORDER BY, e.g. `(created_at, id)`; both directions are served by a backward B-tree scan."
+  - "Replace `ORDER BY k, id LIMIT n OFFSET m` with `WHERE (k, id) > (:last_k, :last_id) ORDER BY k, id LIMIT n` using row-value comparison, or the equivalent expanded OR condition when the engine plans it poorly."
+  - "Return the last row's `(k, id)` as the next-page cursor; encode it opaquely."
+  - "Keep OFFSET paging only for shallow pages if random page access is required."
+verification:
+  - "EXPLAIN (ANALYZE, BUFFERS) shows an Index Scan with the cursor as the index condition and a constant number of rows read for any page depth."
+  - "Walking all pages with the cursor returns the same set of rows in the same order as OFFSET paging on a quiescent dataset, with no duplicate or missing ids."
+  - "Latency of page 1 and page 1000 are within noise of each other."
+traps:
+  - "Rows skipped by OFFSET are still computed by the server, which is why deep pages are slow; without ORDER BY on a unique order, results across pages are unpredictable."
+  - "Nullable sort columns make the comparison skip or duplicate rows; use NOT NULL columns or handle NULLs explicitly."
+  - "Mixed ASC/DESC orderings cannot use a single row-value comparison; expand the condition and match the index direction."
+  - "Cursors do not support jumping to page N or showing total page counts."
+  - "Rows inserted behind the cursor are not seen, which differs from OFFSET behavior."
+expectedEffect: "Cost per page becomes independent of depth; gain grows with page number and table size, varies; measure on deep pages."
+sources:
+  - https://www.postgresql.org/docs/current/queries-limit.html
+  - https://dev.mysql.com/doc/refman/8.4/en/limit-optimization.html
+verifiedIn: unverified

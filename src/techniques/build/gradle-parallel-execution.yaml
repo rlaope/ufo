@@ -1,0 +1,32 @@
+id: build.gradle-parallel-execution
+domain: build
+title: Enable Gradle parallel project execution and size the daemon heap
+kind: guided
+riskClass: lossless
+stacks: [gradle, jvm]
+bottlenecks: [build, cpu, contention]
+signals:
+  - "A multi-project build scan Timeline shows projects executing one after another with idle worker lanes while independent subprojects exist."
+  - "gradle.properties has no org.gradle.parallel=true."
+  - "Build scan or GC logs show the Gradle daemon spending significant time in GC or hitting OutOfMemoryError with the default heap."
+preconditions:
+  - "Multiple subprojects with independent dependency branches; a single dominant subproject limits the benefit."
+  - "Project tasks do not mutate shared state outside declared inputs and outputs."
+steps:
+  - "Set org.gradle.parallel=true in gradle.properties."
+  - "If the daemon is memory-bound, raise org.gradle.jvmargs (the default heap is 512MB), for example -Xmx2g, sized to available RAM."
+  - "Keep the daemon enabled (default) so repeated invocations reuse a warm JVM; it helps long-lived agents most."
+  - "For one huge compile task (Gradle says forking helps when one task compiles more than a thousand source files, and has little effect on small builds) consider options.fork = true on JavaCompile."
+verification:
+  - "Build scan Timeline shows concurrent project lanes and wall time drops versus a baseline run on the same machine."
+  - "Outputs and test results are identical to a serial run (--no-parallel)."
+traps:
+  - "Tasks with undeclared dependencies on other projects can pass serially and fail or flake in parallel."
+  - "Raising -Xmx beyond free RAM causes swapping and slows the build."
+  - "Short-lived CI agents get little benefit from the daemon since JVM warm-up is not reused."
+  - "When the configuration cache is active, --no-parallel has no effect."
+expectedEffect: "Overlaps independent subprojects; speedup depends on module graph shape and core count, so measure."
+sources:
+  - https://docs.gradle.org/current/userguide/performance.html
+  - https://docs.gradle.org/current/userguide/configuration_cache.html
+verifiedIn: unverified

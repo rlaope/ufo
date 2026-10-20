@@ -1,0 +1,34 @@
+id: server.node-cluster-multi-process
+domain: server
+title: Run one Node server process per core with cluster or a process manager
+kind: guided
+riskClass: lossless
+stacks: [node]
+bottlenecks: [cpu, contention]
+signals:
+  - "Host or container has several cores but the node process shows about 100 percent of one core in top or a container CPU metric"
+  - "Load test throughput stops scaling while the event loop stays saturated (monitorEventLoopDelay high, work is spread across many small requests)"
+  - "No per-request state in process memory that must be shared (sessions, counters, caches)"
+preconditions:
+  - "Request handling is stateless or state is in an external store"
+  - "CPU quota of the container is greater than one core"
+steps:
+  - "Use node:cluster with cluster.isPrimary forking os.availableParallelism() workers, each calling listen on the same port; or run several processes behind the platform load balancer"
+  - "Restart a worker on exit unless worker.exitedAfterDisconnect is true"
+  - "Move in-memory sessions, rate counters, and caches to a shared store or accept per-process copies"
+  - "For graceful shutdown call worker.disconnect() and kill the worker after a timeout"
+  - "Keep the default round-robin scheduling (cluster.SCHED_RR) unless measurements show otherwise"
+verification:
+  - "Throughput rises with worker count up to the CPU limit under the same load test"
+  - "Behavior is identical across requests regardless of which worker serves them"
+  - "Memory per container stays within limits (each worker has its own heap)"
+traps:
+  - "Each worker duplicates heap, caches, and connection pools; total memory and database connections multiply"
+  - "In-memory state such as sessions or counters diverges between workers"
+  - "Scheduling by the OS (SCHED_NONE) can be badly unbalanced; the docs report over 70 percent of connections landing on two of eight processes"
+  - "On Kubernetes a single-process-per-pod layout scaled by replicas can be simpler than cluster"
+  - "availableParallelism may report host cores rather than the container CPU limit; cap it explicitly"
+expectedEffect: "Near-linear throughput gain up to the core count for CPU-bound request handling; varies, measure."
+sources:
+  - https://nodejs.org/api/cluster.html
+verifiedIn: unverified

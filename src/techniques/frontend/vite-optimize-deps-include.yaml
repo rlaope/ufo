@@ -1,0 +1,38 @@
+id: frontend.vite-optimize-deps-include
+domain: frontend
+title: "Vite dev: pre-bundle late-discovered dependencies with optimizeDeps.include"
+kind: guided
+riskClass: lossless
+stacks:
+  - vite
+  - node
+  - typescript
+bottlenecks:
+  - startup
+  - network
+signals:
+  - Vite dev server logs a re-optimization ("new dependencies optimized" / full reload) shortly after first page load
+  - Browser Network panel in dev shows hundreds of module requests for a single dependency (many small internal modules)
+  - A linked monorepo package that is CommonJS fails or loads slowly in dev
+preconditions:
+  - "Dev server only: pre-bundling does not apply to production builds"
+  - Vite with node_modules/.vite cache
+steps:
+  - Identify dependencies the scan cannot see (imports produced by plugin transforms, dynamic imports hidden from source) from the dev log
+  - Add them to optimizeDeps.include in vite config; for linked non-ESM packages include them as well
+  - Exclude only small packages that are already valid ESM via optimizeDeps.exclude
+  - Restart with vite --force after changing the lists to rebuild the cache
+  - Compare time to first usable page and number of reloads on a cold cache
+verification:
+  - Cold-start dev run shows no re-optimization reload after initial load
+  - Network panel request count for the dependency drops
+  - Production build output is unchanged
+traps:
+  - No effect on production bundle size; do not count it as a bundle win
+  - Cache is invalidated by lockfile, patches, config or NODE_ENV changes; stale browser cache can hide local edits to dependencies
+  - Excluding a CommonJS dependency breaks named imports in dev
+  - Linked package edits need --force restart
+expectedEffect: Fewer dev-server reloads and fewer module requests on cold start; dev-only; measure dev cold-start time.
+sources:
+  - https://vite.dev/guide/dep-pre-bundling.html
+verifiedIn: unverified

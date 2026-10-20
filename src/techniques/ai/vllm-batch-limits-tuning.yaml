@@ -1,0 +1,35 @@
+id: ai.vllm-batch-limits-tuning
+domain: ai
+title: Tune vLLM max-num-seqs and max-num-batched-tokens for throughput or latency
+kind: guided
+riskClass: lossless
+stacks:
+  - vllm
+bottlenecks:
+  - inference
+  - contention
+signals:
+  - vLLM logs/metrics show low GPU utilization with requests waiting (Prometheus num_requests_waiting greater than zero while KV cache usage is low)
+  - Preemption count is rising in metrics (requests are recomputed when KV cache space runs out)
+  - Inter-token latency is poor while large prefills share batches with decodes
+preconditions:
+  - vLLM V1 engine (chunked prefill is enabled by default when possible)
+  - Engine args --max-num-seqs, --max-num-batched-tokens, --gpu-memory-utilization (default 0.92)
+steps:
+  - Read current values and watch Prometheus metrics (or set disable_log_stats=False for logged stats) under a representative load
+  - For throughput, raise --max-num-batched-tokens (the optimization guide suggests above 8192 for smaller models on large GPUs); for inter-token latency lower it (the guide gives 2048 as an example)
+  - Raise --max-num-seqs only while the KV cache has headroom; if preemptions appear, lower --max-num-seqs or --max-num-batched-tokens, or raise --gpu-memory-utilization
+  - Re-run the same load test after each single change
+verification:
+  - Throughput and the latency percentile you care about improve, preemption count stays near zero
+  - Outputs are unchanged apart from normal sampling variation
+traps:
+  - With chunked prefill disabled, --max-num-batched-tokens must exceed the model max length or startup can fail
+  - Throughput and latency pull in opposite directions on max-num-batched-tokens; pick by the objective
+  - Raising --gpu-memory-utilization leaves less headroom for other GPU processes
+  - Raising tensor_parallel_size or pipeline_parallel_size for KV space can add synchronization or latency costs
+expectedEffect: Higher throughput or lower inter-token latency depending on the direction chosen; varies with model, GPU and load, measure.
+sources:
+  - https://docs.vllm.ai/en/latest/configuration/optimization.html
+  - https://docs.vllm.ai/en/latest/configuration/engine_args.html
+verifiedIn: unverified

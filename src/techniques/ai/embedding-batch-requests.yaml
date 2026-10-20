@@ -1,0 +1,34 @@
+id: ai.embedding-batch-requests
+domain: ai
+title: Batch embedding inputs into fewer requests
+kind: guided
+riskClass: lossless
+stacks:
+  - openai-client
+  - python
+bottlenecks:
+  - network
+signals:
+  - Trace shows one embeddings request per text or chunk in a loop, with request overhead and round-trips dominating
+  - Request counts approach rate-limit requests-per-minute while token usage is low
+preconditions:
+  - Embeddings endpoint accepts an array of strings in input; each input is limited (8,192 tokens for the OpenAI text-embedding-3 and ada-002 models)
+  - Total request size and array length limits are not stated in the guide read; check provider limits
+steps:
+  - Group texts into batches (sized by token count and the provider limits) and send each batch as input=[...]
+  - Match returned embeddings to inputs by their index field
+  - Run batches concurrently with a concurrency cap, on a shared pooled client
+  - Keep the same model and dimensions parameter as before
+verification:
+  - Request count falls by roughly the batch factor and total time drops
+  - Embeddings for a sample of texts equal those of the unbatched run within normal tolerance
+traps:
+  - Oversized batches can be rejected by size limits; reduce batch size on errors and retry
+  - One bad input can fail the whole request; validate or split on failure
+  - Order handling mistakes silently pair vectors with the wrong text
+  - Rate limits are on tokens as well as requests; batching does not reduce tokens
+expectedEffect: Fewer round-trips and lower request-rate pressure; token cost unchanged; varies, measure.
+sources:
+  - https://developers.openai.com/api/docs/guides/embeddings
+  - https://developers.openai.com/api/docs/guides/latency-optimization
+verifiedIn: unverified

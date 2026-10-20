@@ -1,0 +1,36 @@
+id: ai.llama-server-speculative-decoding
+domain: ai
+title: Speed up generation with speculative decoding in llama-server
+kind: guided
+riskClass: numeric
+stacks:
+  - llama-cpp
+bottlenecks:
+  - inference
+signals:
+  - Generation (decode) tokens per second is low relative to prompt processing in llama-server timings, and GPU/CPU is underused during decode
+  - Output is highly predictable (code edits, summarization, repeating text) which favors drafting
+  - A much smaller model from the same family as the target exists in GGUF form
+preconditions:
+  - Recent llama.cpp with --spec-type and -md / --spec-draft-model (older builds used --draft-max/--draft-min, which are removed)
+  - Draft model compatible with the target (the docs state draft heads such as EAGLE-3 are trained for a specific target; for plain draft models use the same family and tokenizer)
+  - Memory for both models
+steps:
+  - "Pick a method: a small draft model with -md DRAFT.gguf (--spec-type draft-simple), or for repetitive output a model-free method such as --spec-type ngram-simple with --spec-draft-n-max"
+  - Tune --spec-draft-n-max (default 3) one value at a time; also --spec-draft-p-min to drop low-confidence drafts
+  - Offload the draft model like the target (-ngl) so drafting stays cheap
+  - Read the acceptance-rate statistics printed by the server (accepted / generated) and keep the setting only if end-to-end tokens per second improves
+verification:
+  - Decode tokens per second rises against a baseline run with identical prompts and sampling
+  - Draft acceptance rate printed by the server is high enough to pay for drafting
+  - With greedy sampling, generated text equals the baseline on a fixed prompt set
+traps:
+  - The docs advise greedy sampling when exact output matching is required, since stochastic sampling can select different tokens across implementations or devices even with a fixed seed
+  - A low acceptance rate makes it slower than no drafting; the draft model also costs memory and compute
+  - Draftless methods take precedence over a draft model when both are configured
+  - --spec-synth-rates and --spec-synth-len are benchmarking switches whose output is not valid model output; never use them in production
+expectedEffect: Faster decode when draft acceptance is high; can be slower when it is low; varies with model pair and task, measure.
+sources:
+  - https://raw.githubusercontent.com/ggml-org/llama.cpp/master/docs/speculative.md
+  - https://raw.githubusercontent.com/ggml-org/llama.cpp/master/tools/server/README.md
+verifiedIn: unverified

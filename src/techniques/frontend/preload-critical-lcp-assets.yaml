@@ -1,0 +1,40 @@
+id: frontend.preload-critical-lcp-assets
+domain: frontend
+title: Make the LCP resource discoverable and high priority
+kind: guided
+riskClass: lossless
+stacks: []
+bottlenecks:
+  - rendering
+  - network
+signals:
+  - LCP breakdown (DevTools Performance or Lighthouse) shows resource load delay well above the web.dev guideline of under about 10% of LCP (a guideline, not a strict rule)
+  - LCP image is a CSS background or injected by JavaScript, so it is absent from the initial HTML
+  - LCP <img> has loading="lazy"
+  - Request for the LCP image starts late in the waterfall behind scripts or stylesheets
+preconditions:
+  - The LCP element is identified in a lab trace or field data
+steps:
+  - Identify the LCP element and its subparts (TTFB, load delay, load duration, render delay)
+  - Put the LCP image in the HTML as <img> with src/srcset, never lazy-loaded
+  - Add fetchpriority="high" to the one or two likely LCP images; fetchpriority="low" for early but off-screen images
+  - If it is only referenced from CSS or JS, add <link rel="preload" as="image" fetchpriority="high" href=... type=...>; for responsive images use imagesrcset and imagesizes matching the <img>
+  - 'Next.js 16: <Image preload> or fetchPriority="high" (priority is deprecated in favor of preload)'
+  - Preload fonts only when critical, with crossorigin
+  - Host critical resources on the same origin as the HTML
+verification:
+  - Resource load delay subpart shrinks in the LCP breakdown
+  - Network waterfall shows the LCP image request starting right after HTML
+  - LCP improves in lab trace; no unused-preload console warning
+traps:
+  - Overusing fetchpriority="high" or preload dilutes the effect and steals bandwidth from other resources
+  - Do not preload several variants of one resource (AVIF and WebP)
+  - Optimizing one subpart alone can shift time into render delay without improving LCP
+  - Preload needs correct as, type and crossorigin or it is wasted
+  - High TTFB caps the achievable LCP
+expectedEffect: Earlier LCP resource fetch and lower LCP when load delay dominates; no gain if TTFB or render delay dominates; measure the LCP subparts.
+sources:
+  - https://web.dev/articles/optimize-lcp
+  - https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Attributes/rel/preload
+  - https://nextjs.org/docs/app/api-reference/components/image
+verifiedIn: unverified

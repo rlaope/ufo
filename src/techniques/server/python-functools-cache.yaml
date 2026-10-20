@@ -1,0 +1,33 @@
+id: server.python-functools-cache
+domain: server
+title: Cache pure, repeated function calls with functools.lru_cache
+kind: guided
+riskClass: lossless
+stacks: [python]
+bottlenecks: [caching, cpu]
+signals:
+  - "py-spy record flame graph shows the same pure function (parsing, regex compile, config or schema lookup, expensive computation) called repeatedly with few distinct arguments"
+  - "cProfile or py-spy ncalls is far larger than the count of distinct argument values"
+preconditions:
+  - "Function is pure: same hashable arguments give the same result, no side effects, not time- or random-dependent"
+  - "Return value is immutable or never mutated by callers"
+steps:
+  - "Decorate with @lru_cache(maxsize=N) for bounded memory, or @cache (unbounded) only when the key space is small and fixed"
+  - "Convert unhashable arguments (lists, dicts) to tuples or frozensets at the call site"
+  - "Use cached_property for per-instance computed attributes"
+  - "Read fn.cache_info() under real load to tune maxsize from the hit ratio"
+verification:
+  - "cache_info() hits dominate misses under realistic traffic"
+  - "Results are identical with and without the cache on a sample of inputs"
+  - "Profile share of the function falls; memory does not grow unbounded"
+traps:
+  - "Caching methods stores self in the key and keeps instances alive (memory leak)"
+  - "Returned mutable objects are shared across callers; mutation corrupts later results"
+  - "The wrapped function may run more than once for concurrent first calls"
+  - "cached_property has no lock since Python 3.12 and defeats key-sharing dicts"
+  - "Do not cache impure functions, generators, or async functions (the cache stores the coroutine object, not its result)"
+  - "Stale data if the underlying source changes; add invalidation with cache_clear"
+expectedEffect: "Eliminates recomputation proportional to the hit ratio; varies, measure."
+sources:
+  - https://docs.python.org/3/library/functools.html
+verifiedIn: unverified

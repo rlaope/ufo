@@ -1,0 +1,36 @@
+id: data.prepared-statement-reuse
+domain: data
+title: Reuse prepared statements and server-side plans for hot parameterized queries
+kind: guided
+riskClass: lossless
+stacks: [postgres, jvm]
+bottlenecks: [query, cpu]
+signals:
+  - "pg_stat_statements with `pg_stat_statements.track_planning = on` shows total_plan_time comparable to total_exec_time for a high-calls, short-running statement."
+  - "Application builds SQL by string concatenation with literals, so pg_stat_statements and the driver statement cache show many distinct statements for one shape."
+  - "pg_prepared_statements is empty for the application's sessions although the same statements run thousands of times."
+preconditions:
+  - "Statements are parameterized (bind variables, not interpolated literals)."
+  - "PostgreSQL 12+ for plan_cache_mode; pgJDBC for the driver settings below."
+  - "If a transaction-mode pooler (for example PgBouncer) sits between app and database, check that pooler version and driver support protocol-level prepared statements before enabling server-side prepare."
+steps:
+  - "Replace string-built SQL with bind parameters through the driver or ORM so the statement text is constant."
+  - "pgJDBC: server-side preparation starts after `prepareThreshold` executions (default 5); the per-connection cache is bounded by `preparedStatementCacheQueries` (default 256) and `preparedStatementCacheSizeMiB` (default 5). Raise them only if the hot statement set does not fit."
+  - "Reuse the same PreparedStatement or let the driver cache by SQL text; do not create a unique SQL text per call."
+  - "Use explicit column lists instead of SELECT * so schema changes do not invalidate cached plans."
+  - "If a generic plan is chosen for a skewed parameter and is slow, inspect with `EXPLAIN EXECUTE name(params)` and consider `SET plan_cache_mode = force_custom_plan` for that session or role."
+verification:
+  - "pg_stat_statements shows one entry per statement shape with the expected calls; total_plan_time share falls (when track_planning is on)."
+  - "pg_prepared_statements lists the hot statements in the application sessions."
+  - "Query results are identical; p50 and p99 latency of the hot path fall or stay flat."
+traps:
+  - "A prepared statement lives only for its session; with transaction-level pooling consecutive transactions can land on different backends. Use `prepareThreshold=0` or a pooler that supports protocol-level prepares."
+  - "PostgreSQL's first five executions use custom plans, then it may switch to a generic plan; a generic plan can be worse for skewed values."
+  - "pgJDBC raises 'cached plan must not change result type' when a table changes under cached SELECT *; use explicit columns. Setting autosave can hurt performance in long transactions."
+  - "The gain is only the parse and plan cost; for long-running queries it is negligible."
+expectedEffect: "Saves parse/plan time per call; matters for short, high-frequency queries, varies; measure."
+sources:
+  - https://www.postgresql.org/docs/current/sql-prepare.html
+  - https://jdbc.postgresql.org/documentation/server-prepare/
+  - https://www.postgresql.org/docs/current/pgstatstatements.html
+verifiedIn: unverified

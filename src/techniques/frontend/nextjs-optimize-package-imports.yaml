@@ -1,0 +1,38 @@
+id: frontend.nextjs-optimize-package-imports
+domain: frontend
+title: "Next.js: optimizePackageImports for libraries with many exports"
+kind: guided
+riskClass: lossless
+stacks:
+  - nextjs
+  - node
+  - typescript
+bottlenecks:
+  - bundle
+  - startup
+signals:
+  - Next.js analyzer or bundle analyzer shows a large part of an icon, component or utility library (hundreds of modules) although only a few named exports are imported
+  - Dev server compile or cold start time is high on routes that import from a barrel package
+  - The package is not in the built-in optimized list (lucide-react, date-fns, lodash-es, rxjs, @mui/material, recharts, react-icons and others are already optimized)
+preconditions:
+  - Next.js version with experimental.optimizePackageImports (documented as experimental)
+  - Imports are named imports from the package entry point
+steps:
+  - Confirm the package is not already in the built-in default list in the Next.js docs
+  - 'Add it in next.config: experimental: { optimizePackageImports: ["package-name"] }'
+  - Keep writing normal named imports; do not rewrite to deep paths
+  - Rebuild and compare the analyzer output and the dev compile time
+verification:
+  - Analyzer shows only the used modules of the package in the client chunk
+  - next build succeeds and affected pages render the same
+  - Dev server cold compile time of an affected route does not regress
+traps:
+  - The option is flagged experimental; behavior and key location can change between majors
+  - Packages with side-effectful module init can change behavior if only used modules are loaded; test the affected pages
+  - Listing a package already optimized by default is redundant but harmless
+  - Does not help when the whole library is used or when it is imported by a Client Component that should be a lazy chunk
+expectedEffect: Less library code in client bundles and faster dev compiles for barrel-heavy packages; varies by package; measure.
+sources:
+  - https://nextjs.org/docs/app/api-reference/config/next-config-js/optimizePackageImports
+  - https://nextjs.org/docs/app/guides/package-bundling
+verifiedIn: unverified

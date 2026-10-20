@@ -1,0 +1,31 @@
+id: ai.llm-route-to-smaller-model
+domain: ai
+title: Route suitable requests to a smaller, faster model
+kind: guided
+riskClass: lossy
+stacks:
+  - openai-client
+bottlenecks:
+  - inference
+signals:
+  - Simple classification, extraction or rewriting requests use the largest model and generation time dominates their latency
+  - Eval logs show a smaller model matches the larger model on a defined subset of request types
+preconditions:
+  - Quality oracle per request type; user opted into lossy changes
+  - A smaller model offered by the same API
+steps:
+  - Define the request class to route and a rule or classifier for it (start with a static rule on task type, not a learned router)
+  - Evaluate the smaller model on a held-out set; improve with a more detailed prompt or few-shot examples if needed (suggested in the latency guide)
+  - Send only that class to the smaller model, keep the larger model for the rest, and log the route per request
+  - Compare quality, latency and cost per class
+verification:
+  - Quality oracle within tolerance on the routed class
+  - Latency and cost per routed request drop
+traps:
+  - Misrouted hard requests degrade silently; sample and review them
+  - Prompts tuned for one model may behave differently on another
+  - Different models have different prompt-cache prefixes and minimum cacheable lengths
+expectedEffect: Smaller models generally run faster and cheaper per the latency guide; quality varies by task, measure.
+sources:
+  - https://developers.openai.com/api/docs/guides/latency-optimization
+verifiedIn: unverified

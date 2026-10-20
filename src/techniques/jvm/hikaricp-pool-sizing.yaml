@@ -1,0 +1,31 @@
+id: jvm.hikaricp-pool-sizing
+domain: jvm
+title: Size the HikariCP connection pool small and from evidence
+kind: guided
+riskClass: lossless
+stacks: [jvm, spring-boot, postgres, mysql, hibernate]
+bottlenecks: [contention, query]
+signals:
+  - "HikariCP metrics (hikaricp.connections.pending, hikaricp.connections.acquire) or thread dumps show many request threads waiting in HikariPool.getConnection while the database is not saturated."
+  - "Alternatively the database shows many active sessions with high CPU or lock contention and latency worsens as the pool is enlarged (pool far above a few dozen)."
+  - "Pool is at the default maximum-pool-size and connection acquire time dominates a request trace."
+preconditions:
+  - "Spring Boot with HikariCP (`spring.datasource.hikari.*`) and a measurable load test."
+  - "Know the database core count and whether transactions hold connections during remote calls."
+steps:
+  - "Take the starting point `connections = (core_count * 2) + effective_spindle_count` for the database server and load test around it."
+  - "Set `spring.datasource.hikari.maximum-pool-size` accordingly; prefer fixed size (do not oversize minimum-idle)."
+  - "Shorten transactions: do not hold a connection across HTTP calls or other slow work."
+  - "Avoid pool-lock deadlock: pool size at least Tn * (Cm - 1) + 1 where a thread needs Cm connections at once."
+  - "Separate pools for long batch and short real-time work when mixed."
+verification:
+  - "Pending-connection count and acquire time fall; database CPU and active sessions stay moderate; throughput and p99 improve under load."
+  - "No pool-lock timeouts."
+traps:
+  - "A bigger pool often makes the database slower through context switching; more is not better."
+  - "Too small a pool with long transactions queues requests; fix transaction scope first."
+  - "With virtual threads many more requests wait on the pool; keep it deliberately small and bound concurrency upstream."
+expectedEffect: "Lower latency and higher throughput where the pool was oversized or transactions held connections too long; measure."
+sources:
+  - https://github.com/brettwooldridge/HikariCP/wiki/About-Pool-Sizing
+verifiedIn: unverified

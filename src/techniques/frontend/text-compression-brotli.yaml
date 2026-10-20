@@ -1,0 +1,36 @@
+id: frontend.text-compression-brotli
+domain: frontend
+title: Serve text assets with Brotli and gzip fallback
+kind: guided
+riskClass: lossless
+stacks: []
+bottlenecks:
+  - network
+signals:
+  - Lighthouse "Enable text compression" flags HTML, CSS, JS or JSON responses without content-encoding
+  - 'curl -sI -H "Accept-Encoding: br, gzip" URL shows no Content-Encoding header on a text asset'
+  - DevTools Network shows equal transferred and resource sizes for JS and CSS
+preconditions:
+  - Control of the web server, CDN or hosting config
+  - HTTPS (browsers advertise br on secure connections)
+steps:
+  - Enable compression for text MIME types (html, css, js, json, svg, wasm, xml) at the server or CDN
+  - Prefer Brotli (br) with gzip fallback; precompress static build output at a high level at build time and serve the .br/.gz files, use moderate levels for dynamic responses
+  - Do not compress already-compressed formats (png, jpeg, webp, avif, video, woff2)
+  - "Send Vary: Accept-Encoding so caches store each representation"
+  - Verify with curl and DevTools
+verification:
+  - 'curl -sI -H "Accept-Encoding: br" URL returns Content-Encoding: br and Vary: Accept-Encoding'
+  - 'curl -s -H "Accept-Encoding: gzip" -o /dev/null -w "%{size_download}" URL is smaller than the identity response'
+  - Lighthouse text-compression audit passes; content renders identically
+traps:
+  - Lighthouse skips very small responses and small potential savings (see the current audit for its thresholds)
+  - Compressing secrets-bearing dynamic responses with reflected input can expose them to BREACH
+  - "Missing Vary: Accept-Encoding can make a CDN serve the wrong encoding"
+  - Double compression by app and proxy produces corrupted or double-encoded responses
+  - Dynamic Brotli at high levels costs CPU per request
+expectedEffect: Fewer transferred bytes for text assets; Brotli typically beats gzip; varies by content; measure transfer size.
+sources:
+  - https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Compression
+  - https://developer.chrome.com/docs/lighthouse/performance/uses-text-compression
+verifiedIn: unverified

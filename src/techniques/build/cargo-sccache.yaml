@@ -1,0 +1,32 @@
+id: build.cargo-sccache
+domain: build
+title: Cache rustc output across builds and CI runs with sccache
+kind: guided
+riskClass: lossless
+stacks: [rust, cargo]
+bottlenecks: [build, caching]
+signals:
+  - "cargo build --timings (target/cargo-timings/cargo-timing.html) shows many dependency crates recompiled on each clean build or fresh CI checkout."
+  - "CI jobs start from an empty target directory and rebuild the same third-party crates every run."
+  - "No RUSTC_WRAPPER or build.rustc-wrapper is configured."
+preconditions:
+  - "sccache installed on the build machine; cargo 1.40 or newer for the config setting."
+  - "A storage backend: local disk by default, or S3, R2, GCS, Azure, Redis, GitHub Actions, and others for sharing."
+steps:
+  - "Set RUSTC_WRAPPER=sccache or build.rustc-wrapper = sccache in the cargo config."
+  - "For CI configure a remote backend through its documented environment variables."
+  - "To share across checkout directories set SCCACHE_BASEDIRS to the base path so absolute paths do not cause misses."
+  - "Consider disabling incremental compilation (CARGO_INCREMENTAL=0) in CI so workspace crates become cacheable."
+verification:
+  - "sccache --show-stats reports cache hits climbing on the second build and rebuild time in cargo build --timings drops."
+  - "Resulting binaries pass the same tests as an uncached build."
+traps:
+  - "bin, dylib, cdylib, and proc-macro crates invoke the linker and cannot be cached."
+  - "Incrementally compiled crates are not cached; the dev profile enables incremental for workspace members by default."
+  - "Absolute paths must match for a hit unless SCCACHE_BASEDIRS is set."
+  - "A remote cache holds build outputs, so restrict write access to trusted jobs."
+expectedEffect: "Skips recompiling unchanged crates on repeat or fresh-checkout builds; depends on hit rate, measure with --timings."
+sources:
+  - https://github.com/mozilla/sccache
+  - https://doc.rust-lang.org/cargo/reference/timings.html
+verifiedIn: unverified

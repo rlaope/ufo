@@ -1,0 +1,31 @@
+id: ai.llama-server-flash-attn
+domain: ai
+title: Make sure flash attention is on in llama-server
+kind: guided
+riskClass: numeric
+stacks:
+  - llama-cpp
+bottlenecks:
+  - inference
+signals:
+  - llama-server startup log shows flash attention disabled or auto-resolved to off on a GPU backend that supports it
+  - Long-context requests spend most decode time in attention kernels and the compute buffers are large
+  - Flash attention was set to off explicitly in a launch script or LLAMA_ARG_FLASH_ATTN
+preconditions:
+  - llama.cpp build and backend that implement flash attention for the model and device
+  - Option -fa accepts on, off, auto; the default is auto
+steps:
+  - Read the startup log to see what auto chose, and the current -fa / LLAMA_ARG_FLASH_ATTN value
+  - If it is off or auto resolved to off on a supported device, start with -fa on
+  - Compare the same request set with -fa off and -fa on
+verification:
+  - Tokens per second (prompt and decode) and memory use against the off baseline at the context lengths that matter
+  - Perplexity or output on a fixed prompt set stays within tolerance (floating-point results can differ slightly)
+traps:
+  - Forcing on with an unsupported model or backend fails at startup or falls back; check the log
+  - Gains are mainly at longer contexts; short prompts may show nothing
+  - The server docs do not state a dependency between flash attention and KV-cache types, so test combinations you rely on rather than assuming
+expectedEffect: Lower attention time and memory at long context where supported; varies with backend and context length, measure.
+sources:
+  - https://raw.githubusercontent.com/ggml-org/llama.cpp/master/tools/server/README.md
+verifiedIn: unverified

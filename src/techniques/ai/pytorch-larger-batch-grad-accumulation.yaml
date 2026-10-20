@@ -1,0 +1,33 @@
+id: ai.pytorch-larger-batch-grad-accumulation
+domain: ai
+title: Increase batch size or use gradient accumulation to raise training throughput
+kind: guided
+riskClass: lossy
+stacks:
+  - pytorch
+bottlenecks:
+  - inference
+  - data_loading
+signals:
+  - GPU memory is mostly free and utilization is low with small batches (profiler shows many short kernels, nvidia-smi shows spare memory)
+  - Per-step overhead is a large share of step time at the current batch size
+preconditions:
+  - User opted into changing training dynamics; validation metric available
+  - Learning rate and schedule can be retuned
+steps:
+  - Raise the batch size until memory is nearly full (activation checkpointing with torch.utils.checkpoint can free memory) and re-tune the learning rate
+  - Or accumulate gradients over N micro-batches before optimizer.step() to keep the effective batch size, dividing the loss by N
+  - With DistributedDataParallel wrap the first N-1 micro-batches in model.no_sync() so gradients all-reduce only on the last
+  - Use optimizer.zero_grad(set_to_none=True)
+  - Compare samples per second and validation metric to convergence
+verification:
+  - Samples per second rises and the validation metric reaches the same quality in comparable or less wall time
+traps:
+  - Larger effective batch changes optimization behavior and may need learning-rate and warmup changes
+  - Batch norm statistics depend on micro-batch size, so accumulation is not equivalent for batch-norm models
+  - set_to_none changes numerics slightly versus zeroing
+  - Without no_sync, DDP all-reduces after every backward, wasting accumulation benefit
+expectedEffect: Higher throughput when the GPU was underfilled; convergence per step changes; measure time to target quality.
+sources:
+  - https://docs.pytorch.org/tutorials/recipes/recipes/tuning_guide.html
+verifiedIn: unverified

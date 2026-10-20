@@ -1,0 +1,33 @@
+id: server.python-cpython-upgrade
+domain: server
+title: Upgrade CPython to a newer minor release
+kind: guided
+riskClass: upgrade
+stacks: [python, docker]
+bottlenecks: [cpu, startup]
+signals:
+  - "python --version, Dockerfile base image, or requires-python shows an older CPython than the newest supported release"
+  - "py-spy shows interpreter-bound pure-Python hot paths rather than native extension or I/O time"
+  - "All dependencies publish wheels for the newer version"
+preconditions:
+  - "Dependency wheels and C extensions are available for the target version"
+  - "Test suite exists and can run on the target version"
+steps:
+  - "Read the What's New page of each minor version between current and target for removals and behavior changes"
+  - "Change the interpreter in the base image, CI, and requires-python; rebuild the lockfile on the new version"
+  - "Run the test suite with -W error::DeprecationWarning to catch removed APIs"
+  - "Benchmark before and after with the same workload and harness"
+  - "Do not switch to the free-threaded or experimental JIT builds in the same change"
+verification:
+  - "Tests pass on the new version with unchanged results"
+  - "Primary metric improves on the same benchmark and hardware"
+traps:
+  - "Python 3.14.0 to 3.14.4 shipped an incremental GC that 3.14.5 reverted to the 3.13 generational GC; behavior differs per patch release"
+  - "Free-threaded builds had a 5-10 percent single-thread penalty in 3.14 and need compatible extensions"
+  - "The tail-call interpreter needs Clang 19+ built from source with PGO; stock distribution builds may not have it"
+  - "Removed stdlib modules and changed defaults can break dependencies"
+  - "Gains are workload dependent; I/O- or native-bound code sees little"
+expectedEffect: "Interpreter-bound code typically gets faster across minor releases; varies, measure."
+sources:
+  - https://docs.python.org/3/whatsnew/3.14.html
+verifiedIn: unverified

@@ -1,0 +1,35 @@
+id: data.jdbc-statement-batching
+domain: data
+title: Enable JDBC statement batching for many inserts, updates, or deletes in one transaction
+kind: guided
+riskClass: lossless
+stacks: [hibernate, spring-boot, jvm]
+bottlenecks: [query, io, network]
+signals:
+  - "ORM SQL logging shows one INSERT/UPDATE/DELETE statement per entity inside a single transaction, repeated hundreds of times."
+  - "pg_stat_statements shows the same INSERT or UPDATE with very high calls and rows equal to calls, from one batch job or endpoint."
+  - "Hibernate statistics (hibernate.generate_statistics) report JDBC batch count of 0 while the prepared statement count is large."
+preconditions:
+  - "One transaction writes many rows to the same table; Hibernate documents batching as helping only in that case."
+  - "Hibernate 6.x with a JDBC driver that supports batch execution."
+steps:
+  - "Set `hibernate.jdbc.batch_size` (Spring Boot: `spring.jpa.properties.hibernate.jdbc.batch_size`) to a modest value such as 50 and re-run; keep it per-session adjustable with `setJdbcBatchSize()` if only one job needs it."
+  - "Ensure the id generation strategy allows batching: the User Guide states Hibernate cannot batch INSERT statements for entities using IDENTITY generation; prefer a sequence-based generator (pooled optimizers reduce round trips) when the database supports sequences."
+  - "Consider `hibernate.order_inserts` and `hibernate.order_updates` (both default false) when several entity types are written in one transaction so same-table statements are adjacent; the User Guide says ordering comes with a performance hit, so benchmark before and after."
+  - "For very large writes, flush and clear the persistence context every batch_size entities to bound memory."
+  - "Where the change is a set-based update or delete, replace the entity loop with one HQL `update`/`delete` query; Hibernate documents this as even better than batching."
+verification:
+  - "Hibernate statistics or driver logging show a JDBC batch count that is roughly rows divided by batch size, and the statement count per transaction drops."
+  - "Row counts and content after the job are identical to the unbatched run."
+  - "Time the whole transaction in A/B arms, since batching mainly saves round trips."
+traps:
+  - "Batching does not apply across different tables or interleaved statement shapes unless ordering is enabled."
+  - "Without periodic flush/clear, a long batch keeps all entities in the persistence context and can cause GC pressure."
+  - "Per-row update counts are less precise in some drivers, which can interact with optimistic locking checks; run the concurrency tests."
+  - "Bulk HQL update/delete bypasses the persistence context and entity lifecycle callbacks and versioning."
+expectedEffect: "Fewer round trips per write transaction; gain scales with network latency and row count, varies; measure."
+sources:
+  - https://docs.hibernate.org/orm/6.6/introduction/html_single/Hibernate_Introduction.html
+  - https://docs.hibernate.org/orm/6.6/userguide/html_single/Hibernate_User_Guide.html#batch
+  - https://jdbc.postgresql.org/documentation/server-prepare/
+verifiedIn: unverified

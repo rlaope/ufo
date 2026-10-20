@@ -1,0 +1,34 @@
+id: server.node-schema-json-serialization
+domain: server
+title: Serialize responses with schema-compiled stringify (fast-json-stringify, Fastify)
+kind: guided
+riskClass: lossy
+stacks: [node]
+bottlenecks: [serialization, cpu]
+signals:
+  - "A --cpu-prof profile shows JSON.stringify as a top self-time frame on request paths with many small, same-shaped responses"
+  - "Response objects have a stable, known shape that can be written as a JSON Schema"
+  - "Fastify route handlers return objects without a response schema"
+preconditions:
+  - "Response shape is stable and describable in JSON Schema (Draft 7)"
+  - "The owner accepts the schema semantics: undeclared properties are dropped and values are coerced to the declared types"
+  - "Package fast-json-stringify available, or Fastify with a response schema on the route"
+steps:
+  - "Write a JSON Schema for the response and compile it once at startup with fast-json-stringify, or declare it in the Fastify route schema.response"
+  - "Declare every property to keep; decide explicitly on additionalProperties, nullable, and required"
+  - "Compile the stringify function once and reuse it; never compile per request"
+  - "Compare output with JSON.stringify on a sample of real responses"
+verification:
+  - "Serialized bytes equal JSON.stringify output for representative payloads, or differ only in documented dropped fields"
+  - "Microbenchmark and end-to-end throughput improve on the target payload sizes"
+traps:
+  - "Properties missing from the schema are dropped unless additionalProperties is set, which changes output"
+  - "No validation; wrongly shaped input gives undefined output and values are coerced (null to 0 or empty string unless nullable, integer truncation)"
+  - "A missing required field throws"
+  - "anyOf, oneOf, and if/then/else use Ajv and are slower; format unsafe skips escaping"
+  - "The advantage shrinks as payloads grow and large arrays can be slower than JSON.stringify"
+  - "Schemas are compiled with Function, so never build them from user input"
+expectedEffect: "Faster serialization mainly for small and medium same-shaped payloads; varies, measure."
+sources:
+  - https://github.com/fastify/fast-json-stringify
+verifiedIn: unverified

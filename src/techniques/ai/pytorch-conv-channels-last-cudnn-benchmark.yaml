@@ -1,0 +1,34 @@
+id: ai.pytorch-conv-channels-last-cudnn-benchmark
+domain: ai
+title: Use channels_last memory format and cudnn.benchmark for convolutional models
+kind: guided
+riskClass: numeric
+stacks:
+  - pytorch
+bottlenecks:
+  - inference
+  - cpu
+signals:
+  - Profiler shows layout conversion kernels (permute/contiguous, nchw/nhwc copies) around convolutions
+  - Convolutional network on NVIDIA Tensor Core GPUs or recent Intel Xeon CPUs with fixed input shapes
+preconditions:
+  - 4D (NCHW) tensors; cuDNN 7.6 or newer for convolution and batch norm on GPU
+  - Input sizes mostly fixed for cudnn.benchmark
+steps:
+  - "Convert the model once after init: model = model.to(memory_format=torch.channels_last)"
+  - Convert each input batch with x = x.to(memory_format=torch.channels_last)
+  - Set torch.backends.cudnn.benchmark = True when input sizes are fixed
+  - Combine with autocast for the largest effect on Tensor Core GPUs
+  - Compare step time and output/validation metric against the baseline
+verification:
+  - Step time falls in the profiler and output matches within floating-point tolerance
+traps:
+  - Operators without channels-last support return contiguous output, adding permute overhead and breaking format propagation (results stay correct)
+  - Format is ambiguous when C==1 or H==W==1; only .to sets strides correctly there
+  - cudnn.benchmark picks algorithms by timing, so choices can differ between runs and it is better off when input sizes vary widely
+  - The tutorial describes the feature as experimental with open work on operator coverage
+expectedEffect: The tutorial reports gains on ResNet-50 style models with AMP on Tensor Core GPUs; varies by model and hardware, measure.
+sources:
+  - https://docs.pytorch.org/tutorials/intermediate/memory_format_tutorial.html
+  - https://docs.pytorch.org/tutorials/recipes/recipes/tuning_guide.html
+verifiedIn: unverified

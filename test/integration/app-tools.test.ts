@@ -226,7 +226,16 @@ describe("listing techniques", { timeout: TIMEOUT_MS }, () => {
     expect(cards.map((card) => card.id)).toEqual(
       expect.arrayContaining(["generic.code-change", "toy.fast-path", "toy.no-delay"]),
     );
-    expect(cards.map((card) => card.id)).toEqual([...cards.map((card) => card.id)].sort());
+    // The toy is a Node project: its stack's cards first, then any stack's, then the rest; each
+    // group in id order.
+    const ids = cards.map((card) => card.id);
+    const groups = [
+      cards.filter((card) => card.stacks.includes("node")),
+      cards.filter((card) => card.stacks.length === 0),
+      cards.filter((card) => card.stacks.length > 0 && !card.stacks.includes("node")),
+    ].map((group) => group.map((card) => card.id));
+    expect(ids).toEqual(groups.flat());
+    for (const group of groups) expect(group).toEqual([...group].sort());
     const fastPath = cards.find((card) => card.id === "toy.fast-path");
     expect(fastPath).toMatchObject({ domain: "toy", enabled: true, kind: expect.any(String) });
     expect(fastPath?.signals.length).toBeGreaterThan(0);
@@ -287,8 +296,11 @@ describe("filtering and ordering techniques by stack and bottleneck", {
       expect(await ids({ bottleneck: "io" })).toEqual(["stk.c-node-cpu", "stk.b-any-io"]);
       expect(await ids({ stack: "node", bottleneck: "startup" })).toEqual([]);
       const { cards } = await listTechniques(other.context);
-      expect(cards.map((listed) => listed.id).slice(0, 1)).toEqual(["stk.c-node-cpu"]);
-      expect(cards.at(-1)?.id).toBe("stk.a-jvm-startup");
+      const at = (id: string) => cards.findIndex((listed) => listed.id === id);
+      // The detected stack's card before the any-stack ones, and a JVM card after both.
+      expect(at("stk.c-node-cpu")).toBeLessThan(at("stk.b-any-io"));
+      expect(at("generic.code-change")).toBeLessThan(at("stk.a-jvm-startup"));
+      expect(at("stk.b-any-io")).toBeLessThan(at("stk.a-jvm-startup"));
       expect(cards.find((listed) => listed.id === "generic.code-change")?.bottlenecks).toContain(
         "startup",
       );

@@ -1,0 +1,44 @@
+id: frontend.bundle-analysis-evidence
+domain: frontend
+title: Use a bundle analyzer to find and prove payload wins
+kind: guided
+riskClass: lossless
+stacks:
+  - webpack
+  - vite
+  - nextjs
+  - typescript
+  - node
+bottlenecks:
+  - bundle
+signals:
+  - Build output shows chunks above the size warning limit (Vite default 500 kB) or total JS grows between commits
+  - Lighthouse flags unused JavaScript or enormous network payloads without naming the owner module
+  - A before/after change claims a bundle reduction but only file totals, not module-level attribution, are available
+preconditions:
+  - A production build can be run locally
+  - "Source maps are available when the analyzer needs to attribute bytes after minification (source-map-explorer, rollup-plugin-visualizer with sourcemap: true)"
+steps:
+  - 'Vite/Rollup/Rolldown: add rollup-plugin-visualizer last in plugins with template "treemap", gzipSize and brotliSize true, and sourcemap true for accurate post-minification sizes (Node 22+ required by current releases)'
+  - 'webpack: add BundleAnalyzerPlugin with analyzerMode "static", openAnalyzer false, generateStatsFile true; or run webpack --profile --json > stats.json then webpack-bundle-analyzer stats.json'
+  - "Next.js 16.1+: run next analyze (add --output to write .next/diagnostics/analyze for diffing); webpack-based Next: @next/bundle-analyzer with ANALYZE=true"
+  - "Any bundler with maps: source-map-explorer dist/*.js --json result.json (use --gzip only as an estimate)"
+  - Record the top modules by parsed size and the import chain that pulls each in
+  - Apply the fix, rebuild, rerun the same tool, and compare module-level numbers, not only totals
+verification:
+  - Report is generated from the same build mode (production) before and after
+  - Named module sizes are lower or moved to async chunks after the change
+  - Compare parsed (minified) and compressed sizes, not stat size alone
+traps:
+  - stat size is pre-transform, parsed is post-minification; the two differ substantially
+  - Without a matching source map, source-map-explorer reports [unmapped] bytes and invalid-map errors; gzip numbers there are inaccurate
+  - Analyzers served from memory by a dev server show only stat sizes
+  - The visualizer and analyzer output formats are not stable across versions; compare reports from the same tool version
+  - Running an analyzer in CI adds build time; gate it behind an env flag
+expectedEffect: Does not change the app itself; provides the module-level evidence that selects and proves other bundle techniques.
+sources:
+  - https://github.com/btd/rollup-plugin-visualizer
+  - https://github.com/webpack-contrib/webpack-bundle-analyzer
+  - https://github.com/danvk/source-map-explorer
+  - https://nextjs.org/docs/app/guides/package-bundling
+verifiedIn: unverified

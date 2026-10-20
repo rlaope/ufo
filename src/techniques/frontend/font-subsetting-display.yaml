@@ -1,0 +1,39 @@
+id: frontend.font-subsetting-display
+domain: frontend
+title: Subset web fonts, use WOFF2 and set font-display
+kind: guided
+riskClass: lossy
+stacks: []
+bottlenecks:
+  - network
+  - rendering
+signals:
+  - Network panel shows large font files (CJK fonts often exceed 10,000 glyphs) on the critical path
+  - Lighthouse flags "Ensure text remains visible during webfont load" or fonts appear in the LCP critical request chain
+  - Filmstrip shows invisible text (FOIT) until the font arrives
+  - Fonts served as TTF/OTF/WOFF rather than WOFF2
+preconditions:
+  - Font license allows subsetting and self-hosting
+  - Known set of scripts or characters the site uses
+steps:
+  - Convert to WOFF2 only (about 30% smaller than WOFF, widest support)
+  - Subset to needed glyphs with subfont, glyphanger or the Google Fonts text parameter; split by script with unicode-range so only matching subsets download
+  - "Set font-display per @font-face: swap for brand text that must appear fast, optional for body text where a late font may be skipped"
+  - Add a size-adjusted fallback face (size-adjust, ascent-override) to cut layout shift on swap
+  - Preload only the one critical font file with crossorigin and type="font/woff2"
+  - Replace icon fonts with SVG
+verification:
+  - Network panel shows smaller font transfer and only the needed unicode-range subsets requested
+  - Text renders immediately in fallback; CLS does not increase
+  - All characters used by the product still render in the web font (check user-generated and translated text)
+traps:
+  - "Lossy: a missing glyph falls back to another font; user-generated content may need glyphs you removed"
+  - font-display optional can leave some users on the fallback font permanently for that page view
+  - Preload ignores unicode-range, so it may fetch a subset that is not used
+  - Preload without crossorigin downloads the font twice
+  - Self-hosting loses subsetting the font provider applied automatically
+expectedEffect: Smaller font bytes and earlier text paint; largest for CJK or multi-script fonts; varies; measure.
+sources:
+  - https://web.dev/articles/font-best-practices
+  - https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Attributes/rel/preload
+verifiedIn: unverified

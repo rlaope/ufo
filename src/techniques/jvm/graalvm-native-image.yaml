@@ -1,0 +1,33 @@
+id: jvm.graalvm-native-image
+domain: jvm
+title: GraalVM native image for Spring Boot (startup and memory)
+kind: guided
+riskClass: upgrade
+stacks: [spring-boot, jvm, maven, gradle, docker]
+bottlenecks: [startup, allocation]
+signals:
+  - "Time-to-ready and resident memory (RSS) are the primary metrics and the deployment unit is a short-lived or scale-to-zero process."
+  - "Application workload is not dominated by long-run peak throughput (JFR shows little steady-state JIT-dependent hot-loop time)."
+  - "Dependencies are known to support native image; dynamic class loading and runtime bytecode generation are absent."
+preconditions:
+  - "GraalVM JDK with native-image available, plus the Spring Boot Maven or Gradle plugin; this replaces the runtime, hence an upgrade."
+  - "Build environment with enough memory and time for AOT compilation."
+steps:
+  - "Maven: `./mvnw -Pnative native:compile`, or `-Pnative spring-boot:build-image` for a container; Gradle: `./gradlew nativeCompile`."
+  - "Run the tests as native (`nativeTest` / `-PnativeTest`) so missing reflection, resource and proxy hints show up."
+  - "Add RuntimeHints or @RegisterReflectionForBinding for reflection, resources and serialization the AOT engine cannot infer."
+  - "Compare against the JVM arm on the same workload for both startup and steady-state."
+verification:
+  - "Native binary starts, serves the same responses, and passes the full native test run."
+  - "Measure time-to-ready and RSS in A/B arms; also measure steady-state throughput and latency."
+traps:
+  - "Much longer builds and higher build memory than a normal jar."
+  - "Closed-world: reflection, proxies, resources and serialization must be known at build time; libraries relying on dynamic behavior may need manual hints or be incompatible."
+  - "Peak throughput is often lower than a warmed-up JIT JVM; a startup win can be a throughput loss."
+  - "JVM tooling (JFR, async-profiler, jcmd) behaves differently or is unavailable."
+  - "Spring AOT hard-codes profiles and conditions at build time."
+expectedEffect: "Much faster startup and lower memory than the JVM; lower peak throughput on long-running loads; varies; measure."
+sources:
+  - https://docs.spring.io/spring-boot/reference/packaging/native-image/index.html
+  - https://docs.spring.io/spring-framework/reference/core/aot.html
+verifiedIn: unverified

@@ -1,0 +1,33 @@
+id: jvm.async-logging
+domain: jvm
+title: Async Logback appender and level guards to cut logging overhead
+kind: guided
+riskClass: lossy
+stacks: [jvm, spring-boot]
+bottlenecks: [io, contention]
+signals:
+  - "async-profiler cpu or wall mode, or JFR, shows request threads in Logback appender frames (OutputStreamAppender.subAppend, ConsoleAppender, layout/encoder) or blocked on the appender lock."
+  - "Thread dumps show threads BLOCKED on the logging appender monitor (appender doAppend is synchronized) under load."
+  - "Debug-level log statements build strings with concatenation or expensive arguments even when the level is off (alloc profile shows string building near logger calls)."
+preconditions:
+  - "Logback as the logging backend (Spring Boot default)."
+  - "The user accepts that log events can be dropped or lost on abnormal shutdown."
+steps:
+  - "Wrap the file or console appender in `ch.qos.logback.classic.AsyncAppender` in logback-spring.xml; start with the default queueSize 256 and raise it if the queue fills."
+  - "Decide the drop policy: by default once the queue is 80 percent full TRACE, DEBUG and INFO are discarded (discardingThreshold); set 0 to keep all, or neverBlock=true to drop instead of blocking."
+  - "Keep includeCallerData=false (default); it is expensive."
+  - "Use parameterized logging (`log.debug(\"x {}\", v)`) and guard computed arguments with `if (log.isDebugEnabled())` or a supplier."
+  - "Stop the LoggerContext on shutdown so the queue is flushed (set maxFlushTime if needed)."
+verification:
+  - "Profile shows less time in appender frames on request threads; thread dumps no longer show blocking on the appender."
+  - "A/B throughput or p99 improves; expected ERROR and WARN logs still appear after a controlled shutdown."
+traps:
+  - "Default discarding drops INFO and below under pressure, so audit or business logs may go missing; set discardingThreshold=0 for those."
+  - "Events still queued at a hard kill are lost."
+  - "neverBlock=true trades log completeness for latency; with the default (false) a full queue blocks callers and the gain disappears."
+  - "Caller data (class, line number) is not available unless includeCallerData=true."
+expectedEffect: "Less logging time on request threads when appender time or lock contention is visible; none when logging volume is low; measure."
+sources:
+  - https://logback.qos.ch/manual/appenders-async-sift.html
+  - https://logback.qos.ch/manual/appenders.html
+verifiedIn: unverified

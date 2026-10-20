@@ -1,0 +1,33 @@
+id: ai.vllm-prefix-caching
+domain: ai
+title: Enable vLLM automatic prefix caching for shared prompt prefixes
+kind: guided
+riskClass: lossless
+stacks:
+  - vllm
+bottlenecks:
+  - caching
+  - inference
+signals:
+  - Many requests share a long prefix (system prompt, shared document, multi-turn history) and time to first token is dominated by prefill
+  - vLLM prefix cache hit metrics are zero or low although prompts repeat, or the feature is disabled in the engine config log
+preconditions:
+  - vLLM version with automatic prefix caching (engine arg --enable-prefix-caching / enable_prefix_caching)
+  - The default is not stated in the docs read; check the engine config printed at startup
+steps:
+  - Check the startup config for the prefix caching setting
+  - Enable it with --enable-prefix-caching (or enable_prefix_caching=True in the Python engine)
+  - Put stable content first in the prompt and dynamic content last so prefixes match
+  - Replay repeated-prefix traffic and compare time to first token and prefix cache hit rate
+verification:
+  - Prefix cache hit rate is above zero and time to first token drops for repeated prefixes
+  - Outputs match the baseline for deterministic sampling
+traps:
+  - The docs state it only reduces prefill time; it does not speed up token generation, so long-output workloads gain little
+  - No shared prefix means no gain; any change early in the prompt breaks matching for everything after it
+  - Cached blocks occupy KV cache and can raise eviction or preemption pressure; watch preemption metrics
+expectedEffect: Skips recomputing shared prefixes, lowering time to first token for repeated long prompts; varies with prefix share, measure.
+sources:
+  - https://docs.vllm.ai/en/latest/features/automatic_prefix_caching.html
+  - https://docs.vllm.ai/en/latest/configuration/engine_args.html
+verifiedIn: unverified

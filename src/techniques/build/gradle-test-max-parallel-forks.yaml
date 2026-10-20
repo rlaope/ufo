@@ -1,0 +1,30 @@
+id: build.gradle-test-max-parallel-forks
+domain: build
+title: Run Gradle test classes in parallel JVMs with maxParallelForks
+kind: guided
+riskClass: lossless
+stacks: [gradle, jvm]
+bottlenecks: [build, cpu, contention]
+signals:
+  - "A build scan or gradle --profile report shows a single Test task dominating wall time while CPU cores sit idle."
+  - "Test task logs show one test worker JVM running all classes sequentially."
+  - "forkEvery is set to a small value, so many short-lived test JVMs are started."
+preconditions:
+  - "Test classes are isolated: no shared fixed ports, files, or database schemas between classes."
+steps:
+  - "In the Test task configuration set maxParallelForks to about half the available cores (Gradle suggests the core count or slightly fewer), for example Runtime.runtime.availableProcessors().intdiv(2) ?: 1."
+  - "Remove or raise a low forkEvery, since each fork costs a JVM start."
+  - "Give each worker its own resources by deriving ports, directories, or schema names from the worker id where tests need them."
+  - "Disable HTML and XML test reports only if nothing consumes them."
+verification:
+  - "The Test task shows multiple workers in the build scan Timeline and its duration drops against a baseline."
+  - "Pass/fail set is identical over several repeated runs; run the suite at least a few times to expose flakes."
+traps:
+  - "Shared resources between test classes cause intermittent failures that only appear in parallel."
+  - "Setting forks above the core count adds memory pressure and context switching with no gain."
+  - "Each fork has its own heap; memory use scales with maxParallelForks times the test JVM heap."
+expectedEffect: "Test wall time falls for CPU-bound isolated suites; the gain depends on core count, fork startup cost and shared resources, so measure."
+sources:
+  - https://docs.gradle.org/current/userguide/performance.html
+  - https://docs.gradle.org/current/userguide/command_line_interface.html
+verifiedIn: unverified

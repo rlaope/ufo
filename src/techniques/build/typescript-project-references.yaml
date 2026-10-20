@@ -1,0 +1,34 @@
+id: build.typescript-project-references
+domain: build
+title: Split a large TypeScript codebase into project references built with tsc -b
+kind: guided
+riskClass: lossless
+stacks: [typescript, node]
+bottlenecks: [build, cpu]
+signals:
+  - "tsc --extendedDiagnostics reports a very high file count and Check time for a single program covering tests, app, and tooling together."
+  - "A single tsconfig compiles everything, so a change in one area re-typechecks unrelated code, and editor memory is high."
+  - "A monorepo with several packages compiled by one tsconfig include glob."
+preconditions:
+  - "Code can be divided along existing layers (for example src and tests, or packages) with an acyclic dependency order."
+  - "TypeScript 3.0 or newer; the Performance wiki suggests roughly 5 to 20 projects."
+steps:
+  - "Give each part its own tsconfig with composite: true, using extends for shared options."
+  - "Add a references array pointing at the projects each one depends on."
+  - "Create a solution tsconfig with files: [] and references to all leaves."
+  - "Build with tsc -b (use --verbose to see up-to-date decisions); enable declarationMap for cross-project navigation."
+  - "Exclude other projects' sources from each include and set explicit outDir and rootDir."
+verification:
+  - "tsc -b --verbose shows unchanged projects skipped on the second run and wall time drops after an edit in a leaf project."
+  - "Emitted output and diagnostics match the previous single-project build."
+traps:
+  - "composite requires every source file to be matched by include or files and requires declaration output."
+  - "Dependent projects read .d.ts outputs, so outputs must be built before editors resolve imports cleanly."
+  - "tsc -b behaves as if noEmitOnError is on."
+  - "Too many tiny projects add overhead."
+  - "Checked-in build outputs may need --force after source-control operations change timestamps."
+expectedEffect: "Only out-of-date projects are rebuilt and checked; saving depends on change locality and graph shape, so measure."
+sources:
+  - https://www.typescriptlang.org/docs/handbook/project-references.html
+  - https://github.com/microsoft/TypeScript/wiki/Performance
+verifiedIn: unverified

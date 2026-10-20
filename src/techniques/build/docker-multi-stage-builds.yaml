@@ -1,0 +1,32 @@
+id: build.docker-multi-stage-builds
+domain: build
+title: Split Docker builds into stages so BuildKit skips unused work and ships a small image
+kind: guided
+riskClass: lossless
+stacks: [docker]
+bottlenecks: [build, io, network]
+signals:
+  - "docker history or docker images shows a final image containing compilers, build tools, or source that runtime does not need."
+  - "A single-stage Dockerfile installs build and test tooling in the same layers as the runtime image, so any tooling change rebuilds the runtime layers."
+  - "Large image push and pull times in CI logs."
+preconditions:
+  - "BuildKit builds only the stages the target depends on; the legacy builder builds every stage up to the target."
+  - "The runtime image needs only a defined set of build outputs that can be copied."
+steps:
+  - "Define a build stage (FROM <image> AS build) containing compilers and dependencies and producing artifacts."
+  - "Define a final stage from a minimal runtime base and use COPY --from=build to bring only the artifacts."
+  - "Name stages (AS name) instead of numbering so reordering is safe."
+  - "Add separate test or debug stages and select them with --target."
+verification:
+  - "The final image size drops and docker run on the image behaves the same as before."
+  - "Building a non-final --target does not execute unrelated stages in BuildKit output."
+traps:
+  - "The legacy (non-BuildKit) builder still builds all stages up to the target."
+  - "Runtime libraries the binary needs (shared libs, certificates, timezone data) must be copied or installed in the final stage."
+  - "COPY adds files to the cache even when the final image does not use them; use bind mounts for build-only inputs."
+  - "Cache mounts and build caches are per builder; a fresh CI builder rebuilds all stages."
+expectedEffect: "Smaller image and less pull/push time, plus skipped stages when targeting; varies by stack, measure image size and build time."
+sources:
+  - https://docs.docker.com/build/building/multi-stage/
+  - https://docs.docker.com/build/cache/optimize/
+verifiedIn: unverified

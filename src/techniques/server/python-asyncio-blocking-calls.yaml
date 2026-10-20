@@ -1,0 +1,35 @@
+id: server.python-asyncio-blocking-calls
+domain: server
+title: Move blocking calls out of the asyncio event loop
+kind: guided
+riskClass: lossless
+stacks: [python, fastapi]
+bottlenecks: [contention, io, cpu]
+signals:
+  - "asyncio debug mode (PYTHONASYNCIODEBUG=1 or asyncio.run(debug=True)) logs Executing <Task ...> took N seconds for callbacks above 100 ms"
+  - "py-spy dump of the server shows the event-loop thread inside time.sleep, requests.get, a synchronous database driver, file reads, or CPU-heavy functions called from async def"
+  - "Latency of all requests rises together under concurrency while CPU is not saturated"
+preconditions:
+  - "Python 3.9+ for asyncio.to_thread"
+  - "Blocking function is thread-safe, or pure CPU work that can go to a process pool"
+steps:
+  - "Run the app with asyncio debug on in a test run and list the slow-callback warnings; lower loop.slow_callback_duration to widen the net"
+  - "For blocking I/O or C extensions that release the GIL use await asyncio.to_thread(fn, ...) or loop.run_in_executor(None, fn, ...)"
+  - "For pure-Python CPU-bound work use loop.run_in_executor with a ProcessPoolExecutor created once at startup"
+  - "Prefer async-native clients (httpx.AsyncClient, asyncpg, aiofiles equivalents) for new code"
+  - "In FastAPI, declare handlers that must block as plain def so they run in the threadpool, rather than async def"
+verification:
+  - "No slow-callback warnings from the fixed call sites in debug mode"
+  - "Concurrent requests overlap in a load test and p99 latency drops"
+  - "Function results are unchanged"
+traps:
+  - "The default executor is a bounded thread pool; flood it and tasks queue"
+  - "Threads running pure-Python CPU work still contend for the GIL; use processes"
+  - "Arguments and results sent to a process pool must be picklable and are copied"
+  - "Shared non-thread-safe objects (connections, sessions) must not be used from worker threads"
+  - "Debug mode itself slows the process; use it for finding, not for measuring"
+expectedEffect: "Removes loop stalls so concurrent requests overlap; gain depends on the blocked fraction; varies, measure."
+sources:
+  - https://docs.python.org/3/library/asyncio-dev.html
+  - https://github.com/benfred/py-spy
+verifiedIn: unverified

@@ -1,0 +1,34 @@
+id: ai.llm-input-reduction
+domain: ai
+title: Trim context and lower retrieval top-k to shrink the prompt
+kind: guided
+riskClass: lossy
+stacks:
+  - openai-client
+bottlenecks:
+  - inference
+  - caching
+signals:
+  - Prompt token counts in usage are large and dominated by retrieved passages or old conversation turns
+  - Retrieval returns many chunks of which few are cited or used in answers (check evaluation logs)
+  - Cost or latency scales with prompt size on very large contexts
+preconditions:
+  - Quality oracle (answer-quality or retrieval-recall eval set); user opted into lossy changes
+  - Retrieval top-k and history length are configurable
+steps:
+  - Measure baseline quality and prompt tokens
+  - Lower top-k stepwise (for example in a few steps) or add a relevance-score cutoff; filter retrieved context
+  - Trim or summarize old turns, keeping the stable prefix intact for caching and putting dynamic content late
+  - Run the eval after each step and stop at the largest reduction within tolerance
+verification:
+  - Quality oracle within tolerance
+  - Prompt tokens and latency or cost drop against the baseline
+traps:
+  - The latency guide says cutting 50% of the prompt may improve latency only 1 to 5%, so gains are mainly for very large contexts or cost
+  - Dropping chunks can remove the one needed fact; summarizing or truncating history can break cache reuse
+  - Evaluate on hard queries, not averages
+expectedEffect: Lower input cost and some latency; gain is larger at very large contexts; quality may drop; measure.
+sources:
+  - https://developers.openai.com/api/docs/guides/latency-optimization
+  - https://developers.openai.com/api/docs/guides/prompt-caching
+verifiedIn: unverified

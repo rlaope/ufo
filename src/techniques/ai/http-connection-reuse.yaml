@@ -1,0 +1,33 @@
+id: ai.http-connection-reuse
+domain: ai
+title: Reuse one pooled HTTP client for LLM and embedding calls
+kind: guided
+riskClass: lossless
+stacks:
+  - python
+  - openai-client
+bottlenecks:
+  - network
+signals:
+  - Profiler or tracing shows repeated TCP and TLS handshake time per request to the same host
+  - Code constructs a new HTTP client, session or SDK client inside a function called per request
+  - Top-level helpers (httpx.get, requests.get) are used in a request loop
+preconditions:
+  - Client library with connection pooling (for example httpx.Client or AsyncClient, requests.Session, or an SDK client object)
+steps:
+  - Create one client at application startup (SDK client or httpx.Client / AsyncClient used as a context manager or closed in a finally block) and pass it where needed
+  - Replace per-call client construction and top-level helper calls with calls on that shared client
+  - Keep the client for the process life; do not share one sync client across forked processes unsafely
+  - Compare request latency for many sequential calls before and after
+verification:
+  - Time per request to the same host falls and new connection count (visible in logs or a network trace) stays near the pool size
+  - Responses are identical
+traps:
+  - The httpx docs describe the top-level API as opening a new connection per request, whereas a Client pools them
+  - "Closing is required: use a with block or close() in finally"
+  - Pool limits and idle timeouts can close connections; keep timeouts and retries explicit
+  - Gain is small for a few requests or for long generations dominated by model time
+expectedEffect: Removes per-request handshake latency; most visible for many short requests; varies, measure.
+sources:
+  - https://www.python-httpx.org/advanced/clients/
+verifiedIn: unverified
