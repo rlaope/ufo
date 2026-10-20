@@ -156,7 +156,7 @@ function createTextRedactor(options: RedactOptions): (text: string) => string {
 
   return (input) => {
     let text = input;
-    for (const secret of envSecrets) text = text.split(secret).join(placeholder("secret"));
+    for (const secret of envSecrets) text = withoutEnvSecret(text, secret);
     if (home) text = text.replace(home, "~");
     text = text
       .replace(PRIVATE_KEY_BLOCK, placeholder("private_key"))
@@ -168,6 +168,23 @@ function createTextRedactor(options: RedactOptions): (text: string) => string {
     for (const { pattern, replacement } of names) text = text.replace(pattern, replacement);
     return text;
   };
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * `text` with every occurrence of a sensitive variable's value replaced, except a UUID that is a
+ * whole path segment: a session id in `SESSION_ID` also names directories (a host's scratch
+ * directory), and a path with a placeholder in it no longer names anything.
+ */
+function withoutEnvSecret(text: string, secret: string): string {
+  if (!UUID.test(secret)) return text.split(secret).join(placeholder("secret"));
+  return text.replace(new RegExp(escapeRegExp(secret), "g"), (match, offset: number) => {
+    const after = text[offset + match.length];
+    const segment =
+      text[offset - 1] === "/" && (after === undefined || after === "/" || !/[\w.-]/.test(after));
+    return segment ? match : placeholder("secret");
+  });
 }
 
 /**

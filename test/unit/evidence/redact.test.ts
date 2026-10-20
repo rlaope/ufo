@@ -109,6 +109,22 @@ describe("redact", () => {
     expect(r("abc /usr/bin:/bin")).toBe("abc /usr/bin:/bin");
   });
 
+  // Verifier V1: a host puts its session id (a UUID in CLAUDE_CODE_SESSION_ID) in directory
+  // names; a path with a placeholder in it no longer names anything.
+  it("keeps a UUID value of a sensitive variable where it is a whole path segment", () => {
+    const session = "d9a950be-08f9-4dbc-a589-13aba8e8bbbc";
+    const env = { CLAUDE_CODE_SESSION_ID: session, GITHUB_TOKEN: ENV_TOKEN };
+    const withSession = (text: string) => redact(text, { ...options, env });
+    expect(withSession(`/tmp/claude-501/${session}/scratchpad/toy`)).toBe(
+      `/tmp/claude-501/${session}/scratchpad/toy`,
+    );
+    expect(withSession(`/tmp/${session}`)).toBe(`/tmp/${session}`);
+    expect(withSession(`session ${session} resumed`)).toBe("session <redacted:secret> resumed");
+    expect(withSession(`/tmp/x${session}/y`)).toBe("/tmp/x<redacted:secret>/y");
+    // Any other value stays redacted inside a path too.
+    expect(withSession(`/tmp/${ENV_TOKEN}/y`)).toBe("/tmp/<redacted:secret>/y");
+  });
+
   it("is deterministic and idempotent", () => {
     const input = `postgres://u:p@h/db Authorization: x ${fake("ghp_", "A1b2", 9)} /home/alice/x`;
     expect(r(input)).toBe(r(input));
