@@ -1,4 +1,4 @@
-import { existsSync, readdirSync } from "node:fs";
+import { chmodSync, existsSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { startRun } from "../../src/app/index.js";
@@ -140,5 +140,49 @@ describe("a start that fails after it created the arms", { timeout: TIMEOUT_MS }
     git(current.repo, "branch", "-D", branch);
     expect(runBranches(current)).toBe("");
     expect(await readMachineLock({ home: current.home })).toBeUndefined();
+  });
+
+  // Code review (step A) #1: the arms are created after the branch; when that fails, the cleanup
+  // inside the arm setup says what it left too, the arms directory included.
+  it("names the branch when creating the arms fails and the branch cannot be deleted", async () => {
+    const current = await approvedToy();
+    fault.failGit = (args) =>
+      (args[0] === "clone" && String(args.at(-1)).endsWith("/b")) ||
+      (args[0] === "branch" && args[1] === "-D");
+    const error = await startRun(current.context).catch((caught: unknown) => caught);
+    const branch = runBranches(current);
+    expect(branch).toMatch(/^ufo\/run-\S+$/);
+    expect(error).toMatchObject({
+      message: `git clone failed (test); could not remove the run branch ${branch} (git branch failed (test)); delete it with \`git branch -D ${branch}\``,
+    });
+    expect(runIds(current)).toEqual([]);
+    expect(await readMachineLock({ home: current.home })).toBeUndefined();
+  });
+
+  it("names the arms directory when creating the arms fails and it cannot be removed", async () => {
+    const current = await approvedToy();
+    let locked: string | undefined;
+    fault.failGit = (args) => {
+      const target = String(args.at(-1));
+      if (args[0] !== "clone" || !target.endsWith("/b")) return false;
+      // The arms directory's parent stops taking deletions, so the cleanup cannot remove it.
+      locked = path.dirname(path.dirname(target));
+      chmodSync(locked, 0o500);
+      return true;
+    };
+    try {
+      const error = await startRun(current.context).catch((caught: unknown) => caught);
+      const armsDir = path.dirname(runLayout(current.home, current.repoId, "x").armA);
+      const left = path.join(path.dirname(armsDir), readdirSync(path.dirname(armsDir))[0] ?? "");
+      expect(existsSync(path.join(left, "a"))).toBe(true);
+      expect((error as Error).message).toMatch(
+        new RegExp(
+          `^git clone failed \\(test\\); could not remove the arms directory ${left} \\(.+\\); remove it with \`rm -rf ${left}\`$`,
+        ),
+      );
+      expect(runBranches(current)).toBe("");
+    } finally {
+      if (locked !== undefined) chmodSync(locked, 0o700);
+    }
   });
 });

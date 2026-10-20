@@ -232,9 +232,8 @@ export async function createRunArms(
     await armGit(run.armA, ["checkout", "--quiet", "-b", branch, baseSha]);
     await armGit(run.armB, ["checkout", "--quiet", "--detach", baseSha]);
   } catch (error) {
-    // The setup error is the one worth reporting; cleanup is best effort.
-    await removeRun(run, { deleteBranch: branchCreated }).catch(() => undefined);
-    throw error;
+    // The setup error is the one worth reporting; what the cleanup left goes with it.
+    throw withLeftovers(error, await removeRunLeaving(run, { deleteBranch: branchCreated }));
   }
   return { run, userTreeDirty: status.length > 0 };
 }
@@ -520,6 +519,56 @@ async function removeEmptyDir(dir: string): Promise<void> {
     const code = (error as NodeJS.ErrnoException).code;
     if (code !== "ENOENT" && code !== "ENOTEMPTY" && code !== "EEXIST") throw error;
   }
+}
+
+function describe(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Removes what a start created for `run`: its arms directory and, with `deleteBranch`, the run
+ * branch, each tried even when the other fails. Returns what is left and how to remove each,
+ * or `undefined` once nothing is: with no run state left, nothing else would find them.
+ */
+export async function removeRunLeaving(
+  run: Run,
+  options: { readonly deleteBranch: boolean },
+): Promise<string | undefined> {
+  const left: string[] = [];
+  try {
+    await rm(run.dir, { recursive: true, force: true });
+    await removeEmptyDir(path.dirname(run.dir)).catch(() => undefined);
+  } catch (error) {
+    left.push(
+      `could not remove the arms directory ${run.dir} (${describe(error)}); remove it with \`rm -rf ${run.dir}\``,
+    );
+  }
+  if (options.deleteBranch) {
+    try {
+      await checkRepoConfig(run.repoRoot, run.baseSha);
+      await git(["branch", "-D", run.branch], run.repoRoot);
+    } catch (error) {
+      const still = await runGit(
+        ["rev-parse", "--verify", "--quiet", `refs/heads/${run.branch}`],
+        run.repoRoot,
+      ).catch(() => undefined);
+      if (still?.code !== 1) {
+        left.push(
+          `could not remove the run branch ${run.branch} (${describe(error)}); delete it with \`git branch -D ${run.branch}\``,
+        );
+      }
+    }
+  }
+  return left.length === 0 ? undefined : left.join("; ");
+}
+
+/**
+ * `error` with what a cleanup left appended to its message; its class and code still say why
+ * the setup failed.
+ */
+export function withLeftovers(error: unknown, left: string | undefined): unknown {
+  if (left !== undefined && error instanceof Error) error.message = `${error.message}; ${left}`;
+  return error;
 }
 
 /**
