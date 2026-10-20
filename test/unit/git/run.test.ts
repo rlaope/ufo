@@ -55,6 +55,11 @@ import {
   TEST_NAME,
 } from "./helpers.js";
 
+// Every test here runs git, often many times; under load (the full suite beside other work) that
+// can take longer than Vitest's defaults (5 s a test, 10 s a hook). A timeout for this file only.
+const GIT_TIMEOUT_MS = 60_000;
+vi.setConfig({ testTimeout: GIT_TIMEOUT_MS, hookTimeout: GIT_TIMEOUT_MS });
+
 const BASE_APP = BASE_FILES["src/app.js"];
 
 const SPEEDUP_DIFF = [
