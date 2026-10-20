@@ -557,6 +557,33 @@ describe("the server's repository and PATH", { timeout: TIMEOUT_MS }, () => {
     expect(existsSync(marker) ? readFileSync(marker, "utf8") : "").toBe("");
   });
 
+  // Code review R5: a folder inside a repository at your home (dotfiles) is no project either.
+  it("refuses every tool in a repository at your home", async () => {
+    const toy = toyFor();
+    const home = path.join(toy.root, "home");
+    mkdirSync(path.join(home, "notes"), { recursive: true });
+    git(home, "init", "--quiet");
+    const client = await connect(
+      toy,
+      {},
+      {
+        args: ["--host", "claude-code"],
+        cwd: "/",
+        env: { ...serverEnv(toy), HOME: home, CLAUDE_PROJECT_DIR: path.join(home, "notes") },
+      },
+    );
+    for (const name of ["inspect_target", "start_run"]) {
+      expect(await call(client, name), name).toMatchObject({
+        isError: true,
+        body: {
+          code: "not_a_repo",
+          message:
+            "the repository ~ is your home directory or above it; UFO works only in a project folder",
+        },
+      });
+    }
+  });
+
   // Security H1: what a project puts on the PATH the server starts with (npx puts its own
   // node_modules/.bin and its parents' first) is never run, nor a copy of UFO it ships.
   it("runs no git, ps, or docker from the project or a node_modules directory", async () => {

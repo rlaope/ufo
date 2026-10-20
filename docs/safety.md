@@ -135,7 +135,9 @@ until it is, `ufo setup` refuses to install from the registry and takes a tarbal
   is a repository, and a project's `.bin` there is caught by the `node_modules` rule. A project
   at your home itself (dotfiles) therefore leaves those kept entries in the reach of whatever
   edits the project, so `ufo mcp` bound there, or above it, runs no git and answers every tool
-  `not_a_repo`; open a project folder instead. The CLI run from there is you at your own terminal and works as usual. `ufo mcp`
+  `not_a_repo`; open a project folder instead. The exemption covers the directories UFO starts
+  from, never the repository git finds there: a repository at your home drops everything under
+  it from `PATH`, and `ufo mcp` bound inside one answers `not_a_repo` too. The CLI run from there is you at your own terminal and works as usual. `ufo mcp`
   logs the entries it left out on stderr. Commands and the worker inherit that `PATH`. A program planted in
   any other directory on your `PATH`, one outside the project, still runs; keep your `PATH` to
   directories only you can write.

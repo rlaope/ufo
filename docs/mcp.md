@@ -31,7 +31,8 @@ writes only protocol messages on stdout; diagnostics go to stderr. It exits when
   without `CLAUDE_PROJECT_DIR`), so a host that starts its servers in `/` still works with
   `--repo` or `CLAUDE_PROJECT_DIR`. Bound to your home directory or a directory above it, the
   server runs no git and answers every tool with `not_a_repo`, naming the setting it came from:
-  open a project folder ([safety.md](safety.md) R3b). A work tree that shares a git directory
+  open a project folder ([safety.md](safety.md) R3b). A folder inside a repository at your home
+  (dotfiles) is answered `not_a_repo` the same way, until it is a repository of its own. A work tree that shares a git directory
   elsewhere is served only as a linked worktree or a submodule whose own git directory is
   outside it ([safety.md](safety.md) R7); otherwise `unsafe_state`. Once
   bound, the repository's top level, git directory, common directory, and id are pinned and

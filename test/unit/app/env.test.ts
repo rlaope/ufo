@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -155,6 +156,28 @@ describe("trustProcessPath", () => {
             : [...installed, "/usr/bin"];
         expect(env.PATH, cwd).toBe(kept.join(path.delimiter));
       }
+    } finally {
+      homedir.mockRestore();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // Code review R5: the home exemption is for the directories UFO starts from, never for the
+  // repository git finds: one at your home leaves nothing under it on PATH.
+  it("drops everything under your home when the repository is your home", async () => {
+    const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), "ufo-path-")));
+    const home = path.join(root, "home");
+    const homedir = vi.spyOn(os, "homedir").mockReturnValue(home);
+    try {
+      mkdirSync(path.join(home, "notes"), { recursive: true });
+      execFileSync("git", ["init", "--quiet"], { cwd: home });
+      const env: NodeJS.ProcessEnv = {
+        UFO_HOME: path.join(root, "ufo-home"),
+        PATH: [path.join(home, ".nvm", "bin"), "/usr/bin"].join(path.delimiter),
+      };
+      const { repo } = await trustProcessPath({ cwd: path.join(home, "notes"), env });
+      expect(repo?.root).toBe(home);
+      expect(env.PATH).toBe("/usr/bin");
     } finally {
       homedir.mockRestore();
       rmSync(root, { recursive: true, force: true });

@@ -136,10 +136,11 @@ async function enclosingWorkTrees(dir: string): Promise<string[]> {
  * empty or relative entry, none with a `node_modules` segment, and none inside the working
  * directory, `repoDir`, UFO's home, or the repository there with its git directories. Before git
  * finds that repository, every working tree around each directory is found by its `.git` entry,
- * so no repository's own `git` runs. Your home directory and its ancestors are never one of
- * those roots, even when one is a repository (dotfiles) or the working directory: tools installed
- * under it (`~/.nvm`, `~/.cargo/bin`) stay, and a project's `.bin` there is caught by the
- * `node_modules` rule. Returns the repository, or `undefined` when there is none (an error when
+ * so no repository's own `git` runs. Your home directory and its ancestors are never one of the
+ * roots found from those directories, even when one is a repository (dotfiles) or the working
+ * directory: tools installed under it (`~/.nvm`, `~/.cargo/bin`) stay, and a project's `.bin`
+ * there is caught by the `node_modules` rule. The repository git finds is no such root: one at
+ * your home drops everything under it (code review R5). Returns the repository, or `undefined` when there is none (an error when
  * `requireRepo`), the entries it dropped, and the project roots it distrusted besides UFO's home
  * (where `ufo setup` refuses a UFO home).
  */
@@ -169,7 +170,7 @@ export async function trustProcessPath(options: {
   const repoRoots =
     repo === undefined
       ? []
-      : roots([repo.root, repo.gitDir, repo.commonDir, path.dirname(repo.commonDir)]);
+      : [repo.root, repo.gitDir, repo.commonDir, path.dirname(repo.commonDir)];
   if (repo !== undefined) env.PATH = processPath(env.PATH, [...untrusted, ...repoRoots]);
   const kept = new Set(env.PATH.split(path.delimiter));
   return {
@@ -244,7 +245,8 @@ export async function refuseHomeDirectory(dir: string, what: string): Promise<vo
  * for it first (`trustProcessPath`): each time it is looked for, so one found only after startup
  * is filtered for too before git runs in it (security S2-3). A work tree sharing a git directory
  * elsewhere is refused unless it is a linked worktree or submodule of it whose git directory is
- * outside the work tree (security N1, S2-1). Outside a repository `repo` is `undefined`, or
+ * outside the work tree (security N1, S2-1), and a repository at your home or above it is no
+ * project (`not_a_repo`, code review R5). Outside a repository `repo` is `undefined`, or
  * `not_a_repo` is thrown when `requireRepo`.
  */
 export async function bindRepository(options: {
@@ -255,7 +257,10 @@ export async function bindRepository(options: {
   readonly env?: NodeJS.ProcessEnv;
 }): Promise<{ repo: Repo | undefined; dropped: string[] }> {
   const found = await trustProcessPath({ ...options, repoDir: options.dir });
-  if (found.repo !== undefined) await refuseForeignGitDir(found.repo);
+  if (found.repo !== undefined) {
+    await refuseHomeDirectory(found.repo.root, "the repository");
+    await refuseForeignGitDir(found.repo);
+  }
   return found;
 }
 

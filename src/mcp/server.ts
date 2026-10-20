@@ -7,6 +7,7 @@ import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import {
   type AppContext,
   bindRepository,
+  describeFailure,
   packageVersion,
   type Repo,
   refuseChangedRepository,
@@ -155,12 +156,22 @@ export async function serveMcp(options: McpServeOptions): Promise<void> {
   };
   const binding = await refuseHomeDirectory(options.dir, FROM_NAMES[options.from]).then(
     async () => {
-      const repo = await bind(false);
-      // A user-scope server starts in every session, a repository or not: outside one it
-      // answers every tool with not_a_repo until the folder is one (code review CR-N8).
-      if (repo === undefined) {
+      // A user-scope server starts in every session, a repository or not: outside one, or in one
+      // at your home, it answers every tool with not_a_repo until the folder is a project (code
+      // review CR-N8, R5).
+      let repo: Repo | undefined;
+      try {
+        repo = await bind(false);
+        if (repo === undefined) {
+          options.log(
+            `ufo mcp: ${options.dir} is not inside a git working tree; every tool answers not_a_repo until it is`,
+          );
+        }
+      } catch (error) {
+        const failure = describeFailure(error);
+        if (failure.code !== "not_a_repo") throw error;
         options.log(
-          `ufo mcp: ${options.dir} is not inside a git working tree; every tool answers not_a_repo until it is`,
+          `ufo mcp: ${failure.message}; every tool answers not_a_repo until that changes`,
         );
       }
       return bindingFor(options.dir, repo, () => bind(true));
