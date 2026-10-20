@@ -23,6 +23,8 @@ UFO is one npm package that bundles a CLI, an MCP server, and agent skills. It p
 8. **Repeat** until the target ratio, the budget, or the agent stops.
 9. **Report.** A final check measures the baseline against the final commit and writes a report and an evidence bundle.
 
+Agents drive these steps through UFO's MCP server, `ufo mcp`: [docs/mcp.md](docs/mcp.md) lists its tools and what each one does. The command line is in [docs/cli.md](docs/cli.md).
+
 ## What you can optimize
 
 Tier 1 domains get a full pack (detector, workload, profiler, oracles, technique cards) and a measured showcase. They are planned for the first release; none has shipped yet.

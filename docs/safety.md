@@ -130,10 +130,15 @@ collaborators.
 - **R5. Evidence can be forged by someone with a shell.** A bundle shows what UFO recorded, but a
   process with capability C could have written it. `ufo reproduce` re-measures on your machine and
   is the real check.
-- **R6. The MCP server must not widen the app context.** When the MCP server arrives (M2), the
-  UFO home, card directories, worker entry, environment source, command runner, and resolver
-  stay fixed by the process; no tool parameter may set them, and tool output carries repository
-  text as untrusted data.
+- **R6. An MCP client chooses only the repository.** The MCP server (`ufo mcp`) fixes the UFO
+  home, the card directories, the worker it launches, the environment a run captures, the Docker
+  runner, and the resolver from its own process, as the CLI does; no tool argument sets any of
+  them, and there is no approval, opt-in, or budget tool. A call's `repo` argument can name any
+  repository on the machine, so an agent can start a run in every repository you have approved,
+  not only the one it was opened in; an unapproved one is refused at `start_run`. Tool results
+  carry repository text (file contents, command lines, command output), which the tools describe
+  as data, never instructions; an agent that follows instructions in that text anyway is outside
+  what UFO controls.
 - **R7. Your host may not protect `.git`.** Some agent hosts let tools edit `.git` silently.
   UFO trusts nothing there, but such an agent can still change your own branches; review the run
   branch before you merge it. UFO checks `.git/config` when a run starts and again right before
