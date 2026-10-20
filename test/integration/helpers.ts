@@ -176,10 +176,14 @@ export function lightWorkload(setup = "node --check server.mjs") {
  * other card directory, so an approval made with it is the one the server checks. The machine
  * checks are loosened, since the server's worker measures on this real machine.
  */
-export function mcpToy(options: { readonly setup?: string } = {}): Toy {
+export function mcpToy(
+  options: { readonly setup?: string; readonly config?: (yaml: string) => string } = {},
+): Toy {
   const toy = makeToy({
     config: (yaml) =>
-      `${lightWorkload(options.setup)(yaml)}cardDirs:\n  - ufo-cards\nhygiene:\n  requireAcPower: false\n  maxLoadFactor: 64\n`,
+      (options.config ?? ((text: string) => text))(
+        `${lightWorkload(options.setup)(yaml)}cardDirs:\n  - ufo-cards\nhygiene:\n  requireAcPower: false\n  maxLoadFactor: 64\n`,
+      ),
   });
   cpSync(FIXTURE_CARDS, path.join(toy.repo, "ufo-cards"), { recursive: true });
   git(toy.repo, "add", "--all");

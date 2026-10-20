@@ -12,8 +12,13 @@ export interface ProfileResult {
   sha: string;
   /** Wall time of each workload step UFO ran, in order: setup, start, sample, teardown. */
   phases: { phase: "setup" | "start" | "sample" | "teardown"; ms: number }[];
-  /** The workload's JSON line as UFO read it, or why the sample is not valid. */
-  sample: { valid: true; line: Record<string, number> } | { valid: false; reason: string };
+  /**
+   * The workload's JSON line as UFO read it, the primary metric first, as name and value pairs
+   * (the names are the repository's, so they are values, never keys); or why it is not valid.
+   */
+  sample:
+    | { valid: true; values: { name: string; value: number }[] }
+    | { valid: false; reason: string };
   /** Where the profile is kept, relative to the run state directory. */
   artifact: string;
 }
@@ -67,7 +72,13 @@ export async function handleProfile(
     const recorded = session.samples.at(-1);
     sample =
       outcome.valid && recorded !== undefined
-        ? { valid: true, line: { [recorded.metric]: recorded.value, ...recorded.secondary } }
+        ? {
+            valid: true,
+            values: [
+              { name: recorded.metric, value: recorded.value },
+              ...Object.entries(recorded.secondary).map(([name, value]) => ({ name, value })),
+            ],
+          }
         : { valid: false, reason: outcome.valid ? "no sample was recorded" : outcome.reason };
   } finally {
     await timed("teardown", () => session.teardown("profile"));

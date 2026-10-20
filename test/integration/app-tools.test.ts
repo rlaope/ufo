@@ -227,7 +227,13 @@ describe("profiling the target", { timeout: TIMEOUT_MS }, () => {
       expect(profile.sha).toBe(run.baseSha);
       expect(profile.phases.map((p) => p.phase)).toEqual(["setup", "sample", "teardown"]);
       expect(profile.phases.every((p) => Number.isInteger(p.ms) && p.ms >= 0)).toBe(true);
-      expect(profile.sample).toEqual({ valid: true, line: { latency_ms: 1, error_rate: 0 } });
+      expect(profile.sample).toEqual({
+        valid: true,
+        values: [
+          { name: "latency_ms", value: 1 },
+          { name: "error_rate", value: 0 },
+        ],
+      });
       const artifact = path.join(toy.runDir(run.runId), profile.artifact);
       expect(JSON.parse(readFileSync(artifact, "utf8"))).toEqual(profile);
       const view = await getRun(toy.context, { runId: run.runId });

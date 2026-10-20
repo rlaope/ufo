@@ -5,8 +5,10 @@ import { AppError } from "../../../src/app/index.js";
 import { LockTimeoutError } from "../../../src/core/jobs/index.js";
 import { PolicyError, violation } from "../../../src/core/policy/index.js";
 import {
+  ERROR_PREAMBLE,
   failure,
   MAX_RESULT_CHARS,
+  RESULT_PREAMBLE,
   respond,
   success,
   withinBudget,
@@ -19,12 +21,16 @@ function body(result: Awaited<ReturnType<typeof respond>>): Record<string, unkno
   expect(result.content).toHaveLength(1);
   const [text] = result.content as { type: string; text: string }[];
   expect(text?.type).toBe("text");
-  expect(JSON.parse(text?.text ?? "")).toEqual(result.structuredContent);
+  const [preamble, json, ...rest] = (text?.text ?? "").split("\n");
+  expect(preamble).toBe(result.isError === true ? ERROR_PREAMBLE : RESULT_PREAMBLE);
+  expect(rest).toEqual([]);
+  expect(JSON.parse(json ?? "")).toEqual(result.structuredContent);
   return result.structuredContent as Record<string, unknown>;
 }
 
 describe("a tool result", () => {
-  it("is the workflow's result as structured content and as the same JSON text", async () => {
+  // M2 B3c: text from the repository can never start the text block's first line, nor any line.
+  it("is the workflow's result as structured content, and as a static line and the same JSON", async () => {
     const result = await respond(async () => ({ runId: "run-1", jobId: "job-000001" }));
     expect(result.isError).toBeUndefined();
     expect(body(result)).toEqual({ runId: "run-1", jobId: "job-000001" });
