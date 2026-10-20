@@ -396,15 +396,19 @@ describe("failures", { timeout: TIMEOUT_MS }, () => {
     const lock = path.join(toy.runDir(started.runId), CONTROL_LOCK_FILE);
     writeFileSync(lock, String(process.pid));
     try {
-      const busy = await call(client, "cancel_run", { run_id: started.runId });
+      // A server whose home holds the UFO home: the lock it names comes back as ~ (M2 B3d).
+      const homed = await connect(toy, {}, { env: { ...serverEnv(toy), HOME: toy.root } });
+      const busy = await call(homed, "cancel_run", { run_id: started.runId });
       expect(busy).toMatchObject({
         isError: true,
         body: {
           code: "busy",
+          message: `timed out waiting for ~${lock.slice(toy.root.length)}`,
           retryable: true,
           hint: "another UFO call is working on this run; try again in a few seconds",
         },
       });
+      expect(JSON.stringify(busy.body)).not.toContain(toy.root);
       expect(busy.ms).toBeGreaterThanOrEqual(19_000);
       expect(busy.ms).toBeLessThan(30_000);
     } finally {
