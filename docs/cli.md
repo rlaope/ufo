@@ -520,21 +520,37 @@ home, apart from the arms):
 
 ```
 npm install --prefix <prefix> --ignore-scripts --omit=dev --no-audit --no-fund \
+  --package-lock=true --save=true --dry-run=false --global=false \
   --registry=https://registry.npmjs.org/ ufo-agents@<version>
 ```
 
-npm runs from the prefix, with every `npm_config_*` variable removed from its environment. Setup
-first reads the registry's metadata for that version, then checks that npm installed
-`ufo-agents@<version>` and that the lockfile's integrity for it is the registry's `dist.integrity`
-(`integrity_mismatch` otherwise; nothing is set up). It refuses (`package_unavailable`) to install
-`0.0.0` (an unreleased checkout), a version that is not exact, or one the registry does not have.
-The name `ufo-agents` is not published yet, so until it is, install a tarball:
+npm runs from the prefix, with every `npm_config_*` variable removed from its environment; the
+flags beat an `.npmrc` that turns the lockfile off or makes the install a dry run. Setup first
+reads the registry's metadata for that version, then checks that npm wrote a lockfile
+(`install_failed` otherwise), that it installed `ufo-agents@<version>`, that the lockfile's
+integrity for it is the registry's `dist.integrity`, and that every package in the lockfile came
+from `https://registry.npmjs.org/` (a scoped registry in an `.npmrc` must not swap a dependency);
+`integrity_mismatch` otherwise, and nothing is set up. It refuses (`package_unavailable`) to
+install `0.0.0` (an unreleased checkout), a version that is not exact, or one the registry does
+not have. The name `ufo-agents` is not published yet, so until it is, install a tarball:
 `--package <file.tgz>` (from `npm pack`) installs that file instead, and setup records its
-sha512 and checks the lockfile against it. The installed copy is placed only once it checks out;
-a copy already installed with the same integrity is reused.
+sha512 and checks the lockfile against it. The installed copy is placed only once it checks out
+(a copy it replaces is put back if that fails), and leftovers of an interrupted install are swept
+from `pkg/` at the next setup or uninstall. A copy already installed with the integrity the
+record holds is reused without asking the registry, so a second setup works offline.
+
+While a run holds the machine lock, setup and uninstall refuse to replace or remove an installed
+copy (`run_in_progress`): the run's worker may be running from it. Finish or cancel the run
+first. Installing a new version beside it is allowed.
 
 Every host entry starts that copy with an absolute node: the `node` on the filtered `PATH` when it
 is the binary running setup (a stable link such as Homebrew's), else that binary's own path.
+Either way, that binary's real directory must pass the same `PATH` rules: setup refuses
+(`node_untrusted`) a node inside the working directory's project or under `node_modules`, since
+hosts would start it at every launch. When `UFO_HOME` is not `~/.ufo`, each entry also passes it
+(`env` in Codex's and Cursor's entries, `claude mcp add -e UFO_HOME=...`), since hosts start
+servers with an environment of their own. A `UFO_HOME` inside the working directory's project is
+refused (`unsafe_home`).
 
 ```toml
 [mcp_servers.ufo]
@@ -570,7 +586,8 @@ it may list the skill twice. Setup stores no credentials of its own.
    nothing (`approval_declined`). `--yes` applies without asking (see
    [safety.md](safety.md) R9). Without `--yes` and without a terminal it refuses (`no_terminal`).
    Going back to an older version than a host starts now (a downgrade) is asked on the terminal
-   even with `--yes`: type `downgrade`.
+   even with `--yes`: type `downgrade`. That includes a skill directory another host shares at a
+   newer version (`setup --host cursor` after Codex was set up at a newer one).
 4. Installs the package, if it is not in place.
 5. Before its first write to a Codex or Cursor config, copies the file to
    `$UFO_HOME/private/setup/backups/<host>-<file name>` (mode 0600).
@@ -655,12 +672,14 @@ The three commands use the exit codes above, with these `error.code` values:
 | `no_terminal` | 2 | No terminal to ask on, and no `--yes`. |
 | `entry_conflict` | 1 | A `ufo` server or skill that UFO did not write, or changed since it did; or a record naming another config file (`HOME` or the host's config directory moved). |
 | `changed_during_setup` | 1 | A file changed between the plan and the write. |
-| `integrity_mismatch` | 1 | The installed package is not the version, integrity, or skill the plan showed. |
+| `integrity_mismatch` | 1 | The installed package is not the version, integrity, or skill the plan showed, or a package in its lockfile came from another registry. |
+| `node_untrusted` | 1 | The node that would be registered is inside the project or under `node_modules`; run setup with another node. |
+| `run_in_progress` | 1 | A run holds the machine lock, and setup would replace or remove the copy its worker may run from. |
 | `approval_declined` | 1 | The answer was not `yes` (or `downgrade`); nothing was written. |
 | `busy` | 1 | Another setup, uninstall, or update held the lock for 10 seconds; retryable. |
 | `unsafe_state` | 1 | `setup.json` or a backup is not what setup wrote. |
 | `host_cli_failed` | 3 | `claude mcp add` or `remove` failed, or did not change the config as expected. |
-| `install_failed` | 3 | No `npm` on `PATH`, the registry could not be reached, or `npm install` failed. |
+| `install_failed` | 3 | No `npm` on `PATH`, the registry could not be reached, `npm install` failed (or was stopped at its 10-minute limit; the message names the signal), or it wrote no lockfile. |
 
 With `--json`, `result` holds `command`, `version` (setup and update), `hosts` (the hosts acted
 on), `detected` (setup only: each host probed, `found`, and the evidence), `notSetUp` (`--host`

@@ -78,9 +78,11 @@ both arms, guardrails, and oracles.
 
 **Redacted views.** Evidence bundles, `report.json`, every view UFO returns (`get_job`, `get_run`,
 `status`, `report`, and the read-only MCP tools `inspect_target`, `check_capabilities`, and
-`list_techniques`), the start, resume, cancel, and measure results, and the message of every
-failure, on the command line and over MCP, go through the same redactor; the raw values stay in
-the run's ledger and logs under `$UFO_HOME/private`. The arm paths are not redacted (R4).
+`list_techniques`), the start, resume, cancel, and measure results, the message of every
+failure, on the command line and over MCP, and `ufo setup`'s plan and report (each change's
+detail and diff, on the terminal and in `--json`, and its failures), go through the same
+redactor; the raw values stay in the run's ledger and logs under `$UFO_HOME/private`, and in the
+host configs and setup's backups. The arm paths are not redacted (R4).
 
 **Load targets are checked, not enforced.** UFO resolves each `targets:` entry when the run starts
 and refuses public, link-local, and CGNAT addresses; it passes the checked addresses to the
@@ -135,7 +137,10 @@ until it is, `ufo setup` refuses to install from the registry and takes a tarbal
   any other directory on your `PATH`, one outside the project, still runs; keep your `PATH` to
   directories only you can write.
 - **R4. Redaction is a list of patterns.** The redactor removes known secret formats, your
-  home path, user name, and host name from bundles, views, results, and failure messages. A secret in an unknown format can pass through. The
+  home path, user name, and host name from bundles, views, results, failure messages, and
+  setup's diffs. A secret in an unknown format can pass through, and so can a value under a key
+  whose name does not say it is secret (`value = "..."`, `"url": "..."`), as in a host config
+  line around setup's edit. The
   value of a sensitive-named variable is redacted wherever it appears, except a host's session id
   (`CLAUDE_CODE_SESSION_ID`, `CODEX_SESSION_ID`) that is a whole segment of a local absolute path,
   since hosts name directories after it; in a URL, or held by another sensitive variable too, it
@@ -189,7 +194,12 @@ until it is, `ufo setup` refuses to install from the registry and takes a tarbal
   run these commands yourself, in your own terminal, and do not let an agent run them. The
   backups in `$UFO_HOME/private/setup/backups` are full copies of your host configs as they were
   before setup's first write, tokens and keys in them included (files 0600 in 0700 directories),
-  until uninstall removes them. Claude Code prefers a `ufo` server at local or project scope
+  until uninstall removes them. A sandbox rule that lets an agent write all of `$UFO_HOME` grants
+  `pkg/` too, so that agent can change what your hosts start; B′ above means `$UFO_HOME/arms`
+  only. Setup checks the package itself against the registry's integrity and every dependency's
+  source (the public registry only); the dependencies' own integrity is npm's check, until the
+  package ships an `npm-shrinkwrap.json` (planned for M6). Claude Code prefers a `ufo` server at
+  local or project scope
   (`claude mcp add` without `--scope user`, or a repository's `.mcp.json` once you approve it)
   over the user-scope one setup adds, so such a server shadows UFO's; approve a repository's
   `.mcp.json` servers only when you trust it.
