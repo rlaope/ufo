@@ -64,9 +64,9 @@ import {
 import { captureEnv, captureGitEnv } from "./env.js";
 import { AppError } from "./errors.js";
 import { committedChangeIds, decisionFor, EVENTS } from "./events.js";
-import { type BaselineResult, JOB_KINDS, type RunReport } from "./jobs/index.js";
+import { type BaselineResult, JOB_KINDS } from "./jobs/index.js";
 import { ensureWorker, runInProgress } from "./launch.js";
-import { report, waitForJobDone } from "./queries.js";
+import { type FinishedReport, report, waitForJobDone } from "./queries.js";
 import { type AppState, jsonData, openRun, toJson, writeAppState } from "./state.js";
 
 export interface StartRunOptions {
@@ -762,7 +762,7 @@ function closeMeasureRun(
 }
 
 export interface RunToEndResult {
-  report: RunReport;
+  report: FinishedReport;
   decisions: { cardId: string; outcome: string; reason?: string | undefined }[];
   /** Recipe cards not tried because the technique cap was reached. */
   skipped: string[];
@@ -852,11 +852,9 @@ async function recipesToEnd(
   const finish = await finishRun(context, scoped);
   await wait(finish.jobId, "finish");
   const finished = await report(context, scoped);
-  if (!("headline" in finished || "noHeadline" in finished)) {
-    throw new JobFailed(`run ${runId} finished without a report`);
-  }
+  if (!finished.finished) throw new JobFailed(`run ${runId} finished without a report`);
   return {
-    report: finished as RunReport,
+    report: finished,
     decisions,
     skipped,
     ...(baseline?.refusal === undefined ? {} : { refusal: baseline.refusal }),

@@ -20,7 +20,7 @@ ufo <command> [options]
 | `status` | Lists the repository's runs and the machine lock, and shows the latest run (or `--run <id>`). |
 | `resume` | Resumes an interrupted run (for example, after the worker was killed). |
 | `cancel` | Cancels a run. Its completed observations stay in the ledger. |
-| `report` | Prints a finished run's report, or what is known so far for an unfinished run. |
+| `report` | Prints a finished run's report, or what is known so far for an unfinished run. With `--json`, `result.finished` is `true` for the report and `false` for the run's view. |
 | `extend-budget` | Raises a run's technique cap or wall-clock budget. Needs an interactive terminal. |
 | `worker` | Internal: `ufo worker --run-dir <absolute path>` is the detached worker UFO launches itself. It accepts only a run directory under its own `$UFO_HOME/private/runs/` whose `run.json` names that run (`unsafe_state` otherwise). |
 

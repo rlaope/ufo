@@ -272,15 +272,21 @@ export async function status(
   );
 }
 
+/** A finished run's report. */
+export type FinishedReport = RunReport & { finished: true };
+
+/** What `report` returns, told apart by `finished`. */
+export type ReportResult = FinishedReport | (RunView & { finished: false });
+
 /** `ufo report`: the finished run's report, or what is known so far for an unfinished run. */
 export async function report(
   context: AppContext,
   options: { readonly runId?: string } = {},
-): Promise<RunReport | (RunView & { finished: false })> {
+): Promise<ReportResult> {
   const located = await locateRun(context, options.runId);
   const text = await readTextNoFollow(path.join(located.runDir, REPORT_FILE)).catch(
     () => undefined,
   );
-  if (text !== undefined) return redactView(JSON.parse(text) as RunReport);
+  if (text !== undefined) return { ...redactView(JSON.parse(text) as RunReport), finished: true };
   return { ...(await getRun(context, options)), finished: false };
 }

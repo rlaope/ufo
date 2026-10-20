@@ -5,6 +5,7 @@ import {
   cancelRun,
   describeFailure,
   finishRun,
+  report,
   resumeRun,
   runRecipes,
   startRun,
@@ -103,5 +104,24 @@ describe("status of a run that does not exist", () => {
         message: `no run ${runId} in this repository`,
       });
     }
+  });
+});
+
+// M2 A5: the two kinds of report result are told apart by `finished`, on both.
+describe("the report of a run", { timeout: TIMEOUT_MS }, () => {
+  it("is the view with finished false until the run finished, then the report with finished true", async () => {
+    const run = await startedRun();
+    expect(await report(toy.context, { runId: run.runId })).toMatchObject({
+      finished: false,
+      runId: run.runId,
+      status: "running",
+    });
+    const finish = await finishRun(toy.context, { runId: run.runId });
+    expect((await waitDone(toy, run.runId, finish.jobId)).status).toBe("succeeded");
+    expect(await report(toy.context, { runId: run.runId })).toMatchObject({
+      finished: true,
+      runId: run.runId,
+      noHeadline: "no change was kept, so there is nothing to compare",
+    });
   });
 });

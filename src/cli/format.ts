@@ -2,6 +2,7 @@ import type {
   ApproveResult,
   CancelResult,
   MeasureResult,
+  ReportResult,
   ResumeResult,
   RunReport,
   RunView,
@@ -85,8 +86,8 @@ export function formatStatus(result: StatusView): string {
   return `${lines.join("\n")}\n`;
 }
 
-export function formatReport(result: RunReport | (RunView & { finished: false })): string {
-  if ("finished" in result) {
+export function formatReport(result: ReportResult): string {
+  if (!result.finished) {
     const first =
       result.status === "running"
         ? "Run not finished yet."
