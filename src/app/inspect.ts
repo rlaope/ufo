@@ -210,7 +210,16 @@ export interface CapabilityReport {
   git: { found: boolean; version?: string | undefined; error?: string | undefined };
   /** The Node.js that runs UFO and its worker. */
   node: { version: string };
-  docker: { found: boolean; version?: string | undefined; error?: string | undefined };
+  /**
+   * `found` false when Docker is not installed; `reachable` false when it is but `docker version`
+   * fails (its daemon stopped), with the first line it printed on stderr.
+   */
+  docker: {
+    found: boolean;
+    reachable?: boolean | undefined;
+    version?: string | undefined;
+    error?: string | undefined;
+  };
   /** Each program the approved commands start, looked up without running it. */
   programs: ProgramCheck[];
   /** Why there are no programs to check: ufo.yaml or its cards cannot be read. */
@@ -274,8 +283,18 @@ export async function checkCapabilities(context: AppContext): Promise<Capability
   const exec: Exec =
     context.exec ?? ((file, args) => execFileAsync(file, [...args], { timeout: 10_000 }));
   const docker = await exec("docker", ["version", "--format", "{{.Server.Version}}"]).then(
-    ({ stdout }) => ({ found: true, version: stdout.trim() }),
-    (error: unknown) => ({ found: false, error: describe(error) }),
+    ({ stdout }): CapabilityReport["docker"] => ({
+      found: true,
+      reachable: true,
+      version: stdout.trim(),
+    }),
+    (error: unknown): CapabilityReport["docker"] => {
+      const failed = error as { code?: unknown; stderr?: unknown };
+      if (failed.code === "ENOENT") return { found: false, error: "not installed (not on PATH)" };
+      const stderr = typeof failed.stderr === "string" ? failed.stderr : "";
+      const line = stderr.split("\n").find((text) => text.trim() !== "");
+      return { found: true, reachable: false, error: line?.trim() ?? describe(error) };
+    },
   );
   const report: CapabilityReport = {
     git: gitVersion,

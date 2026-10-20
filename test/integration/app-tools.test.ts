@@ -95,7 +95,28 @@ describe("checking capabilities", { timeout: TIMEOUT_MS }, () => {
       });
       expect(report.node).toEqual({ version: process.version });
       // The toy context's docker runner finds no Docker.
-      expect(report.docker).toEqual({ found: false, error: "spawn docker ENOENT" });
+      expect(report.docker).toEqual({ found: false, error: "not installed (not on PATH)" });
+      // Code review CR-N9: installed but its daemon stopped, and running.
+      const stopped = {
+        ...other.context,
+        exec: async () => {
+          throw Object.assign(new Error("Command failed: docker version"), {
+            code: 1,
+            stderr: "\nCannot connect to the Docker daemon at unix:///var/run/docker.sock.\nmore\n",
+          });
+        },
+      };
+      expect((await checkCapabilities(stopped)).docker).toEqual({
+        found: true,
+        reachable: false,
+        error: "Cannot connect to the Docker daemon at unix:///var/run/docker.sock.",
+      });
+      const running = { ...other.context, exec: async () => ({ stdout: "29.7.2\n" }) };
+      expect((await checkCapabilities(running)).docker).toEqual({
+        found: true,
+        reachable: true,
+        version: "29.7.2",
+      });
       expect(report.programs).toEqual([
         expect.objectContaining({ program: "touch", found: true, where: "path" }),
         {
