@@ -14,24 +14,21 @@ describe("the control-lock wait of an app call", () => {
   });
 });
 
-// Code review W1: the pin of a repository names its common directory by device and inode, with the
-// birth time only where the file system keeps one; Node reports the change time there instead,
-// which any write to .git moves, or 0.
+// Code review W1 and its last check: the pin of a repository names its common directory by device
+// and inode, with the birth time only on macOS. Elsewhere Node may report the change time (which
+// any write to .git moves) or 0 as the birth time, and one stat cannot tell which.
 describe("the identity of a common directory", () => {
   const ids = { dev: 1, ino: 2 };
-  it("has the birth time where it is real", () => {
-    expect(commonDirIdOf({ ...ids, birthtimeMs: 100, ctimeMs: 250 }, "linux")).toBe("1:2:100");
-    // macOS keeps a birth time even when nothing changed the directory since.
-    expect(commonDirIdOf({ ...ids, birthtimeMs: 100, ctimeMs: 100 }, "darwin")).toBe("1:2:100");
+  it("has the birth time on macOS", () => {
+    expect(commonDirIdOf({ ...ids, birthtimeMs: 100 }, "darwin")).toBe("1:2:100");
+    expect(commonDirIdOf({ ...ids, birthtimeMs: 0 }, "darwin")).toBe("1:2");
   });
 
-  it("is device and inode alone where it is the change time or 0", () => {
-    expect(commonDirIdOf({ ...ids, birthtimeMs: 250, ctimeMs: 250 }, "linux")).toBe("1:2");
-    expect(commonDirIdOf({ ...ids, birthtimeMs: 0, ctimeMs: 250 }, "linux")).toBe("1:2");
-    expect(commonDirIdOf({ ...ids, birthtimeMs: 0, ctimeMs: 250 }, "darwin")).toBe("1:2");
-    // So a write to .git, which moves the change time, does not change it.
-    expect(commonDirIdOf({ ...ids, birthtimeMs: 300, ctimeMs: 300 }, "linux")).toBe(
-      commonDirIdOf({ ...ids, birthtimeMs: 250, ctimeMs: 250 }, "linux"),
-    );
+  it("is device and inode alone elsewhere, before and after a write to .git", () => {
+    // Pinned while the reported birth time still equalled the change time, then .git was written:
+    // a real birth time stays, a reported change time moves; both name the directory the same way.
+    expect(commonDirIdOf({ ...ids, birthtimeMs: 250 }, "linux")).toBe("1:2");
+    expect(commonDirIdOf({ ...ids, birthtimeMs: 300 }, "linux")).toBe("1:2");
+    expect(commonDirIdOf({ ...ids, birthtimeMs: 0 }, "linux")).toBe("1:2");
   });
 });

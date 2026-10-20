@@ -107,18 +107,18 @@ export async function resolveRepo(cwd: string): Promise<Repo> {
 }
 
 /**
- * Names a common directory itself (code review R4, W1): its device and inode, with its birth
- * time where the file system keeps one. Where it keeps none, Node reports the change time
- * (which every write to `.git` moves) or 0 instead, so a birth time equal to the change time
- * counts only on macOS, whose file systems keep one; elsewhere device and inode stand alone,
- * and a file system may give a directory made again the same inode. Exported for the tests.
+ * Names a common directory itself (code review R4, W1): its device and inode, plus its birth time
+ * on macOS, whose file systems keep one. Elsewhere Node may report the change time (which every
+ * write to `.git` moves) or 0 as the birth time, and whether it does cannot be told from one stat:
+ * a test like "differs from the change time" would name the same directory two ways before and
+ * after a write. So elsewhere device and inode stand alone, and a file system may give a directory
+ * made again the same inode. Exported for the tests.
  */
 export function commonDirIdOf(
-  common: Pick<Stats, "dev" | "ino" | "birthtimeMs" | "ctimeMs">,
+  common: Pick<Stats, "dev" | "ino" | "birthtimeMs">,
   platform: NodeJS.Platform = process.platform,
 ): string {
-  const born =
-    common.birthtimeMs > 0 && (platform === "darwin" || common.birthtimeMs !== common.ctimeMs);
+  const born = platform === "darwin" && common.birthtimeMs > 0;
   return born ? `${common.dev}:${common.ino}:${common.birthtimeMs}` : `${common.dev}:${common.ino}`;
 }
 
