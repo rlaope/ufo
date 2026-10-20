@@ -6,6 +6,7 @@ import {
   assertRealDir,
   isErrno,
   RunIdSchema,
+  readRun,
   readTextNoFollow,
   resolveGitCommonDir,
 } from "../core/jobs/index.js";
@@ -233,7 +234,7 @@ async function namesWorkTree(repo: Repo): Promise<boolean> {
  * tree, the session's own directory, proves nothing, since whatever wrote the `.git` could
  * write it too.
  */
-async function refuseForeignGitDir(repo: Repo): Promise<void> {
+export async function refuseForeignGitDir(repo: Repo): Promise<void> {
   const own = path.join(repo.root, ".git");
   if (repo.gitDir === own && repo.commonDir === own) return;
   if (!within(repo.gitDir, repo.root) && (await namesWorkTree(repo))) return;
@@ -340,19 +341,63 @@ export interface LocatedRun {
 }
 
 /**
- * The run `runId`, or the latest run of the repository when it is omitted. Its directory is
- * derived from the trusted home and the repository id, and checked component by component.
+ * Refuses a run that another work tree of the repository started (code review R1): linked
+ * worktrees share the repository id, and so its runs, and UFO acts on a run only from the work
+ * tree that started it (security N1). A run that names no work tree is any work tree's.
+ */
+export function refuseOtherWorkTree(
+  runId: string,
+  startedIn: string | undefined,
+  repo: Pick<Repo, "root">,
+): void {
+  if (startedIn === undefined || startedIn === repo.root) return;
+  throw new AppError(
+    "run_other_work_tree",
+    `run ${runId} was started in the work tree at ${startedIn}; act on it from there`,
+  );
+}
+
+/** The work tree whose start created the run, as its run state records it. */
+export async function startedIn(
+  home: string,
+  repo: Repo,
+  runId: string,
+): Promise<string | undefined> {
+  const runDir = runDirFor(home, repo.repoId, runId);
+  await assertTrustedDir(home, runDir);
+  return (await readRun(runDir)).repoRoot;
+}
+
+/**
+ * The run `runId`, or this work tree's latest run when it is omitted. Its directory is derived
+ * from the trusted home and the repository id, and checked component by component; a work tree
+ * whose git directory is another repository's is refused first (security N1), and a run another
+ * work tree started is `run_other_work_tree` (code review R1).
  */
 export async function locateRun(context: AppContext, runId?: string): Promise<LocatedRun> {
   const repo = await repoOf(context);
+  await refuseForeignGitDir(repo);
   const home = await homeFor(context, repo);
   const ids = await listRunIds(home, repo);
-  const id = runId ?? ids.at(-1);
-  if (id === undefined) throw new AppError("no_run", "this repository has no UFO runs");
+  let id = runId;
+  for (const candidate of runId === undefined ? [...ids].reverse() : []) {
+    const root = await startedIn(home, repo, candidate);
+    if (root === undefined || root === repo.root) {
+      id = candidate;
+      break;
+    }
+  }
+  if (id === undefined) {
+    throw new AppError(
+      "no_run",
+      ids.length === 0
+        ? "this repository has no UFO runs"
+        : "this work tree has no UFO runs; other work trees of the repository have (`ufo status` lists them)",
+    );
+  }
   if (!RunIdSchema.safeParse(id).success || !ids.includes(id)) {
     throw new AppError("no_run", `no run ${id} in this repository`);
   }
-  const runDir = runDirFor(home, repo.repoId, id);
-  await assertTrustedDir(home, runDir);
-  return { repo, home, runId: id, runDir };
+  refuseOtherWorkTree(id, await startedIn(home, repo, id), repo);
+  return { repo, home, runId: id, runDir: runDirFor(home, repo.repoId, id) };
 }

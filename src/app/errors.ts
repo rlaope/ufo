@@ -32,6 +32,7 @@ export type AppErrorCode =
   | "run_starting"
   | "run_finishing"
   | "run_in_progress"
+  | "run_other_work_tree"
   | "worker_not_running"
   | "approval_declined"
   | "opt_in_mismatch"
@@ -52,6 +53,7 @@ const EXIT_BY_CODE: Record<AppErrorCode, ExitCode> = {
   run_starting: EXIT_REFUSED,
   run_finishing: EXIT_REFUSED,
   run_in_progress: EXIT_REFUSED,
+  run_other_work_tree: EXIT_REFUSED,
   worker_not_running: EXIT_REFUSED,
   approval_declined: EXIT_REFUSED,
   opt_in_mismatch: EXIT_REFUSED,

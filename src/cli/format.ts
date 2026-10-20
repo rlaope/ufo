@@ -87,7 +87,10 @@ function formatView(view: RunView): string[] {
 
 export function formatStatus(result: StatusView): string {
   if (result.runs.length === 0) return "No UFO runs in this repository.\n";
-  const lines = result.runs.map((run) => `${run.runId}  ${run.status}  ${run.createdAt}`);
+  const lines = result.runs.map(
+    (run) =>
+      `${run.runId}  ${run.status}  ${run.createdAt}${run.workTree === undefined ? "" : `  (work tree ${run.workTree})`}`,
+  );
   if (result.lock !== undefined) {
     lines.push(
       `Machine lock: run ${result.lock.runId}${result.lock.thisRepository ? "" : " (another repository)"}`,

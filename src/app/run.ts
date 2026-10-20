@@ -64,6 +64,7 @@ import {
   listRunIds,
   locateRun,
   type Repo,
+  refuseForeignGitDir,
   repoOf,
 } from "./context.js";
 import { captureEnv, captureGitEnv } from "./env.js";
@@ -107,7 +108,8 @@ function killOptions(context: AppContext): { exec?: NonNullable<AppContext["exec
  * A new run never silently replaces one: a `running` run of this repository refuses the start
  * with `run_in_progress`, saying how to end it: a start still in progress (it becomes a running
  * run, so trying again later is refused as well), a start cut short that the cleanup could not
- * end, and a run with or without a live worker. The cleanup's warnings go with the refusal.
+ * end, and a run with or without a live worker. A run another work tree started is ended from
+ * there, which the refusal names (code review R1). The cleanup's warnings go with the refusal.
  */
 async function refuseActiveRuns(
   home: string,
@@ -118,11 +120,13 @@ async function refuseActiveRuns(
     const run = await readRun(runDirFor(home, repo.repoId, id));
     if (run.status !== "running") continue;
     const cleanup = cleanupNote(warnings);
+    const other = run.repoRoot !== undefined && run.repoRoot !== repo.root;
+    const which = other
+      ? `run ${id} of this repository, started in the work tree at ${run.repoRoot},`
+      : `run ${id} of this repository`;
+    const there = other ? " there" : "";
     if (!run.started && !(await abandonedStart(run))) {
-      throw new AppError(
-        "run_in_progress",
-        `run ${id} of this repository is still starting${cleanup}`,
-      );
+      throw new AppError("run_in_progress", `${which} is still starting${cleanup}`);
     }
     const how = !run.started
       ? "did not finish starting; end it with"
@@ -131,7 +135,7 @@ async function refuseActiveRuns(
         : `is still running and its worker stopped; continue it with \`ufo resume --run ${id}\` or stop it with`;
     throw new AppError(
       "run_in_progress",
-      `run ${id} of this repository ${how} \`ufo cancel --run ${id}\`${cleanup}`,
+      `${which} ${how} \`ufo cancel --run ${id}\`${there}${cleanup}`,
     );
   }
 }
@@ -209,6 +213,8 @@ async function startRunFor(
   purpose: AppState["purpose"],
 ): Promise<StartRunResult & { runDir: string; home: string }> {
   const repo = await repoOf(context);
+  // Never a run cloned from another repository's git directory (security N1, code review R6).
+  await refuseForeignGitDir(repo);
   const home = await homeFor(context, repo);
   const loaded = await loadConfig(repo.root);
   // The cards as they are now, checked against the approval and captured for the run's jobs.
@@ -244,7 +250,11 @@ async function startRunFor(
   const runId = newRunId();
   // The run's state exists before it takes the machine lock, so another start that finds the
   // lock never mistakes this run for one whose state is gone.
-  const { runDir } = await createRunState(home, { runId, repoId: repo.repoId });
+  const { runDir } = await createRunState(home, {
+    runId,
+    repoId: repo.repoId,
+    repoRoot: repo.root,
+  });
   // Held from here until the worker runs, so no cancel or other call acts on the run while it
   // starts. Nothing else takes the lock of a run whose start is in progress.
   return withControlLock(runDir, controlLockWaitMs(context), async () => {

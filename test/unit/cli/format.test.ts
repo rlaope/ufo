@@ -36,6 +36,25 @@ function statusLines(view: RunView): string[] {
   return text.split("\n");
 }
 
+// Code review R1: a run another work tree started is listed with that work tree.
+describe("formatStatus", () => {
+  it("names the work tree of a run another one started", () => {
+    const runs = [
+      { runId: "run-1", status: "running", createdAt: "2026-10-20T00:00:00.000Z" },
+      {
+        runId: "run-2",
+        status: "running",
+        createdAt: "2026-10-20T00:01:00.000Z",
+        workTree: "/repo-linked",
+      },
+    ];
+    expect(formatStatus({ repoRoot: "/repo", runs }).split("\n").slice(0, 2)).toEqual([
+      "run-1  running  2026-10-20T00:00:00.000Z",
+      "run-2  running  2026-10-20T00:01:00.000Z  (work tree /repo-linked)",
+    ]);
+  });
+});
+
 describe("formatMeasure", () => {
   // M2 A9: the start's warnings are printed with the baseline.
   it("prints the start's warnings", () => {

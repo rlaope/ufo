@@ -14,6 +14,7 @@ import {
   report,
   resumeRun,
   startRun,
+  status,
   submitChange,
 } from "../../src/app/index.js";
 import { readRun } from "../../src/core/jobs/index.js";
@@ -23,6 +24,7 @@ import {
   decisionOf,
   diffOf,
   expectKeep,
+  git,
   lightWorkload,
   makeToy,
   TIMEOUT_MS,
@@ -69,6 +71,8 @@ describe("trusted run state", { timeout: TIMEOUT_MS }, () => {
     const imposter = path.join(toy.root, "imposter");
     mkdirSync(imposter);
     writeFileSync(path.join(imposter, ".git"), `gitdir: ${path.join(toy.repo, ".git")}\n`);
+    // The same ufo.yaml, so a start would get as far as the git directory (code review R6).
+    writeFileSync(path.join(imposter, "ufo.yaml"), readFileSync(path.join(toy.repo, "ufo.yaml")));
     const context = { ...toy.context, cwd: imposter };
     const scoped = { runId: run.runId };
     const change = {
@@ -86,10 +90,13 @@ describe("trusted run state", { timeout: TIMEOUT_MS }, () => {
       ["finishRun", () => finishRun(context, scoped)],
       ["resumeRun", () => resumeRun(context, scoped)],
       ["cancelRun", () => cancelRun(context, scoped)],
+      ["startRun", () => startRun(context)],
     ] as const) {
       const failure = await refusal(call());
       expect(failure, name).toMatchObject({ exitCode: 1, code: "unsafe_state" });
-      expect(failure.message, name).toContain("only from the work tree that started it");
+      expect(failure.message, name).toBe(
+        `${imposter} uses the git directory ${path.join(toy.repo, ".git")}, not its own .git, and is no linked worktree or submodule of it`,
+      );
     }
     expect((await readRun(toy.runDir(run.runId))).status).toBe("running");
     // A finished run's report too.
@@ -97,6 +104,62 @@ describe("trusted run state", { timeout: TIMEOUT_MS }, () => {
     expect((await waitDone(toy, run.runId, finish.jobId)).status).toBe("succeeded");
     expect(await refusal(report(context, scoped))).toMatchObject({ code: "unsafe_state" });
     expect((await report(toy.context, scoped)).finished).toBe(true);
+  });
+
+  // Code review R1: linked worktrees share the repository id, so each sees the other's runs; each
+  // acts on its own, lists the other's marked, and says where to end one that blocks a start.
+  it("keeps each linked worktree to its own runs (R1)", async () => {
+    await approveToy(toy, { allowLossy: true });
+    const linked = path.join(toy.root, "linked");
+    git(toy.repo, "worktree", "add", "--quiet", "--detach", linked);
+    const here = { ...toy.context, cwd: toy.repo };
+    const there = { ...toy.context, cwd: linked };
+    const first = await startRun(here);
+    try {
+      expect((await waitDone(toy, first.runId, first.baselineJobId)).status).toBe("succeeded");
+      expect(await refusal(getRun(there))).toMatchObject({
+        exitCode: 2,
+        code: "no_run",
+        message:
+          "this work tree has no UFO runs; other work trees of the repository have (`ufo status` lists them)",
+      });
+      const scoped = { runId: first.runId };
+      const elsewhere = `run ${first.runId} was started in the work tree at ${toy.repo}; act on it from there`;
+      for (const [name, call] of [
+        ["getRun", () => getRun(there, scoped)],
+        ["getJob", () => getJob(there, { ...scoped, jobId: first.baselineJobId })],
+        ["cancelRun", () => cancelRun(there, scoped)],
+      ] as const) {
+        expect(await refusal(call()), name).toMatchObject({
+          exitCode: 1,
+          code: "run_other_work_tree",
+          message: elsewhere,
+          retryable: false,
+        });
+      }
+      const listed = await status(there);
+      // The earlier tests' runs too, all started in the main work tree.
+      expect(listed.runs.at(-1)).toMatchObject({ runId: first.runId, workTree: toy.repo });
+      expect(listed.runs.every((run) => run.workTree === toy.repo)).toBe(true);
+      expect(listed.current).toBeUndefined();
+      expect(await refusal(startRun(there))).toMatchObject({
+        code: "run_in_progress",
+        message: `run ${first.runId} of this repository, started in the work tree at ${toy.repo}, is still running; finish it, or stop it with \`ufo cancel --run ${first.runId}\` there`,
+      });
+    } finally {
+      await cancelRun(here, { runId: first.runId });
+    }
+    const second = await startRun(there);
+    try {
+      expect((await getRun(there)).runId).toBe(second.runId);
+      expect((await getRun(here)).runId).toBe(first.runId);
+      expect((await status(here)).runs.at(-1)).toMatchObject({
+        runId: second.runId,
+        workTree: linked,
+      });
+    } finally {
+      await cancelRun(there, { runId: second.runId });
+    }
   });
 
   it("refuses a UFO home inside the repository or its git directory (F15)", async () => {

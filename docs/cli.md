@@ -17,7 +17,7 @@ ufo <command> [options]
 | `approve` | Shows everything `ufo.yaml` lets UFO run and records your approval. Needs an interactive terminal. |
 | `measure` | Measures the current `HEAD`: the oracle snapshot, 5 samples, and the noise floor. Leaves no branch or arm behind. |
 | `run` | Starts a run, applies each enabled recipe card once with its default parameters, then runs the final check and prints the report. |
-| `status` | Lists the repository's runs and the machine lock, and shows the latest run (or `--run <id>`). |
+| `status` | Lists the repository's runs (those another linked worktree started marked with its path) and the machine lock, and shows this work tree's latest run (or `--run <id>`). Commands without `--run` act on this work tree's latest run. |
 | `resume` | Resumes an interrupted run (for example, after the worker was killed). |
 | `cancel` | Cancels a run. Its completed observations stay in the ledger. |
 | `report` | Prints a finished run's report, or what is known so far for an unfinished run. With `--json`, `result.finished` is `true` for the report and `false` for the run's view. |
@@ -74,7 +74,7 @@ local paths, so an agent can read arm A. The text output shows them with `~` too
 | Code | Meaning | `error.code` values |
 |---|---|---|
 | 0 | Success. | |
-| 1 | A policy refused the request, the human declined, or the run needs `ufo resume` first. | `policy:<rule>` (see below), `approval_declined`, `opt_in_mismatch`, `config_exists`, `run_not_active`, `run_starting`, `run_finishing`, `run_in_progress`, `worker_not_running`, `measurement_failed`, `ledger_mismatch`, `cancel_pending`, `arms_missing`, `interrupted`, `busy`, `unsafe_state` |
+| 1 | A policy refused the request, the human declined, or the run needs `ufo resume` first. | `policy:<rule>` (see below), `approval_declined`, `opt_in_mismatch`, `config_exists`, `run_not_active`, `run_starting`, `run_finishing`, `run_in_progress`, `run_other_work_tree`, `worker_not_running`, `measurement_failed`, `ledger_mismatch`, `cancel_pending`, `arms_missing`, `interrupted`, `busy`, `unsafe_state` |
 | 2 | Usage or configuration error, or nothing to act on. | `usage`, `not_a_repo`, `config_missing`, `config_invalid`, `cards_invalid`, `no_run`, `unsafe_home` |
 | 3 | UFO itself failed. | `internal` |
 
@@ -105,7 +105,8 @@ Refusals that protect UFO's own state:
 | `unsafe_home` (exit 2) | `$UFO_HOME` is a symbolic link, not a directory, not owned by you, writable by group or others, or inside the target repository or its git directory. Nothing is created in the repository. Fix the directory (`chmod 700`) or point `UFO_HOME` elsewhere. |
 | `unsafe_state` (exit 1) | Something under `$UFO_HOME` is not what UFO created: a symbolic link in the run state, the approvals, or the arms, a run state file that does not validate, a run state naming another run or repository, or an arm whose git directory is not its own. UFO refuses instead of following it. |
 | `policy:unsafe_repo_config` (exit 1) | The repository's `.git/config` sets a key that would make git run a program the repository chose (see [Arms](#runs-budgets-and-decisions)). Remove the key, or move it to your global git config, and start again. |
-| `run_in_progress` (exit 1) | Another run holds the machine lock, or a run of this repository is still `running`: also a start still in progress, or one cut short (it holds the machine lock until `ufo cancel` ends it; when the next start's cleanup could not end it, the message carries the cleanup's error). The message names the run and how to end it (`ufo resume --run <id>` or `ufo cancel --run <id>`). |
+| `run_in_progress` (exit 1) | Another run holds the machine lock, or a run of this repository is still `running`: also a start still in progress, or one cut short (it holds the machine lock until `ufo cancel` ends it; when the next start's cleanup could not end it, the message carries the cleanup's error). The message names the run and how to end it (`ufo resume --run <id>` or `ufo cancel --run <id>`), and the work tree to run that in when another linked worktree of the repository started it. |
+| `run_other_work_tree` (exit 1) | The run was started in another work tree of this repository (a linked worktree shares its runs). UFO acts on a run only from the work tree that started it; the message names that work tree. |
 | `run_starting` (exit 1) | The run is still starting. Try again in a few seconds. |
 | `run_finishing` (exit 1) | The run's finish is queued, so it takes no more work. Wait for the finish, then read `ufo report`. |
 | `run_not_active` (exit 1) | The run has ended, never finished starting, or only measures (`ufo measure`). |

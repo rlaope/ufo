@@ -60,6 +60,11 @@ export const RunRecordSchema = z.strictObject({
     .string()
     .max(128)
     .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/, "must be a path-safe repository id"),
+  /**
+   * The real top level of the work tree whose start created the run: linked worktrees share the
+   * repository id, and each acts only on its own runs.
+   */
+  repoRoot: z.string().min(1).max(4096).optional(),
   status: RunStatusSchema,
   createdAt: IsoSchema,
   updatedAt: IsoSchema,
@@ -82,7 +87,7 @@ export const RunRecordSchema = z.strictObject({
 export type RunRecord = z.infer<typeof RunRecordSchema>;
 
 export type RunInit = Pick<z.input<typeof RunRecordSchema>, "runId" | "repoId"> &
-  Partial<Pick<z.input<typeof RunRecordSchema>, "shas">>;
+  Partial<Pick<z.input<typeof RunRecordSchema>, "shas" | "repoRoot">>;
 
 /**
  * Creates `$UFO_HOME/private/runs/<repoId>/<runId>/` (mode 0700) with its `run.json` and empty

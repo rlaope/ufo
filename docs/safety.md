@@ -175,8 +175,11 @@ until it is, `ufo setup` refuses to install from the registry and takes a tarbal
   lands between a check and the command after it is not caught, and the reads in between
   (`status`, `rev-parse`) run with the config as it is then. Such an agent could also point
   `.git` at another repository's git directory, which gives your work tree that repository's id
-  and so its runs. UFO acts on a run only from the work tree that started it (`unsafe_state`
-  otherwise). The MCP server, when it binds (at startup, or on the first call that finds a
+  and so its runs. Before it looks up or starts a run, UFO refuses (`unsafe_state`) a work tree
+  whose git directory is another repository's, as the MCP server does below. Linked worktrees
+  share the repository's id and runs: UFO acts on a run only from the work tree that started it
+  (`run_other_work_tree` otherwise), picks a work tree's own latest run when no run is named, and
+  `ufo status` lists the others' marked. The MCP server, when it binds (at startup, or on the first call that finds a
   repository), refuses a work tree whose git directory is not its own `.git` (another
   repository's, a nested repository's included) unless it is a linked worktree or a submodule: its own git directory is `<shared>/worktrees/<name>` or the shared one
   itself, lies outside the work tree (the bound directory is inside it, and the working

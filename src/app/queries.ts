@@ -20,8 +20,15 @@ import {
   waitForJob,
 } from "../core/jobs/index.js";
 import { isWorkerAlive } from "../worker/index.js";
-import { refuseOtherWorkTree, refuseUnstarted } from "./active.js";
-import { type AppContext, homeFor, listRunIds, locateRun, repoOf } from "./context.js";
+import { refuseUnstarted } from "./active.js";
+import {
+  type AppContext,
+  homeFor,
+  listRunIds,
+  locateRun,
+  refuseOtherWorkTree,
+  repoOf,
+} from "./context.js";
 import { AppError } from "./errors.js";
 import { budgetStatus, latestBaseline } from "./events.js";
 import { type DecisionSummary, type RunReport, summarizeDecisions } from "./jobs/index.js";
@@ -121,7 +128,7 @@ export async function getJob(context: AppContext, options: GetJobOptions): Promi
 
 async function pollJob(context: AppContext, options: GetJobOptions): Promise<JobRecord> {
   const located = await locateRun(context, options.runId);
-  refuseOtherWorkTree(located.runId, await readAppState(located.runDir), located.repo);
+  refuseOtherWorkTree(located.runId, (await readAppState(located.runDir)).repoRoot, located.repo);
   const deadline = Date.now() + clampWaitS(options.waitS ?? 0) * 1000;
   let checks = 0;
   try {
@@ -213,7 +220,7 @@ export async function getRun(
     readLedger(runDir),
     listJobs(runDir),
   ]);
-  refuseOtherWorkTree(located.runId, open.state, located.repo);
+  refuseOtherWorkTree(located.runId, open.state.repoRoot, located.repo);
   const budget = budgetStatus(events, open.config.objective.budget, run.createdAt);
   const baseline = latestBaseline(events);
   const refusal = baseline?.refusal;
@@ -267,13 +274,17 @@ export async function getRun(
 
 export interface StatusView {
   repoRoot: string;
-  runs: { runId: string; status: string; createdAt: string }[];
+  /** Every run of the repository; `workTree` names the other work tree that started one. */
+  runs: { runId: string; status: string; createdAt: string; workTree?: string }[];
   /** The run holding the machine lock; `thisRepository` tells whether it is one of these runs. */
   lock?: { runId: string; thisRepository: boolean } | undefined;
   current?: RunView | undefined;
 }
 
-/** `ufo status`: the repository's runs, the machine lock, and the latest (or named) run. */
+/**
+ * `ufo status`: the repository's runs, those of its other work trees marked, the machine lock,
+ * and this work tree's latest (or the named) run.
+ */
 export async function status(
   context: AppContext,
   options: { readonly runId?: string } = {},
@@ -284,19 +295,26 @@ export async function status(
   if (options.runId !== undefined && !ids.includes(options.runId)) {
     throw new AppError("no_run", `no run ${options.runId} in this repository`);
   }
-  const runs = [];
+  const runs: StatusView["runs"] = [];
+  let latest: string | undefined;
   for (const id of ids) {
     const run = await readRun(runDirFor(home, repo.repoId, id));
-    runs.push({ runId: id, status: run.status, createdAt: run.createdAt });
+    const other =
+      run.repoRoot === undefined || run.repoRoot === repo.root ? undefined : run.repoRoot;
+    runs.push({
+      runId: id,
+      status: run.status,
+      createdAt: run.createdAt,
+      ...(other === undefined ? {} : { workTree: other }),
+    });
+    if (other === undefined) latest = id;
   }
   const lock = await readMachineLock({ home });
   // A run that never finished starting has no view; it is still listed in `runs`.
-  const latest = options.runId ?? ids.at(-1);
-  const latestStarted =
-    latest !== undefined &&
-    ids.includes(latest) &&
-    (await readRun(runDirFor(home, repo.repoId, latest))).started;
-  const current = latestStarted ? await getRun(context, options) : undefined;
+  const shown = options.runId ?? latest;
+  const shownStarted =
+    shown !== undefined && (await readRun(runDirFor(home, repo.repoId, shown))).started;
+  const current = shownStarted ? await getRun(context, { runId: shown }) : undefined;
   return toJson({
     ...redactView({
       repoRoot: repo.root,
@@ -327,7 +345,7 @@ export async function report(
     () => undefined,
   );
   if (text !== undefined) {
-    refuseOtherWorkTree(located.runId, await readAppState(located.runDir), located.repo);
+    refuseOtherWorkTree(located.runId, (await readAppState(located.runDir)).repoRoot, located.repo);
     return { ...redactView(JSON.parse(text) as RunReport), finished: true };
   }
   return { ...(await getRun(context, options)), finished: false };

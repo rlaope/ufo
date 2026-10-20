@@ -123,7 +123,8 @@ message does not.
 | `run_starting` (retryable) | The run is still starting. Call again shortly. |
 | `run_finishing` | The finish is queued. Poll its job, then read `get_run`. |
 | `run_not_active` | The run has ended, never finished starting, or only measures. Start a new run. |
-| `run_in_progress` | Another run is active: running, still starting, or a start cut short. Finish or cancel it first; the message names it and how. |
+| `run_in_progress` | Another run is active: running, still starting, or a start cut short. Finish or cancel it first; the message names it and how, and the work tree it was started in when that is another one. |
+| `run_other_work_tree` | Another work tree of the repository (a linked worktree) started the run. Tell the user; only that work tree's session can act on it. Calls without `run_id` use this work tree's own latest run. |
 | `worker_not_running` | The run's worker stopped. Call `resume_run`, then poll again. |
 | `policy:unapproved_config`, `policy:config_changed` | Ask the user to run `ufo approve` in their own terminal; never run it yourself. |
 | `policy:budget_exceeded` | Ask the user to run `ufo extend-budget` in their own terminal (never run it yourself), or finish the run. |
