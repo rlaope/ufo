@@ -9,6 +9,7 @@ import {
   EXIT_OK,
   EXIT_USAGE,
   extendBudget,
+  type Failure,
   init,
   measure,
   report,
@@ -212,11 +213,6 @@ async function execute(
   }
 }
 
-/** What to do next, for refusals whose message leaves it to the caller. */
-const HINTS: Readonly<Record<string, string>> = {
-  "policy:budget_exceeded": "run ufo extend-budget in a terminal to continue",
-};
-
 /** Runs one `ufo` invocation and returns its exit code (docs/cli.md). */
 
 export async function main(argv: readonly string[], io: CliIo): Promise<number> {
@@ -261,16 +257,16 @@ export async function main(argv: readonly string[], io: CliIo): Promise<number> 
     io.stdout(json ? `${JSON.stringify({ ok: true, command: first, result }, null, 2)}\n` : text);
     return EXIT_OK;
   } catch (error) {
-    const failure =
+    const failure: Failure =
       error instanceof UsageError
-        ? { exitCode: EXIT_USAGE, code: "usage", message: error.message }
+        ? { exitCode: EXIT_USAGE, code: "usage", message: error.message, retryable: false }
         : describeFailure(error);
     if (json) {
       io.stdout(
         `${JSON.stringify({ ok: false, command: first, error: { code: failure.code, message: failure.message } }, null, 2)}\n`,
       );
     } else {
-      const hint = HINTS[failure.code];
+      const { hint } = failure;
       io.stderr(`ufo ${first}: ${failure.code}: ${failure.message}${hint ? `; ${hint}` : ""}\n`);
     }
     return failure.exitCode === EXIT_OK ? EXIT_INTERNAL : failure.exitCode;

@@ -50,7 +50,10 @@ stderr.
 { "ok": false, "command": "approve", "error": { "code": "policy:non_tty_approval", "message": "..." } }
 ```
 
-Without `--json`, a failure is one line on stderr: `ufo <command>: <code>: <message>`.
+Without `--json`, a failure is one line on stderr: `ufo <command>: <code>: <message>`, followed by
+`; <hint>` when the message leaves the next step open (`busy`, `run_starting`, `run_finishing`,
+`policy:budget_exceeded`). `busy` and `run_starting` are the failures that trying the same command
+again later can get past.
 
 Paths in command output and in `--json` results name your home directory as `~`, like the
 evidence bundle does; expand it before you open a path from a script.

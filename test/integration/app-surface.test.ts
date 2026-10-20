@@ -11,6 +11,7 @@ import {
   status,
   submitChange,
 } from "../../src/app/index.js";
+import { main } from "../../src/cli/main.js";
 import { CONTROL_LOCK_FILE } from "../../src/core/jobs/index.js";
 import {
   approveToy,
@@ -71,6 +72,21 @@ describe("a run whose control lock another call holds", { timeout: TIMEOUT_MS },
         expect(failure).toMatchObject({ exitCode: 1, code: "busy" });
         expect(Date.now() - started).toBeLessThan(10_000);
       }
+      // M2 A4: the CLI prints the failure's hint after its message.
+      let stderr = "";
+      const { cwd, ...rest } = context;
+      const code = await main(["cancel", "--run", run.runId], {
+        stdout: () => undefined,
+        stderr: (text) => {
+          stderr += text;
+        },
+        cwd,
+        context: rest,
+      });
+      expect(code).toBe(1);
+      expect(stderr).toBe(
+        `ufo cancel: busy: timed out waiting for ${lock}; another UFO call is working on this run; try again in a few seconds\n`,
+      );
     } finally {
       rmSync(lock, { force: true });
     }

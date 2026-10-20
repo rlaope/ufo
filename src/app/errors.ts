@@ -75,14 +75,48 @@ export class AppError extends Error {
   }
 }
 
-/** A failure as `--json` reports it. `code` is `policy:<rule>` for policy refusals. */
+/**
+ * A failure as adapters report it: the CLI prints the code, message, and hint and exits with the
+ * exit code (`--json` carries the code and message); the MCP server returns all of it. `code` is
+ * `policy:<rule>` for policy refusals.
+ */
 export interface Failure {
   exitCode: ExitCode;
   code: string;
   message: string;
+  /** The same call may succeed later with nothing else done first. */
+  retryable: boolean;
+  /** What to do next, when the message leaves it to the caller. */
+  hint?: string;
+}
+
+/** What to do next, for failures whose message leaves it to the caller. */
+const HINTS: Readonly<Record<string, string>> = {
+  busy: "another UFO call is working on this run; try again in a few seconds",
+  run_starting: "try again in a few seconds, once the start has finished",
+  run_finishing: "wait for the finish job, then read the run's report",
+  "policy:budget_exceeded": "run ufo extend-budget in a terminal to continue",
+};
+
+/** Failures the same call may get past by trying again later. */
+const RETRYABLE: ReadonlySet<string> = new Set(["busy", "run_starting"]);
+
+/** What to do next after a failure with `code`, if its message does not say. */
+export function hintFor(code: string): string | undefined {
+  return Object.hasOwn(HINTS, code) ? HINTS[code] : undefined;
 }
 
 export function describeFailure(error: unknown): Failure {
+  const failure = classify(error);
+  const hint = hintFor(failure.code);
+  return {
+    ...failure,
+    retryable: RETRYABLE.has(failure.code),
+    ...(hint === undefined ? {} : { hint }),
+  };
+}
+
+function classify(error: unknown): Omit<Failure, "retryable" | "hint"> {
   if (error instanceof PolicyError) {
     return {
       exitCode: EXIT_REFUSED,

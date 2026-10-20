@@ -183,8 +183,8 @@ export function budgetStatus(
   return {
     limits,
     counter,
-    // The detail is recorded in decisions; how to raise the budget is the caller's to say (the
-    // CLI adds its command, an MCP adapter its own hint).
+    // The detail is recorded in decisions; how to raise the budget is the failure's hint
+    // (`hintFor`), which adapters add.
     violation,
   };
 }

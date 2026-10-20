@@ -139,6 +139,7 @@ describe("a dead worker", { timeout: TIMEOUT_MS }, () => {
         exitCode: 1,
         code: "measurement_failed",
         message: "the worker stopped before the baseline finished; run ufo measure again",
+        retryable: false,
       });
       expect(git(other.repo, "branch", "--list", "ufo/*")).toBe("");
       expect(await readMachineLock({ home: other.home })).toBeUndefined();
