@@ -1,14 +1,12 @@
 // The app layer as its adapters see it: what the CLI (src/cli) and the MCP server (src/mcp) call,
-// with the failure mapping and the result types, and nothing else. Both import only from this
-// module (test/unit/app/api.test.ts checks it). The rest of src/app, such as opening run state
-// or launching workers, stays behind these workflows.
+// with the failure mapping and the result types, and nothing else. The rest of src/app, such as
+// opening run state or launching workers, stays behind these workflows. The human-only steps
+// and the worker entry are in api-cli.ts, which only the CLI imports (test/unit/app/api.test.ts
+// checks both).
 
 export { redact } from "../core/evidence/index.js";
 export type { JobRecord } from "../core/jobs/index.js";
 export { MAX_WAIT_S } from "../core/jobs/index.js";
-export { WORKER_COMMAND } from "../worker/index.js";
-export type { ApproveResult } from "./approve.js";
-export { approve, extendBudget } from "./approve.js";
 export { packageVersion } from "./cards.js";
 export type { QueuedChange, SubmitChangeOptions } from "./changes.js";
 export { profileTarget, submitChange } from "./changes.js";
@@ -23,12 +21,9 @@ export {
   EXIT_USAGE,
   hintFor,
 } from "./errors.js";
-export type { InitResult } from "./init.js";
-export { init } from "./init.js";
 export type { CapabilityReport, TargetInspection, TechniqueListing } from "./inspect.js";
 export { checkCapabilities, inspectTarget, listTechniques } from "./inspect.js";
 export type { BaselineResult, ProfileResult, RunReport } from "./jobs/index.js";
-export { runAppWorker } from "./jobs/index.js";
 export type {
   FinishedReport,
   GetJobOptions,

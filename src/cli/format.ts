@@ -1,7 +1,6 @@
 import os from "node:os";
 import path from "node:path";
 import type {
-  ApproveResult,
   CancelResult,
   MeasureResult,
   ReportResult,
@@ -10,6 +9,7 @@ import type {
   RunView,
   StatusView,
 } from "../app/api.js";
+import type { ApproveResult } from "../app/api-cli.js";
 
 // Human-readable output of each command. `--json` prints the result objects instead.
 

@@ -2,23 +2,19 @@ import { readFileSync } from "node:fs";
 import { type ParseArgsOptionsConfig, parseArgs } from "node:util";
 import {
   type AppContext,
-  approve,
   cancelRun,
   describeFailure,
   EXIT_INTERNAL,
   EXIT_OK,
   EXIT_USAGE,
-  extendBudget,
   type Failure,
-  init,
   measure,
   report,
   resumeRun,
-  runAppWorker,
   runToEnd,
   status,
-  WORKER_COMMAND,
 } from "../app/api.js";
+import { approve, extendBudget, init, runAppWorker, WORKER_COMMAND } from "../app/api-cli.js";
 import { defaultRepository, serveMcp } from "../mcp/index.js";
 import {
   formatApprove,

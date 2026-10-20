@@ -3,21 +3,25 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import * as api from "../../../src/app/api.js";
+import * as apiCli from "../../../src/app/api-cli.js";
 
-// M2 A6: the CLI and the MCP server reach the rest of src only through src/app/api.ts, which
-// exports the workflows, the failure mapping, and the result types, and none of the internals an
-// adapter could use to act on run state around the workflows.
+// M2 A6, B3a: the CLI and the MCP server reach the rest of src only through src/app/api.ts,
+// which exports the workflows, the failure mapping, and the result types, and none of the
+// internals an adapter could use to act on run state around the workflows. The human-only steps
+// and the worker entry are in src/app/api-cli.ts, which only the CLI imports.
 
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const API = "src/app/api.ts";
-const ADAPTERS = ["src/cli", "src/mcp"];
+const API_CLI = "src/app/api-cli.ts";
+
 /**
- * What an adapter may import besides api.ts and its own directory: the CLI starts the MCP server
- * (`ufo mcp`), and `ufo setup`, `uninstall`, and `update` write host config files and run no app
- * workflow. The MCP server imports neither.
+ * What each adapter may import besides Node built-ins and packages. The CLI starts the MCP
+ * server (`ufo mcp`), and `ufo setup`, `uninstall`, and `update` write host config files and run
+ * no app workflow. The MCP server imports neither, nor anything human-only.
  */
-const ALSO_ALLOWED: Readonly<Record<string, readonly string[]>> = {
-  "src/cli": ["src/mcp/", "src/setup/"],
+const ALLOWED: Readonly<Record<string, readonly string[]>> = {
+  "src/cli": [API, API_CLI, "src/cli/", "src/mcp/", "src/setup/"],
+  "src/mcp": [API, "src/mcp/"],
 };
 
 function sourcesUnder(dir: string): string[] {
@@ -29,16 +33,19 @@ function sourcesUnder(dir: string): string[] {
     .sort();
 }
 
-/** Module specifiers a source file imports or re-exports, static or dynamic. */
-function specifiers(file: string): string[] {
-  const text = readFileSync(path.join(ROOT, file), "utf8");
+/** Module specifiers `text` imports or re-exports, static or dynamic, in any quotes. */
+function specifiersIn(text: string): string[] {
   const found: string[] = [];
   for (const match of text.matchAll(
-    /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+|\brequire\s*\(\s*)["']([^"']+)["']/g,
+    /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+|\brequire\s*\(\s*)(["'`])((?:(?!\1).)+)\1/g,
   )) {
-    found.push(match[1] ?? "");
+    found.push(match[2] ?? "");
   }
   return found;
+}
+
+function specifiers(file: string): string[] {
+  return specifiersIn(readFileSync(path.join(ROOT, file), "utf8"));
 }
 
 /** The repository-relative source file a relative specifier of `file` names. */
@@ -47,63 +54,89 @@ function target(file: string, specifier: string): string {
   return resolved.split(path.sep).join("/").replace(/\.js$/, ".ts");
 }
 
-describe("the adapter module", () => {
-  it("is the only way from the CLI and the MCP server into the rest of src", () => {
-    const outside: string[] = [];
-    for (const adapter of ADAPTERS) {
-      for (const file of sourcesUnder(adapter)) {
-        // Bare specifiers are Node built-ins and packages.
-        for (const specifier of specifiers(file).filter((s) => s.startsWith("."))) {
-          const to = target(file, specifier);
-          const allowed = [`${adapter}/`, ...(ALSO_ALLOWED[adapter] ?? [])];
-          if (to !== API && !allowed.some((dir) => to.startsWith(dir))) {
-            outside.push(`${file} -> ${specifier}`);
-          }
-        }
-      }
-    }
-    expect(outside).toEqual([]);
+/** Imports of `file` outside `allowed`; a computed specifier (`${...}`) is never allowed. */
+function outside(file: string, allowed: readonly string[]): string[] {
+  return specifiers(file)
+    .filter((specifier) => specifier.startsWith(".") || specifier.includes("${"))
+    .filter((specifier) => {
+      if (specifier.includes("${")) return true;
+      const to = target(file, specifier);
+      return !allowed.some((entry) => (entry.endsWith("/") ? to.startsWith(entry) : to === entry));
+    })
+    .map((specifier) => `${file} -> ${specifier}`);
+}
+
+describe("the adapter modules", () => {
+  it("are the only way from the CLI and the MCP server into the rest of src", () => {
+    const found = Object.entries(ALLOWED).flatMap(([adapter, allowed]) =>
+      sourcesUnder(adapter).flatMap((file) => outside(file, allowed)),
+    );
+    expect(found).toEqual([]);
     const cli = sourcesUnder("src/cli");
-    expect(cli.length).toBeGreaterThan(0);
     expect(cli.some((file) => specifiers(file).some((s) => target(file, s) === API))).toBe(true);
+    expect(sourcesUnder("src/mcp").length).toBeGreaterThan(0);
   });
 
-  it("exports the workflows adapters call and none of the internals", () => {
-    const names = Object.keys(api);
-    expect(names).toEqual(
-      expect.arrayContaining([
-        "startRun",
-        "submitChange",
-        "getJob",
-        "getRun",
-        "finishRun",
-        "resumeRun",
-        "cancelRun",
-        "status",
-        "report",
-        "describeFailure",
-        "hintFor",
-      ]),
+  it("let only the CLI import the human-only steps and the worker entry", () => {
+    const importers = sourcesUnder("src").filter((file) =>
+      specifiers(file).some((s) => s.startsWith(".") && target(file, s) === API_CLI),
     );
-    for (const internal of [
-      "openRun",
-      "readAppState",
-      "writeAppState",
-      "activeRun",
-      "locateRun",
-      "ensureWorker",
-      "ensureWorkerFor",
-      "checkBudgetOpen",
-      "runRecipes",
-      "createJobHandlers",
-      "handleBaseline",
-      "handleChange",
-      "handleFinish",
-      "approveWithGate",
-      "extendBudgetWithGate",
-      "terminalGate",
-    ]) {
-      expect(names).not.toContain(internal);
-    }
+    expect(importers.length).toBeGreaterThan(0);
+    expect(importers.filter((file) => !file.startsWith("src/cli/"))).toEqual([]);
+  });
+
+  // Code review (step A) #9: a template-literal import is found, an interpolated one refused.
+  it("find template-literal and computed specifiers too", () => {
+    const sample = [
+      'import { a } from "./a.js";',
+      "export * from './b.js';",
+      "const c = await import(`../app/run.js`);",
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: source text of an interpolated import
+      "const d = await import(`../app/${name}.js`);",
+    ].join("\n");
+    expect(specifiersIn(sample)).toEqual([
+      "./a.js",
+      "./b.js",
+      "../app/run.js",
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: the specifier as written
+      "../app/${name}.js",
+    ]);
+  });
+
+  it("export exactly the workflows, failure mapping, and constants adapters use", () => {
+    expect(Object.keys(api).sort()).toEqual([
+      "CONTROL_LOCK_WAIT_MS",
+      "EXIT_INTERNAL",
+      "EXIT_OK",
+      "EXIT_REFUSED",
+      "EXIT_USAGE",
+      "MAX_WAIT_S",
+      "cancelRun",
+      "checkCapabilities",
+      "describeFailure",
+      "finishRun",
+      "getJob",
+      "getRun",
+      "hintFor",
+      "inspectTarget",
+      "listTechniques",
+      "measure",
+      "packageVersion",
+      "profileTarget",
+      "redact",
+      "report",
+      "resumeRun",
+      "runToEnd",
+      "startRun",
+      "status",
+      "submitChange",
+    ]);
+    expect(Object.keys(apiCli).sort()).toEqual([
+      "WORKER_COMMAND",
+      "approve",
+      "extendBudget",
+      "init",
+      "runAppWorker",
+    ]);
   });
 });
