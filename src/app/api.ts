@@ -11,6 +11,7 @@ export { RepoPathSchema } from "../domain/index.js";
 export { packageVersion } from "./cards.js";
 export type { QueuedChange, SubmitChangeOptions } from "./changes.js";
 export { profileTarget, submitChange } from "./changes.js";
+export { DRAFT_CONFIG } from "./config.js";
 export type { AppContext, Repo } from "./context.js";
 export {
   bindRepository,

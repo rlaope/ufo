@@ -1,7 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { AppError } from "../../../src/app/index.js";
+import { AppError, DRAFT_CONFIG } from "../../../src/app/index.js";
 import { LockTimeoutError } from "../../../src/core/jobs/index.js";
 import { PolicyError, violation } from "../../../src/core/policy/index.js";
 import {
@@ -44,6 +44,20 @@ describe("a tool result", () => {
     };
     const result = body(success({ repoRoot: path.join(HOME, "repo"), arms }));
     expect(result).toEqual({ repoRoot: "~/repo", arms });
+  });
+
+  // Code review R7 nit: UFO's draft ufo.yaml goes whole, even past a secret that matches a word
+  // in it; any other draftConfig is redacted like every field.
+  it("keeps the draft ufo.yaml whole, and only that text", () => {
+    process.env.UFO_PROBE_TOKEN = "lower_is_better";
+    try {
+      expect(body(success({ draftConfig: DRAFT_CONFIG }))).toEqual({ draftConfig: DRAFT_CONFIG });
+      expect(body(success({ draftConfig: `${DRAFT_CONFIG}# ${HOME}/x\n` }))).toEqual({
+        draftConfig: `${DRAFT_CONFIG.replace("lower_is_better", "<redacted:secret>")}# ~/x\n`,
+      });
+    } finally {
+      delete process.env.UFO_PROBE_TOKEN;
+    }
   });
 
   // M2 B2: a failure the model can act on, not a protocol error.

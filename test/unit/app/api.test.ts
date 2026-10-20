@@ -112,6 +112,7 @@ describe("the adapter modules", () => {
   it("export exactly the workflows, failure mapping, and constants adapters use", () => {
     expect(Object.keys(api).sort()).toEqual([
       "CONTROL_LOCK_WAIT_MS",
+      "DRAFT_CONFIG",
       "EXIT_INTERNAL",
       "EXIT_OK",
       "EXIT_REFUSED",
