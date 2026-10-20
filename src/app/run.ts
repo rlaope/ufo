@@ -112,7 +112,7 @@ async function refuseActiveRuns(
   for (const id of await listRunIds(home, repo)) {
     const run = await readRun(runDirFor(home, repo.repoId, id));
     if (run.status !== "running") continue;
-    const cleanup = warnings.length > 0 ? ` (${warnings.join("; ")})` : "";
+    const cleanup = cleanupNote(warnings);
     if (!run.started && !(await abandonedStart(run))) {
       throw new AppError(
         "run_in_progress",
@@ -176,12 +176,14 @@ async function endAbandonedStart(
  */
 async function cleanUpRuns(home: string, repo: Repo, waitMs: number): Promise<string[]> {
   const warnings: string[] = [];
+  // One wait for all of them, so a start never waits longer than one call may.
+  const deadline = Date.now() + waitMs;
   for (const id of await listRunIds(home, repo)) {
     try {
       const runDir = runDirFor(home, repo.repoId, id);
       const run = await readRun(runDir);
       if (await abandonedStart(run)) {
-        await endAbandonedStart(home, repo, id, waitMs);
+        await endAbandonedStart(home, repo, id, Math.max(0, deadline - Date.now()));
         continue;
       }
       if (run.status === "running") continue;
@@ -238,82 +240,95 @@ async function startRunFor(
   // The run's state exists before it takes the machine lock, so another start that finds the
   // lock never mistakes this run for one whose state is gone.
   const { runDir } = await createRunState(home, { runId, repoId: repo.repoId });
-  const lock = await acquireMachineLock({ home, runId, repoId: repo.repoId });
-  if (!lock.acquired) {
-    await rm(runDir, { recursive: true, force: true });
-    throw runInProgress(lock.holder);
-  }
-  let created: CreatedRun | undefined;
-  try {
-    created = await createRunArms(repo.root, runId, { home });
-    const { run } = created;
-    await updateRun(runDir, (record) => ({
-      ...record,
-      shas: { baseline: run.baseSha, a: run.baseSha, b: run.baseSha },
-    }));
-    const launcherEnv = context.workerEnv ?? process.env;
-    const state: AppState = {
-      version: 2,
-      purpose,
-      runId,
-      repoId: repo.repoId,
-      repoRoot: repo.root,
-      baseSha: run.baseSha,
-      ...(run.identity === undefined ? {} : { identity: run.identity }),
-      cards: [...cards.values()].map(({ source, card }) => ({ source, card })),
-      configText: loaded.text,
-      configHash: loaded.hash,
-      env: captureEnv(launcherEnv, loaded.config.env, [
-        repo.root,
-        repo.gitDir,
-        repo.commonDir,
+  // Held from here until the worker runs, so no cancel or other call acts on the run while it
+  // starts. Nothing else takes the lock of a run whose start is in progress.
+  return withControlLock(runDir, controlLockWaitMs(context), async () => {
+    const lock = await acquireMachineLock({ home, runId, repoId: repo.repoId });
+    if (!lock.acquired) {
+      await endRun(runDir, "failed");
+      await rm(runDir, { recursive: true, force: true });
+      const refusal = runInProgress(lock.holder);
+      throw new AppError(refusal.code, `${refusal.message}${cleanupNote(cleanupWarnings)}`);
+    }
+    let created: CreatedRun | undefined;
+    try {
+      created = await createRunArms(repo.root, runId, { home });
+      const { run } = created;
+      await updateRun(runDir, (record) => ({
+        ...record,
+        shas: { baseline: run.baseSha, a: run.baseSha, b: run.baseSha },
+      }));
+      const launcherEnv = context.workerEnv ?? process.env;
+      const state: AppState = {
+        version: 2,
+        purpose,
+        runId,
+        repoId: repo.repoId,
+        repoRoot: repo.root,
+        baseSha: run.baseSha,
+        ...(run.identity === undefined ? {} : { identity: run.identity }),
+        cards: [...cards.values()].map(({ source, card }) => ({ source, card })),
+        configText: loaded.text,
+        configHash: loaded.hash,
+        env: captureEnv(launcherEnv, loaded.config.env, [
+          repo.root,
+          repo.gitDir,
+          repo.commonDir,
+          home,
+        ]),
+        gitEnv: captureGitEnv(launcherEnv),
+        targetAddrs,
+        hostAgent,
+        ...(modelId === undefined ? {} : { modelId }),
+        bundleId: BundleIdSchema.parse(`ufo-${runId}`),
+      };
+      await writeAppState(runDir, state);
+      await appendLedger(runDir, {
+        type: "run_started",
+        data: { configHash: loaded.hash, baseSha: run.baseSha, purpose },
+      });
+      const job = await enqueueJob(runDir, { kind: JOB_KINDS.baseline, input: {} });
+      // Started once there is something to resume: a crash before this is a start cut short.
+      await updateRun(runDir, (record) => ({ ...record, started: true }));
+      await ensureWorker(context, runDir, home, state);
+      const warnings = [
+        ...cleanupWarnings,
+        ...(created.userTreeDirty
+          ? ["the working tree has uncommitted changes; they are not part of the run"]
+          : []),
+      ];
+      return {
+        runId,
+        runDir,
         home,
-      ]),
-      gitEnv: captureGitEnv(launcherEnv),
-      targetAddrs,
-      hostAgent,
-      ...(modelId === undefined ? {} : { modelId }),
-      bundleId: BundleIdSchema.parse(`ufo-${runId}`),
-    };
-    await writeAppState(runDir, state);
-    await appendLedger(runDir, {
-      type: "run_started",
-      data: { configHash: loaded.hash, baseSha: run.baseSha, purpose },
-    });
-    const job = await enqueueJob(runDir, { kind: JOB_KINDS.baseline, input: {} });
-    // Started once there is something to resume: a crash before this is a start cut short.
-    await updateRun(runDir, (record) => ({ ...record, started: true }));
-    await withControlLock(runDir, controlLockWaitMs(context), () =>
-      ensureWorker(context, runDir, home, state),
-    );
-    const warnings = [
-      ...cleanupWarnings,
-      ...(created.userTreeDirty
-        ? ["the working tree has uncommitted changes; they are not part of the run"]
-        : []),
-    ];
-    return {
-      runId,
-      runDir,
-      home,
-      branch: run.branch,
-      baseSha: run.baseSha,
-      arms: { a: run.armA, b: run.armB },
-      baselineJobId: job.jobId,
-      userTreeDirty: created.userTreeDirty,
-      warnings,
-    };
-  } catch (error) {
-    await killRunProcesses(runDir, killOptions(context)).catch(() => undefined);
-    // The arms and the branch first: without the run state, nothing would find them again.
-    const left = created === undefined ? undefined : await removeCreated(created.run, repo.root);
-    await rm(runDir, { recursive: true, force: true });
-    await releaseMachineLock({ runId, home });
-    // So the error names the branch that nothing else will: its class and code still say why
-    // the start failed.
-    if (left !== undefined && error instanceof Error) error.message = `${error.message}; ${left}`;
-    throw error;
-  }
+        branch: run.branch,
+        baseSha: run.baseSha,
+        arms: { a: run.armA, b: run.armB },
+        baselineJobId: job.jobId,
+        userTreeDirty: created.userTreeDirty,
+        warnings,
+      };
+    } catch (error) {
+      // Failed first: a cleanup cut short then leaves an ended run, never one that looks like a
+      // start in progress for as long as its starter lives (an MCP server). A run another call
+      // ended is that call's to clean up. Run state that cannot be updated is still removed.
+      if (!(await endRun(runDir, "failed").catch(() => true))) throw error;
+      await killRunProcesses(runDir, killOptions(context)).catch(() => undefined);
+      // The arms and the branch first: without the run state, nothing would find them again.
+      const left = created === undefined ? undefined : await removeCreated(created.run, repo.root);
+      await rm(runDir, { recursive: true, force: true });
+      await releaseMachineLock({ runId, home });
+      // So the error names the branch that nothing else will: its class and code still say why
+      // the start failed.
+      if (left !== undefined && error instanceof Error) error.message = `${error.message}; ${left}`;
+      throw error;
+    }
+  });
+}
+
+/** The cleanup's warnings, as a refusal of the start carries them. */
+function cleanupNote(warnings: readonly string[]): string {
+  return warnings.length > 0 ? ` (${warnings.join("; ")})` : "";
 }
 
 /**

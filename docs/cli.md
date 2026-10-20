@@ -375,8 +375,9 @@ actually connects, so a workload should use `UFO_TARGET_ADDR` rather than resolv
 A run (`ufo run`, or `start_run` over MCP) creates the branch `ufo/run-<run-id>` at your `HEAD`
 and two arms outside the repository: A is the run branch's `HEAD`, B is A plus the candidate
 change. Your branch, working tree, index, `.gitignore`, and `.git/info/exclude` are never touched;
-uncommitted changes are not part of the run (a warning says so). A start that fails after it
-created the branch and the arms removes them again; when the branch cannot be removed, the error
+uncommitted changes are not part of the run (a warning says so). A start holds the new run's
+control lock until its worker runs, so no cancel acts on a run half started. A start that fails
+records its run as failed, then removes the branch and the arms it created and its run state; when the branch cannot be removed, the error
 names it and the `git branch -D ufo/run-<run-id>` that deletes it, since no run state is left to
 find it by.
 

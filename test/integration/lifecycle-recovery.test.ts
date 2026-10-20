@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { chmodSync, existsSync, mkdirSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -16,6 +16,7 @@ import {
 import { runLayout } from "../../src/core/git/index.js";
 import {
   acquireMachineLock,
+  CONTROL_LOCK_FILE,
   createRunState,
   listJobs,
   readLedger,
@@ -251,6 +252,59 @@ describe("a start cut short", { timeout: TIMEOUT_MS }, () => {
     }
     await cancelRun(toy.context, { runId: left.runId });
     expect((await readRun(left.runDir)).status).toBe("failed");
+  });
+
+  // Code review (step A) #5: the cleanup's waits for the control locks of starts cut short share
+  // one wait, so a start (an MCP call) stays within its budget however many there are.
+  it("waits for all their control locks together no longer than one wait", async () => {
+    const lefts = [];
+    for (let i = 0; i < 3; i++) {
+      const left = await cutShortStart(await deadStarter());
+      // Another call holds its control lock: a live process, this one.
+      writeFileSync(path.join(left.runDir, CONTROL_LOCK_FILE), String(process.pid));
+      lefts.push(left);
+      await releaseMachineLock({ home: toy.home, runId: left.runId });
+    }
+    const started = Date.now();
+    await expect(startRun({ ...toy.context, controlLockWaitMs: 4000 })).rejects.toMatchObject({
+      code: "run_in_progress",
+      message: expect.stringContaining("could not clean up run"),
+    });
+    expect(Date.now() - started).toBeLessThan(9000);
+    for (const left of lefts) expect((await readRun(left.runDir)).status).toBe("running");
+  });
+});
+
+// Code review (step A) #8: a start refused by the machine lock says what its cleanup could not do.
+describe("a start refused by the machine lock", { timeout: TIMEOUT_MS }, () => {
+  it("carries the cleanup's warnings", async () => {
+    // An ended run whose arms cannot be removed, so the cleanup warns.
+    const ended = await startRun(toy.context);
+    expect((await waitDone(toy, ended.runId, ended.baselineJobId)).status).toBe("succeeded");
+    await killRunProcesses(toy.runDir(ended.runId), { exec: dockerAbsent, graceMs: 500 });
+    await updateRun(toy.runDir(ended.runId), (record) => ({ ...record, status: "cancelled" }));
+    await releaseMachineLock({ home: toy.home, runId: ended.runId });
+    // A run of another repository holds the machine lock: running, its starter alive.
+    const other = newRunId();
+    await createRunState(toy.home, { runId: other, repoId: "otherrepo" });
+    expect(
+      (await acquireMachineLock({ home: toy.home, runId: other, repoId: "otherrepo" })).acquired,
+    ).toBe(true);
+    const parent = path.dirname(path.dirname(ended.arms.a));
+    chmodSync(parent, 0o500);
+    try {
+      await expect(startRun(toy.context)).rejects.toMatchObject({
+        code: "run_in_progress",
+        message: expect.stringMatching(
+          new RegExp(
+            `^UFO run ${other} is still active and holds the machine lock; .+ \\(could not clean up run ${ended.runId}: .+\\)$`,
+          ),
+        ),
+      });
+    } finally {
+      chmodSync(parent, 0o700);
+      await releaseMachineLock({ home: toy.home, runId: other });
+    }
   });
 });
 
