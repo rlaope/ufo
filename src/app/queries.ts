@@ -83,6 +83,14 @@ function redactView<T>(view: T): T {
 }
 
 /**
+ * `value` redacted except its arm paths, which stay absolute: the agent reads arm A to write its
+ * diffs (safety.md R4).
+ */
+export function redactExceptArms<T extends { arms: { a: string; b: string } }>(value: T): T {
+  return { ...redact(value), arms: value.arms };
+}
+
+/**
  * `get_job`: the job once it is terminal, or its current state after `waitS` (≤ 25 s). Ends
  * early with `worker_not_running` when the job is unfinished and no worker is left to run it.
  */
@@ -192,7 +200,7 @@ export async function getRun(
   const baseline = latestBaseline(events);
   const refusal = baseline?.refusal;
   const report = (await readJsonIfExists(path.join(runDir, REPORT_FILE))) as RunReport | undefined;
-  return redactView(
+  return redactExceptArms(
     toJson({
       runId: located.runId,
       status: run.status,
@@ -271,17 +279,18 @@ export async function status(
     ids.includes(latest) &&
     (await readRun(runDirFor(home, repo.repoId, latest))).started;
   const current = latestStarted ? await getRun(context, options) : undefined;
-  return redactView(
-    toJson({
+  return toJson({
+    ...redactView({
       repoRoot: repo.root,
       runs,
       lock:
         lock === undefined
           ? undefined
           : { runId: lock.runId, thisRepository: lock.repoId === repo.repoId },
-      current,
     }),
-  );
+    // Redacted by getRun, except its arm paths.
+    current,
+  });
 }
 
 /** A finished run's report. */

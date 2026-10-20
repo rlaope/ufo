@@ -56,7 +56,9 @@ Without `--json`, a failure is one line on stderr: `ufo <command>: <code>: <mess
 again later can get past.
 
 Paths in command output and in `--json` results name your home directory as `~`, like the
-evidence bundle does; expand it before you open a path from a script.
+evidence bundle does; expand it before you open a path from a script. The arm paths (`arms.a`,
+`arms.b` in a run's view and in start and resume results) are the exception: they are absolute
+local paths, so an agent can read arm A. The text output shows them with `~` too.
 
 ### Exit codes
 

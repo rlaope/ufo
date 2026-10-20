@@ -66,7 +66,7 @@ import { AppError } from "./errors.js";
 import { committedChangeIds, decisionFor, EVENTS } from "./events.js";
 import { type BaselineResult, JOB_KINDS } from "./jobs/index.js";
 import { ensureWorker, runInProgress } from "./launch.js";
-import { type FinishedReport, report, waitForJobDone } from "./queries.js";
+import { type FinishedReport, redactExceptArms, report, waitForJobDone } from "./queries.js";
 import { type AppState, jsonData, openRun, toJson, writeAppState } from "./state.js";
 
 export interface StartRunOptions {
@@ -327,8 +327,8 @@ export async function startRun(
 ): Promise<StartRunResult> {
   const { runDir: _runDir, home: _home, ...result } = await startRunFor(context, options, "run");
   // Like every view (security F13): paths name your home as `~`, so the result is the same
-  // whether a person or an agent's model provider reads it.
-  return redact(result);
+  // whether a person or an agent's model provider reads it. The arm paths stay absolute.
+  return redactExceptArms(result);
 }
 
 /**
@@ -420,6 +420,8 @@ export interface ResumeResult {
   /** Change ids committed on the run branch whose ledger event was missing, now recorded. */
   reconciled: string[];
   armSha: string;
+  /** Absolute, like a start's: the agent goes on reading arm A. */
+  arms: { a: string; b: string };
   workerPid?: number | undefined;
   processes: ReturnType<typeof killSummary>;
 }
@@ -494,15 +496,18 @@ async function resumeLocked(context: AppContext, active: ActiveRun): Promise<Res
   const worker = queued
     ? await ensureWorker(context, runDir, active.home, active.open.state)
     : undefined;
-  return toJson({
-    runId: active.runId,
-    requeued: settled.requeued,
-    failed: settled.failed,
-    reconciled: reconciliation.committedUnrecorded,
-    armSha,
-    workerPid: worker?.pid,
-    processes: killSummary(kill),
-  });
+  return redactExceptArms(
+    toJson({
+      runId: active.runId,
+      requeued: settled.requeued,
+      failed: settled.failed,
+      reconciled: reconciliation.committedUnrecorded,
+      armSha,
+      arms: { a: git.armA, b: git.armB },
+      workerPid: worker?.pid,
+      processes: killSummary(kill),
+    }),
+  );
 }
 
 export interface CancelResult {

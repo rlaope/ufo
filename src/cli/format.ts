@@ -1,3 +1,5 @@
+import os from "node:os";
+import path from "node:path";
 import type {
   ApproveResult,
   CancelResult,
@@ -12,6 +14,14 @@ import type {
 // Human-readable output of each command. `--json` prints the result objects instead.
 
 const short = (sha: string | undefined) => (sha === undefined ? "-" : sha.slice(0, 7));
+
+/** An absolute local path with your home directory as `~`, as the rest of the output names it. */
+function tilde(file: string): string {
+  const home = os.homedir();
+  return file === home || file.startsWith(`${home}${path.sep}`)
+    ? `~${file.slice(home.length)}`
+    : file;
+}
 const percent = (ratio: number) => `${(ratio * 100).toFixed(1)}%`;
 
 export function formatApprove(result: ApproveResult): string {
@@ -52,8 +62,8 @@ function formatView(view: RunView): string[] {
   const lines = [
     `Run ${view.runId} (${view.purpose}): ${view.status}, branch ${view.branch}`,
     `  baseline ${short(view.shas.baseline)}, arm A at ${short(view.shas.a)}`,
-    `  arm A: ${view.arms.a}`,
-    `  arm B: ${view.arms.b}`,
+    `  arm A: ${tilde(view.arms.a)}`,
+    `  arm B: ${tilde(view.arms.b)}`,
     `  worker: ${view.worker.alive ? `running (pid ${view.worker.pid})` : "not running"}`,
     `  budget: ${view.budget.techniquesTried} of ${view.budget.maxTechniques} techniques, ${view.budget.elapsedMinutes} of ${view.budget.wallClockMinutes} min${view.budget.exhausted ? " (exhausted: run ufo extend-budget)" : ""}`,
   ];

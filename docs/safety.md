@@ -78,7 +78,7 @@ both arms, guardrails, and oracles.
 
 **Redacted views.** Evidence bundles, `report.json`, and every view UFO returns (`get_job`,
 `get_run`, `status`, `report`) go through the same redactor; the raw values stay in the run's
-ledger and logs under `$UFO_HOME/private`.
+ledger and logs under `$UFO_HOME/private`. The arm paths are not redacted (R4).
 
 **Load targets are checked, not enforced.** UFO resolves each `targets:` entry when the run starts
 and refuses public, link-local, and CGNAT addresses; it passes the checked addresses to the
@@ -122,7 +122,11 @@ collaborators.
   `ufo` from a global install, with a `PATH` that names no directory inside the project.
 - **R4. Redaction is a list of patterns.** The redactor removes known secret formats, your
   home path, user name, and host name from bundles and views. A secret in an unknown format can pass through. The
-  ledger and logs under `$UFO_HOME/private` are not redacted.
+  ledger and logs under `$UFO_HOME/private` are not redacted. The arm paths in run views and in
+  start and resume results, the MCP server's included, are absolute local paths and are not
+  redacted, because the agent reads arm A to write its diffs. With `UFO_HOME` under your home
+  directory they name it and your user name, and an agent passes them to its model provider. Every
+  other field of those results is redacted.
 - **R5. Evidence can be forged by someone with a shell.** A bundle shows what UFO recorded, but a
   process with capability C could have written it. `ufo reproduce` re-measures on your machine and
   is the real check.

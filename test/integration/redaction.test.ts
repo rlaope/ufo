@@ -10,6 +10,7 @@ import {
   REPORT_FILE,
   type RunReport,
   report,
+  resumeRun,
   startRun,
   status,
   submitChange,
@@ -147,20 +148,34 @@ describe("redaction of command output", { timeout: TIMEOUT_MS }, () => {
     }
   });
 
-  // Code review (round 2) #10: the start result names the home as `~`, like every view.
-  it("names the home as ~ in the start result", async () => {
+  // Code review (round 2) #10 and M2 A8: the start and resume results and the views name the
+  // home as `~`, except the arm paths: they stay absolute, for the agent that reads arm A
+  // (safety.md R4).
+  it("returns the arm paths absolute and names the home as ~ everywhere else", async () => {
+    await approveToy(toy);
     const homedir = vi.spyOn(os, "homedir").mockReturnValue(toy.root);
-    let run: Awaited<ReturnType<typeof startRun>>;
+    let runId: string | undefined;
     try {
-      run = await startRun(toy.context);
+      const run = await startRun(toy.context);
+      runId = run.runId;
+      const arms = {
+        a: path.join(toy.home, "arms", toy.repoId, run.runId, "a"),
+        b: path.join(toy.home, "arms", toy.repoId, run.runId, "b"),
+      };
+      expect(arms.a.startsWith(toy.root)).toBe(true);
+      expect(run.arms).toEqual(arms);
+      expect(JSON.stringify({ ...run, arms: undefined })).not.toContain(toy.root);
+      expect((await getRun(toy.context, { runId })).arms).toEqual(arms);
+      const view = await status(toy.context, { runId });
+      expect(view.current?.arms).toEqual(arms);
+      expect(view.repoRoot).toBe("~/repo");
+      expect(
+        JSON.stringify({ ...view, current: { ...view.current, arms: undefined } }),
+      ).not.toContain(toy.root);
+      expect((await resumeRun(toy.context, { runId })).arms).toEqual(arms);
     } finally {
       homedir.mockRestore();
-    }
-    try {
-      expect(run.arms.a).toBe(`~/ufo-home/arms/${toy.repoId}/${run.runId}/a`);
-      expect(JSON.stringify(run)).not.toContain(toy.root);
-    } finally {
-      await cancelRun(toy.context, { runId: run.runId });
+      if (runId !== undefined) await cancelRun(toy.context, { runId });
     }
   });
 });

@@ -1,3 +1,5 @@
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { FinishedReport, MeasureResult, RunView } from "../../../src/app/index.js";
 import { formatMeasure, formatReport, formatStatus } from "../../../src/cli/format.js";
@@ -82,5 +84,15 @@ describe("formatStatus", () => {
       `  not usable: ${reason}`,
     );
     expect(statusLines(runView()).some((line) => line.includes("not usable"))).toBe(false);
+  });
+});
+
+describe("the arm paths in the text output", () => {
+  // M2 A8: views carry them absolute; the text output names the home as `~`, like everything else.
+  it("name the home as ~", () => {
+    const a = path.join(os.homedir(), ".ufo", "arms", "repo", "run-1", "a");
+    const lines = statusLines(runView({ arms: { a, b: "/state/arms/repo/run-1/b" } }));
+    expect(lines).toContain("  arm A: ~/.ufo/arms/repo/run-1/a");
+    expect(lines).toContain("  arm B: /state/arms/repo/run-1/b");
   });
 });
