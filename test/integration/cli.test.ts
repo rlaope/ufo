@@ -15,6 +15,7 @@ import {
 } from "../../src/core/jobs/index.js";
 import {
   approveToy,
+  BUILT_CLI,
   git,
   lightWorkload,
   makeToy,
@@ -26,16 +27,15 @@ import {
 } from "./helpers.js";
 
 // The CLI end to end. `ufo measure` and `ufo run` go through main() with the toy's context (its
-// UFO home, card directory, and the test worker on a pinned machine); the built
-// `dist/cli/index.js` refuses a piped approval and an unapproved run.
+// UFO home, card directory, and the test worker on a pinned machine); the built CLI (the package
+// test/global-setup.ts builds) refuses a piped approval and an unapproved run.
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
-const BUILT_CLI = path.join(ROOT, "dist", "cli", "index.js");
 const pkg = JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8"));
 
 let toy: Toy;
 
-// dist/ is built by test/global-setup.ts, so the test runs what the package ships.
+// The package is built by test/global-setup.ts, so the test runs what it ships.
 beforeAll(() => {
   toy = makeToy();
 }, TIMEOUT_MS);
@@ -70,6 +70,8 @@ async function ufo(args: string[], target: Toy = toy, signals?: EventEmitter) {
     },
     cwd,
     context,
+    // A copy: main() filters the PATH of the environment it is given.
+    env: { ...process.env },
     ...(signals === undefined ? {} : { signals }),
   });
   return { code, stdout, stderr };
@@ -81,6 +83,12 @@ function noRunLeftover(target: Toy) {
 }
 
 describe("ufo CLI", { timeout: TIMEOUT_MS }, () => {
+  // Code review CR-N10: the tests never rebuild the working tree's dist/ under a running test.
+  it("built: runs the package built outside the working tree", () => {
+    expect(path.isAbsolute(BUILT_CLI)).toBe(true);
+    expect(path.relative(ROOT, BUILT_CLI).startsWith("..")).toBe(true);
+  });
+
   it("built: refuses an approval from piped stdin (AC 18) and an unapproved run", async () => {
     const fresh = makeToy();
     try {

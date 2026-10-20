@@ -28,8 +28,13 @@ export const FIXTURE_REPO = fileURLToPath(new URL("../fixtures/toy-http/repo", i
 export const FIXTURE_CARDS = fileURLToPath(new URL("../fixtures/toy-http/cards", import.meta.url));
 export const WORKER_ENTRY = fileURLToPath(new URL("./support/worker-entry.mjs", import.meta.url));
 export const CLI_ENTRY = fileURLToPath(new URL("./support/cli-entry.mjs", import.meta.url));
-/** The built CLI, as the package ships it; test/global-setup.ts builds it once per test run. */
-export const BUILT_CLI = fileURLToPath(new URL("../../dist/cli/index.js", import.meta.url));
+/**
+ * The built CLI, as the package ships it: test/global-setup.ts builds the package into a
+ * temporary directory once per test run, never into the working tree's dist/.
+ */
+export const BUILT_CLI =
+  process.env.UFO_TEST_BUILT_CLI ??
+  "(no built CLI: run the tests with vitest, whose global setup builds it)";
 
 /** Integration tests spawn real workers and run real workloads. */
 export const TIMEOUT_MS = 90_000;

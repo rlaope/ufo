@@ -37,6 +37,11 @@ export interface CliIo {
   context?: Omit<AppContext, "cwd">;
   /** Where SIGINT and SIGTERM arrive; `process` unless a test passes its own. */
   signals?: Pick<NodeJS.EventEmitter, "once" | "off">;
+  /**
+   * The environment whose PATH UFO filters before it runs anything, and where `ufo mcp` reads
+   * CLAUDE_PROJECT_DIR; `process.env` unless a test passes its own.
+   */
+  env?: NodeJS.ProcessEnv;
 }
 
 /**
@@ -236,7 +241,7 @@ async function mcp(values: Values, io: CliIo): Promise<number> {
   const bound = bindDirectory({
     host: values.host,
     repo: typeof values.repo === "string" ? values.repo : undefined,
-    env: process.env,
+    env: io.env ?? process.env,
     cwd: io.cwd ?? process.cwd(),
   });
   if ("error" in bound) return fail({ exitCode: EXIT_USAGE, code: "usage", message: bound.error });
@@ -295,7 +300,7 @@ export async function main(argv: readonly string[], io: CliIo): Promise<number> 
   const context: AppContext = { ...io.context, cwd: io.cwd ?? process.cwd() };
   try {
     // Before UFO runs anything: git, ps, and docker are found only outside the project.
-    await trustProcessPath({ cwd: context.cwd, home: context.home });
+    await trustProcessPath({ cwd: context.cwd, home: context.home, env: io.env ?? process.env });
     const { result, text } = await execute(first, values, context, io, json);
     io.stdout(json ? `${JSON.stringify({ ok: true, command: first, result }, null, 2)}\n` : text);
     return EXIT_OK;

@@ -7,10 +7,11 @@ import { EXIT_OK, EXIT_USAGE, main } from "../../../src/cli/main.js";
 
 const pkg = JSON.parse(readFileSync(new URL("../../../package.json", import.meta.url), "utf8"));
 
-async function run(argv: string[], cwd?: string) {
+async function run(argv: string[], cwd?: string, env: NodeJS.ProcessEnv = { ...process.env }) {
   let stdout = "";
   let stderr = "";
   const code = await main(argv, {
+    env,
     stdout: (text) => {
       stdout += text;
     },
@@ -57,6 +58,24 @@ describe("ufo CLI", () => {
       expect(result.stdout).toBe("");
     },
   );
+
+  // Code review CR-N11: main() filters the PATH of the environment it is given, never the test
+  // process's own.
+  it("filters the PATH of the environment it is given, not the process's", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "ufo-cli-"));
+    const before = process.env.PATH;
+    try {
+      const env = {
+        ...process.env,
+        PATH: ["/p/node_modules/.bin", "/usr/bin"].join(path.delimiter),
+      };
+      await run(["status", "--json"], dir, env);
+      expect(env.PATH).toBe("/usr/bin");
+      expect(process.env.PATH).toBe(before);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 
   it("reports a directory outside any repository as a usage error, in JSON with --json", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "ufo-cli-"));

@@ -88,6 +88,7 @@ describe("a run whose control lock another call holds", { timeout: TIMEOUT_MS },
           },
           cwd,
           context: rest,
+          env: { ...process.env },
         });
       } finally {
         homedir.mockRestore();
