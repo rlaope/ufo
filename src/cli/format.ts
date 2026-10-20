@@ -7,7 +7,7 @@ import type {
   RunReport,
   RunView,
   StatusView,
-} from "../app/index.js";
+} from "../app/api.js";
 
 // Human-readable output of each command. `--json` prints the result objects instead.
 

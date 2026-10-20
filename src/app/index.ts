@@ -1,6 +1,5 @@
-// The application layer: every workflow the CLI runs, and that the MCP server (M2) exposes as
-// thin adapters over the same functions. The human gate's test seam (human-gate.ts) is not
-// exported here.
+// The application layer's internals in one place, for tests. Adapters (the CLI, the MCP
+// server) import api.ts instead. The human gate's test seam (human-gate.ts) is not exported here.
 
 export * from "./active.js";
 export * from "./approve.js";

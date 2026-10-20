@@ -17,8 +17,8 @@ import {
   runAppWorker,
   runToEnd,
   status,
-} from "../app/index.js";
-import { WORKER_COMMAND } from "../worker/index.js";
+  WORKER_COMMAND,
+} from "../app/api.js";
 import {
   formatApprove,
   formatCancel,
