@@ -1,3 +1,5 @@
+import { writeFileSync } from "node:fs";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { measure } from "../../src/app/index.js";
 import { readRun } from "../../src/core/jobs/index.js";
@@ -42,5 +44,17 @@ describe("ufo measure", { timeout: TIMEOUT_MS }, () => {
     const { runId } = await measure(current.context);
     expect(probe.seen).toEqual(["finished"]);
     expect((await readRun(current.runDir(runId))).status).toBe("finished");
+  });
+
+  // M2 A9: what the start warned about reaches the caller of measure too.
+  it("returns the start's warnings", async () => {
+    const current = makeToy({ config: lightWorkload() });
+    toy = current;
+    await approveToy(current);
+    writeFileSync(path.join(current.repo, "server.mjs"), "// work in progress\n", { flag: "a" });
+    const result = await measure(current.context);
+    expect(result.warnings).toEqual([
+      "the working tree has uncommitted changes; they are not part of the run",
+    ]);
   });
 });

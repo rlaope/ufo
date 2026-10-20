@@ -2,11 +2,17 @@ import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { type ActiveRun, refuseIfFinishing } from "../../../src/app/active.js";
+import { type ActiveRun, refuseIfFinishing, refuseUnstarted } from "../../../src/app/active.js";
 import type { AppContext } from "../../../src/app/index.js";
 import { ensureWorker } from "../../../src/app/launch.js";
 import { type AppState, readAppState } from "../../../src/app/state.js";
-import { createRunState, endRun, readMachineLock, readRun } from "../../../src/core/jobs/index.js";
+import {
+  createRunState,
+  endRun,
+  enqueueJob,
+  readMachineLock,
+  readRun,
+} from "../../../src/core/jobs/index.js";
 
 // Code review (round 2) #6: work that waited for the control lock while a cancel or finish held
 // it is refused once the run ended, and no worker is launched for a run that is not running.
@@ -59,5 +65,37 @@ describe("a run without app state", () => {
       code: "run_not_active",
       message: "run run-1 never finished starting (it has no app.json)",
     });
+  });
+});
+
+// M2 A3: refusals an adapter acts on differently get codes of their own.
+describe("a run that takes no work right now", () => {
+  it("is run_finishing once its finish job is queued", async () => {
+    const { runDir } = await createRunState(home, { runId: "run-1", repoId: "repo" });
+    await enqueueJob(runDir, { kind: "finish", input: {} });
+    const active = { runId: "run-1", runDir, home } as ActiveRun;
+    await expect(refuseIfFinishing(active)).rejects.toMatchObject({
+      code: "run_finishing",
+      message: "run run-1 is finishing; it takes no more work",
+    });
+  });
+
+  it("is run_starting while its start runs, and run_not_active once that ended or was cut short", async () => {
+    // Started by this process, which is still alive.
+    const { run } = await createRunState(home, { runId: "run-1", repoId: "repo" });
+    await expect(refuseUnstarted("run-1", run)).rejects.toMatchObject({
+      code: "run_starting",
+      message: "run run-1 is still starting",
+    });
+    const { starter: _starter, ...cutShort } = run;
+    await expect(refuseUnstarted("run-1", cutShort)).rejects.toMatchObject({
+      code: "run_not_active",
+      message: "run run-1 did not finish starting; cancel it to end it",
+    });
+    await expect(refuseUnstarted("run-1", { ...run, status: "failed" })).rejects.toMatchObject({
+      code: "run_not_active",
+      message: "run run-1 never finished starting and has ended (failed)",
+    });
+    await expect(refuseUnstarted("run-1", { ...run, started: true })).resolves.toBeUndefined();
   });
 });

@@ -8,6 +8,7 @@ import {
   resumeRun,
   runRecipes,
   startRun,
+  status,
   submitChange,
 } from "../../src/app/index.js";
 import { CONTROL_LOCK_FILE } from "../../src/core/jobs/index.js";
@@ -74,5 +75,17 @@ describe("a run whose control lock another call holds", { timeout: TIMEOUT_MS },
       rmSync(lock, { force: true });
     }
     await cancelRun(toy.context, scoped);
+  });
+});
+
+// M2 A9: a run the repository does not have is `no_run`, as for every other command.
+describe("status of a run that does not exist", () => {
+  it("is no_run", async () => {
+    for (const runId of ["20261020-000000-aaaaaa", "../outside"]) {
+      await expect(status(toy.context, { runId })).rejects.toMatchObject({
+        code: "no_run",
+        message: `no run ${runId} in this repository`,
+      });
+    }
   });
 });

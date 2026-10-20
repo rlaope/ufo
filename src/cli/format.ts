@@ -33,6 +33,7 @@ export function formatMeasure(result: MeasureResult): string {
     );
   }
   for (const limitation of baseline.limitations) lines.push(`Limitation: ${limitation}`);
+  for (const warning of result.warnings) lines.push(`Warning: ${warning}`);
   return `${lines.join("\n")}\n`;
 }
 

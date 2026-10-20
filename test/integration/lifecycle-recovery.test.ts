@@ -209,17 +209,47 @@ describe("a start cut short", { timeout: TIMEOUT_MS }, () => {
     expect((await readRun(left.runDir)).status).toBe("failed");
   });
 
+  // M2 A3, A9: a start in progress is `run_starting` (try again shortly), never advice to cancel
+  // or resume it.
   it("is left alone while its starter still runs", async () => {
     const startTime = await readProcessStartTime(process.pid);
     expect(startTime).toBeDefined();
     const left = await cutShortStart({ pid: process.pid, startTime: startTime as string });
-    await expect(cancelRun(toy.context, { runId: left.runId })).rejects.toMatchObject({
-      code: "run_in_progress",
+    const starting = { code: "run_starting", message: `run ${left.runId} is still starting` };
+    await expect(cancelRun(toy.context, { runId: left.runId })).rejects.toMatchObject(starting);
+    await expect(getRun(toy.context, { runId: left.runId })).rejects.toMatchObject(starting);
+    await expect(finishRun(toy.context, { runId: left.runId })).rejects.toMatchObject(starting);
+    await expect(startRun(toy.context)).rejects.toMatchObject({
+      code: "run_starting",
+      message: `run ${left.runId} of this repository is still starting`,
     });
-    await expect(startRun(toy.context)).rejects.toMatchObject({ code: "run_in_progress" });
     // Clean up as the starter would have on failure.
     await updateRun(left.runDir, (record) => ({ ...record, status: "failed" }));
     await releaseMachineLock({ home: toy.home, runId: left.runId });
+  });
+
+  // M2 A9: a start cut short that the next start's cleanup cannot end refuses that start, saying
+  // how to end it and why the cleanup failed.
+  it("refuses the next start with the cleanup's warning when the cleanup cannot end it", async () => {
+    const left = await cutShortStart(await deadStarter());
+    const parent = path.dirname(left.arms);
+    chmodSync(parent, 0o500);
+    try {
+      const refused = startRun(toy.context);
+      await expect(refused).rejects.toMatchObject({
+        code: "run_in_progress",
+        message: expect.stringMatching(
+          new RegExp(
+            `^run ${left.runId} of this repository did not finish starting; end it with \`ufo cancel --run ${left.runId}\` \\(could not clean up run ${left.runId}: .+\\)$`,
+          ),
+        ),
+      });
+      expect((await readRun(left.runDir)).status).toBe("running");
+    } finally {
+      chmodSync(parent, 0o700);
+    }
+    await cancelRun(toy.context, { runId: left.runId });
+    expect((await readRun(left.runDir)).status).toBe("failed");
   });
 });
 

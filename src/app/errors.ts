@@ -27,6 +27,8 @@ export type AppErrorCode =
   | "config_exists"
   | "no_run"
   | "run_not_active"
+  | "run_starting"
+  | "run_finishing"
   | "run_in_progress"
   | "worker_not_running"
   | "approval_declined"
@@ -45,6 +47,8 @@ const EXIT_BY_CODE: Record<AppErrorCode, ExitCode> = {
   config_exists: EXIT_REFUSED,
   no_run: EXIT_USAGE,
   run_not_active: EXIT_REFUSED,
+  run_starting: EXIT_REFUSED,
+  run_finishing: EXIT_REFUSED,
   run_in_progress: EXIT_REFUSED,
   worker_not_running: EXIT_REFUSED,
   approval_declined: EXIT_REFUSED,

@@ -111,14 +111,14 @@ describe("positive control", { timeout: TIMEOUT_MS }, () => {
     // Condition (b): once the finish job is queued the run takes no more work...
     const more = { runId: run.runId, cardId: "toy.fast-path", diff, hypothesis: "Once more." };
     await expect(submitChange(toy.context, more)).rejects.toMatchObject({
-      code: "run_not_active",
+      code: "run_finishing",
       message: expect.stringContaining("finishing"),
     });
     await expect(runRecipes(toy.context, { runId: run.runId })).rejects.toMatchObject({
-      code: "run_not_active",
+      code: "run_finishing",
     });
     await expect(finishRun(toy.context, { runId: run.runId })).rejects.toMatchObject({
-      code: "run_not_active",
+      code: "run_finishing",
     });
     // ...and a change that slipped into the queue anyway is cancelled, never run against B.
     const runDir = toy.runDir(run.runId);

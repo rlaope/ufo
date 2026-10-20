@@ -99,19 +99,34 @@ function killOptions(context: AppContext): { exec?: NonNullable<AppContext["exec
 }
 
 /**
- * A new run never silently replaces one: a `running` run of this repository, with or without a
- * live worker, refuses the start and says how to end it.
+ * A new run never silently replaces one: a `running` run of this repository refuses the start.
+ * A start still in progress is `run_starting`; a run with or without a live worker, and a start
+ * cut short that the cleanup could not end, are `run_in_progress`, saying how to end them. The
+ * cleanup's warnings go with the refusal.
  */
-async function refuseActiveRuns(home: string, repo: Repo): Promise<void> {
+async function refuseActiveRuns(
+  home: string,
+  repo: Repo,
+  warnings: readonly string[],
+): Promise<void> {
   for (const id of await listRunIds(home, repo)) {
     const run = await readRun(runDirFor(home, repo.repoId, id));
     if (run.status !== "running") continue;
-    const how = (await isWorkerAlive(run))
-      ? "finish it, or stop it with"
-      : `its worker stopped; continue it with \`ufo resume --run ${id}\` or stop it with`;
+    const cleanup = warnings.length > 0 ? ` (${warnings.join("; ")})` : "";
+    if (!run.started && !(await abandonedStart(run))) {
+      throw new AppError(
+        "run_starting",
+        `run ${id} of this repository is still starting${cleanup}`,
+      );
+    }
+    const how = !run.started
+      ? "did not finish starting; end it with"
+      : (await isWorkerAlive(run))
+        ? "is still running; finish it, or stop it with"
+        : `is still running and its worker stopped; continue it with \`ufo resume --run ${id}\` or stop it with`;
     throw new AppError(
       "run_in_progress",
-      `run ${id} of this repository is still running; ${how} \`ufo cancel --run ${id}\``,
+      `run ${id} of this repository ${how} \`ufo cancel --run ${id}\`${cleanup}`,
     );
   }
 }
@@ -217,7 +232,7 @@ async function startRunFor(
     rethrowAsUsage(error);
   }
   const cleanupWarnings = await cleanUpRuns(home, repo, controlLockWaitMs(context));
-  await refuseActiveRuns(home, repo);
+  await refuseActiveRuns(home, repo, cleanupWarnings);
 
   const runId = newRunId();
   // The run's state exists before it takes the machine lock, so another start that finds the
@@ -514,7 +529,7 @@ export async function cancelRun(
   if (record.status === "running" && !record.started) {
     // A start that never finished has no app state and no worker: end it from its ids.
     if (!(await abandonedStart(record))) {
-      throw new AppError("run_in_progress", `run ${located.runId} is still starting`);
+      throw new AppError("run_starting", `run ${located.runId} is still starting`);
     }
     const kill = await killRunProcesses(located.runDir, killOptions(context));
     const ended = await endAbandonedStart(
@@ -654,6 +669,8 @@ async function cancelAndSay(
 export interface MeasureResult {
   runId: string;
   baseline: BaselineResult;
+  /** The start's warnings: uncommitted changes left out, earlier runs that could not be cleaned up. */
+  warnings: string[];
 }
 
 /**
@@ -708,7 +725,11 @@ export async function measure(
       `the baseline ${job?.status ?? "did not finish"}: ${job?.error?.message ?? "no detail"}`,
     );
   }
-  return { runId: started.runId, baseline: job.result as unknown as BaselineResult };
+  return {
+    runId: started.runId,
+    baseline: job.result as unknown as BaselineResult,
+    warnings: redact(started.warnings),
+  };
 }
 
 /**

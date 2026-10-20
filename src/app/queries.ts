@@ -20,6 +20,7 @@ import {
   waitForJob,
 } from "../core/jobs/index.js";
 import { isWorkerAlive } from "../worker/index.js";
+import { refuseUnstarted } from "./active.js";
 import { type AppContext, homeFor, listRunIds, locateRun, resolveRepo } from "./context.js";
 import { AppError } from "./errors.js";
 import { budgetStatus, latestBaseline } from "./events.js";
@@ -174,16 +175,7 @@ export async function getRun(
 ): Promise<RunView> {
   const located = await locateRun(context, options.runId);
   const { runDir } = located;
-  const record = await readRun(runDir);
-  if (!record.started) {
-    const ended = record.status !== "running";
-    throw new AppError(
-      "run_not_active",
-      ended
-        ? `run ${located.runId} never finished starting and has ended (${record.status})`
-        : `run ${located.runId} did not finish starting; cancel it to end it`,
-    );
-  }
+  await refuseUnstarted(located.runId, await readRun(runDir));
   const [run, open, events, jobs] = await Promise.all([
     readRun(runDir),
     openRun(located.home, runDir),
@@ -251,6 +243,9 @@ export async function status(
   const repo = await resolveRepo(context.cwd);
   const home = await homeFor(context, repo);
   const ids = await listRunIds(home, repo);
+  if (options.runId !== undefined && !ids.includes(options.runId)) {
+    throw new AppError("no_run", `no run ${options.runId} in this repository`);
+  }
   const runs = [];
   for (const id of ids) {
     const run = await readRun(runDirFor(home, repo.repoId, id));

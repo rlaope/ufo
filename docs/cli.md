@@ -30,7 +30,7 @@ ufo <command> [options]
 |---|---|---|
 | `--allow-lossy` | `approve` | Confirms the `lossy` opt-in that `ufo.yaml` requests. |
 | `--allow-upgrade` | `approve` | Confirms the `upgrade` opt-in that `ufo.yaml` requests. |
-| `--run <id>` | `status`, `resume`, `cancel`, `report`, `extend-budget` | The run to act on. Default: the latest run of the repository. |
+| `--run <id>` | `status`, `resume`, `cancel`, `report`, `extend-budget` | The run to act on. Default: the latest run of the repository. A run the repository does not have is `no_run` (exit 2). |
 | `--techniques <n>` | `extend-budget` | Techniques to add to the cap. Default: the configured `maxTechniques`. |
 | `--minutes <n>` | `extend-budget` | Minutes to add to the wall-clock budget. Default: 0. |
 | `--json` | every command | Prints one JSON object on stdout instead of text. |
@@ -60,7 +60,7 @@ evidence bundle does; expand it before you open a path from a script.
 | Code | Meaning | `error.code` values |
 |---|---|---|
 | 0 | Success. | |
-| 1 | A policy refused the request, the human declined, or the run needs `ufo resume` first. | `policy:<rule>` (see below), `approval_declined`, `opt_in_mismatch`, `config_exists`, `run_not_active`, `run_in_progress`, `worker_not_running`, `measurement_failed`, `ledger_mismatch`, `cancel_pending`, `arms_missing`, `interrupted`, `busy`, `unsafe_state` |
+| 1 | A policy refused the request, the human declined, or the run needs `ufo resume` first. | `policy:<rule>` (see below), `approval_declined`, `opt_in_mismatch`, `config_exists`, `run_not_active`, `run_starting`, `run_finishing`, `run_in_progress`, `worker_not_running`, `measurement_failed`, `ledger_mismatch`, `cancel_pending`, `arms_missing`, `interrupted`, `busy`, `unsafe_state` |
 | 2 | Usage or configuration error, or nothing to act on. | `usage`, `not_a_repo`, `config_missing`, `config_invalid`, `cards_invalid`, `no_run`, `unsafe_home` |
 | 3 | UFO itself failed. | `internal` |
 
@@ -68,7 +68,9 @@ evidence bundle does; expand it before you open a path from a script.
 cancels the run and exits 1 with `measurement_failed`; the worker log (`logs/worker.err.log` in the
 run state) has the detail. When the baseline is refused for noise it finishes the run at once (the
 report is kept, no recipe is tried) and exits 1 with `measurement_failed`. `ufo measure` reports a
-failed baseline as `measurement_failed` (exit 1), and the run it used ends `failed`.
+failed baseline as `measurement_failed` (exit 1), and the run it used ends `failed`. It prints the
+start's warnings (uncommitted changes left out of the run, earlier runs that could not be cleaned
+up) after the baseline, and `--json` has them in `result.warnings`.
 
 Ctrl-C (or SIGTERM) during `ufo run` or `ufo measure` cancels the run as `ufo cancel` does: UFO
 stops its worker, cancels its jobs, removes the arms (and, for `measure`, the branch), releases
@@ -89,7 +91,10 @@ Refusals that protect UFO's own state:
 | `unsafe_home` (exit 2) | `$UFO_HOME` is a symbolic link, not a directory, not owned by you, writable by group or others, or inside the target repository or its git directory. Nothing is created in the repository. Fix the directory (`chmod 700`) or point `UFO_HOME` elsewhere. |
 | `unsafe_state` (exit 1) | Something under `$UFO_HOME` is not what UFO created: a symbolic link in the run state, the approvals, or the arms, a run state file that does not validate, a run state naming another run or repository, or an arm whose git directory is not its own. UFO refuses instead of following it. |
 | `policy:unsafe_repo_config` (exit 1) | The repository's `.git/config` sets a key that would make git run a program the repository chose (see [Arms](#runs-budgets-and-decisions)). Remove the key, or move it to your global git config, and start again. |
-| `run_in_progress` (exit 1) | Another run holds the machine lock, or a run of this repository is still `running`. The message names the run and how to end it (`ufo resume --run <id>` or `ufo cancel --run <id>`). |
+| `run_in_progress` (exit 1) | Another run holds the machine lock, or a run of this repository is still `running` (also one whose start was cut short and could not be cleaned up; the message carries the cleanup's error). The message names the run and how to end it (`ufo resume --run <id>` or `ufo cancel --run <id>`). |
+| `run_starting` (exit 1) | The run, or for a new start another run of this repository, is still starting. Try again in a few seconds. |
+| `run_finishing` (exit 1) | The run's finish is queued, so it takes no more work. Wait for the finish, then read `ufo report`. |
+| `run_not_active` (exit 1) | The run has ended, never finished starting, or only measures (`ufo measure`). |
 | `cancel_pending` (exit 1) | `ufo resume` on a run whose cancel was requested but did not complete. Run `ufo cancel` again to end it. |
 | `arms_missing` (exit 1) | `ufo resume` on a run whose arms under `$UFO_HOME/arms` are gone. It cannot continue; `ufo cancel` ends it. |
 | `busy` (exit 1) | Another UFO command (resume, cancel, finish, queueing a change) held the run longer than this one waits (120 s on the command line). Nothing was changed; try again. |
@@ -424,7 +429,7 @@ arm since the last job is not measured.
 - Finishing the run runs the final check (the base commit in B against the final commit in A, five
   fresh pairs), writes the report and the redacted evidence bundle, publishes the run branch,
   removes the arms (the run branch stays for review), and releases the machine lock. From the moment the finish job is
-  queued, the run takes no more changes (`run_not_active`); a job still queued when it ends is
+  queued, the run takes no more changes (`run_finishing`); a job still queued when it ends is
   cancelled. A headline is published only when the final check improves by at least `minEffect`.
 - `ufo cancel` stops the worker and every process group it started, removes containers labeled
   `ufo.run=<run-id>`, records the run as cancelled, then removes the arms and releases the
