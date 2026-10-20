@@ -124,7 +124,9 @@ until it is, `ufo setup` refuses to install from the registry and takes a tarbal
   entry with a `node_modules` segment (`npx` and npm scripts put the project's `.bin`
   directories, and its parents', first), and entries inside the working directory, every
   working tree around it (found by their `.git` entries before git runs, a superproject's and a
-  linked worktree's main checkout included), the repository's git directories, and UFO's home.
+  linked worktree's main checkout included: a `.git` file names a main checkout only as a
+  `.git/worktrees/<name>` directory whose `gitdir` names it back, so a planted one cannot drop
+  another directory), the repository's git directories, and UFO's home.
   Your home directory and its parents are never one of those: tools installed under it
   (`~/.nvm`, `~/.cargo/bin`, `~/.local/bin`) stay even when you start UFO there or your home
   is a repository, and a project's `.bin` there is caught by the `node_modules` rule. `ufo mcp`

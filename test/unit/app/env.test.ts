@@ -165,18 +165,54 @@ describe("trustProcessPath", () => {
   it("drops the main checkout of a linked worktree, read from its .git file", async () => {
     const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), "ufo-path-")));
     try {
-      mkdirSync(path.join(root, "main", ".git", "worktrees", "wt"), { recursive: true });
+      const linked = path.join(root, "main", ".git", "worktrees", "wt");
+      mkdirSync(linked, { recursive: true });
       mkdirSync(path.join(root, "wt"), { recursive: true });
-      writeFileSync(
-        path.join(root, "wt", ".git"),
-        `gitdir: ${path.join(root, "main", ".git", "worktrees", "wt")}\n`,
-      );
+      writeFileSync(path.join(root, "wt", ".git"), `gitdir: ${linked}\n`);
+      writeFileSync(path.join(linked, "gitdir"), `${path.join(root, "wt", ".git")}\n`);
       const env: NodeJS.ProcessEnv = {
         UFO_HOME: path.join(root, "ufo-home"),
         PATH: [path.join(root, "main", "tools"), "/usr/bin"].join(path.delimiter),
       };
       await trustProcessPath({ cwd: path.join(root, "wt"), env });
       expect(env.PATH).toBe("/usr/bin");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // Security S2-6: a .git file names a main checkout only as a linked worktree's git directory
+  // that names it back; any other directory it names stays on PATH.
+  it("keeps a directory a .git file names unless it is the worktree's main checkout", async () => {
+    const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), "ufo-path-")));
+    try {
+      const dotGit = path.join(root, "project", ".git");
+      // Not a worktree's git directory, though it names the .git file back.
+      const submodule = path.join(root, "sys", "bin", ".git", "modules", "x");
+      mkdirSync(submodule, { recursive: true });
+      writeFileSync(path.join(submodule, "gitdir"), `${dotGit}\n`);
+      // Worktrees' git directories that do not name it back: no link, and one to elsewhere.
+      const unlinked = path.join(root, "other", ".git", "worktrees", "project");
+      const elsewhere = path.join(root, "other", ".git", "worktrees", "elsewhere");
+      mkdirSync(unlinked, { recursive: true });
+      mkdirSync(elsewhere, { recursive: true });
+      mkdirSync(path.join(root, "elsewhere"), { recursive: true });
+      writeFileSync(path.join(elsewhere, "gitdir"), `${path.join(root, "elsewhere", ".git")}\n`);
+      mkdirSync(path.join(root, "project"), { recursive: true });
+      const entries = [
+        path.join(root, "sys", "bin"),
+        path.join(root, "other", "tools"),
+        "/usr/bin",
+      ];
+      for (const named of [submodule, unlinked, elsewhere]) {
+        writeFileSync(dotGit, `gitdir: ${named}\n`);
+        const env: NodeJS.ProcessEnv = {
+          UFO_HOME: path.join(root, "ufo-home"),
+          PATH: entries.join(path.delimiter),
+        };
+        await trustProcessPath({ cwd: path.join(root, "project"), env });
+        expect(env.PATH, named).toBe(entries.join(path.delimiter));
+      }
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

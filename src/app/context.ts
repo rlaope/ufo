@@ -86,21 +86,36 @@ export async function resolveRepo(cwd: string): Promise<Repo> {
   };
 }
 
-/** The work tree that owns the git directory a `.git` file names (a linked worktree's main
- * checkout, a submodule's superproject), read without running git. */
+/**
+ * The main checkout of the linked worktree whose `.git` file is `dotGit`, read without running
+ * git: the git directory it names is `<checkout>/.git/worktrees/<name>`, whose `gitdir` names
+ * that `.git` file back. A `.git` file naming any other directory names no checkout, so it cannot
+ * drop an unrelated directory (a system `bin`) from PATH (security S2-6); a submodule's
+ * superproject encloses it and is found by the walk up.
+ */
 async function gitFileOwner(dotGit: string): Promise<string | undefined> {
   const text = await readTextNoFollow(dotGit).catch(() => undefined);
   const named = text?.match(/^gitdir:\s*(.+)$/m)?.[1]?.trim();
   if (named === undefined) return undefined;
   const gitDir = path.resolve(path.dirname(dotGit), named);
   const at = gitDir.indexOf(`${path.sep}.git${path.sep}`);
-  return at === -1 ? undefined : gitDir.slice(0, at);
+  if (at === -1) return undefined;
+  const owner = gitDir.slice(0, at);
+  if (path.dirname(gitDir) !== path.join(owner, ".git", "worktrees")) return undefined;
+  const back = await readTextNoFollow(path.join(gitDir, "gitdir")).catch(() => undefined);
+  if (back === undefined) return undefined;
+  const [backTo, self] = await Promise.all(
+    [path.resolve(gitDir, back.trim()), dotGit].map((file) =>
+      realpath(path.dirname(file)).catch(() => undefined),
+    ),
+  );
+  return backTo !== undefined && backTo === self ? owner : undefined;
 }
 
 /**
  * Every directory at or above `dir` with a `.git` entry: the working trees around it, the one git
- * finds first and those that enclose it (a submodule's superproject), with the work tree that
- * owns a `.git` file's git directory.
+ * finds first and those that enclose it (a submodule's superproject), with the main checkout of
+ * a linked worktree among them.
  */
 async function enclosingWorkTrees(dir: string): Promise<string[]> {
   const trees: string[] = [];
