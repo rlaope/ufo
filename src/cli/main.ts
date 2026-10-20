@@ -18,6 +18,15 @@ import {
 import { approve, extendBudget, init, runAppWorker, WORKER_COMMAND } from "../app/api-cli.js";
 import { bindDirectory, HOSTS, isHost, serveMcp } from "../mcp/index.js";
 import {
+  formatSetupReport,
+  parseHostIds,
+  type SetupEnvironment,
+  SetupError,
+  setup,
+  uninstall,
+  update,
+} from "../setup/index.js";
+import {
   formatApprove,
   formatCancel,
   formatExtend,
@@ -42,6 +51,8 @@ export interface CliIo {
    * CLAUDE_PROJECT_DIR; `process.env` unless a test passes its own.
    */
   env?: NodeJS.ProcessEnv;
+  /** Home directory, `$UFO_HOME`, and host CLI runner for setup; tests pass their own. */
+  setup?: SetupEnvironment;
 }
 
 /**
@@ -94,6 +105,11 @@ Commands:
                         --repo <path>     the repository, an absolute path (required for cursor;
                                           default: $CLAUDE_PROJECT_DIR for claude-code, else the
                                           working directory)
+  setup               Register UFO's MCP server and skill with Claude Code, Codex, and Cursor
+  uninstall           Remove exactly what setup added
+  update              Re-pin what setup added to this version of UFO
+                        --host <name>    only claude-code, codex, or cursor (repeatable)
+                        --yes            apply the shown changes without asking
 
 Options:
   --run <id>     The run for status, resume, cancel, report, extend-budget (default: latest)
@@ -131,6 +147,9 @@ const COMMANDS = {
     minutes: { type: "string" },
   },
   mcp: { host: { type: "string" }, repo: { type: "string" } },
+  setup: { host: { type: "string", multiple: true }, yes: { type: "boolean" } },
+  uninstall: { host: { type: "string", multiple: true }, yes: { type: "boolean" } },
+  update: { host: { type: "string", multiple: true }, yes: { type: "boolean" } },
 } as const;
 type Command = keyof typeof COMMANDS;
 
@@ -146,7 +165,9 @@ function integerFlag(value: string | undefined, name: string): number | undefine
   return Number(value);
 }
 
-type Values = Record<string, string | boolean | undefined>;
+type Values = Record<string, string | boolean | string[] | undefined>;
+
+const SETUP_COMMANDS = { setup, uninstall, update };
 
 async function execute(
   command: Exclude<Command, "mcp">,
@@ -218,6 +239,18 @@ async function execute(
         ...(minutes === undefined ? {} : { minutes }),
       });
       return { result, text: formatExtend(result) };
+    }
+    case "setup":
+    case "uninstall":
+    case "update": {
+      const hosts = Array.isArray(values.host) ? parseHostIds(values.host) : undefined;
+      const result = await SETUP_COMMANDS[command]({
+        ...io.setup,
+        print,
+        yes: values.yes === true,
+        ...(hosts === undefined ? {} : { hosts }),
+      });
+      return { result, text: formatSetupReport(result) };
     }
   }
 }
@@ -309,7 +342,9 @@ export async function main(argv: readonly string[], io: CliIo): Promise<number> 
     const failure: Failure =
       error instanceof UsageError
         ? { exitCode: EXIT_USAGE, code: "usage", message: error.message, retryable: false }
-        : describeFailure(error);
+        : error instanceof SetupError
+          ? error.failure
+          : describeFailure(error);
     if (json) {
       io.stdout(
         `${JSON.stringify({ ok: false, command: first, error: { code: failure.code, message: failure.message } }, null, 2)}\n`,
