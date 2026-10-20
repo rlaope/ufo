@@ -14,7 +14,15 @@ import {
   startRun,
 } from "../../src/app/index.js";
 import { readRun, updateRun } from "../../src/core/jobs/index.js";
-import { approveToy, lightWorkload, makeToy, TIMEOUT_MS, type Toy, waitDone } from "./helpers.js";
+import {
+  approveToy,
+  git,
+  lightWorkload,
+  makeToy,
+  TIMEOUT_MS,
+  type Toy,
+  waitDone,
+} from "./helpers.js";
 
 // M2 B2: the app workflows behind the MCP tools inspect_target, check_capabilities,
 // list_techniques, profile_target, and a get_job wait an MCP client cancels.
@@ -252,9 +260,14 @@ describe("profiling the target", { timeout: TIMEOUT_MS }, () => {
     const run = await startRun(toy.context);
     try {
       expect((await waitDone(toy, run.runId, run.baselineJobId)).status).toBe("succeeded");
+      // Something wrote into arm A since its last job: the profile measures A at its commit.
+      writeFileSync(path.join(run.arms.a, "server.mjs"), "// written into the arm\n", {
+        flag: "a",
+      });
       const queued = await profileTarget(toy.context, { runId: run.runId });
       const job = await waitDone(toy, run.runId, queued.jobId);
       expect(job.status, job.error?.message).toBe("succeeded");
+      expect(git(run.arms.a, "status", "--porcelain")).toBe("");
       const profile = job.result as {
         sha: string;
         phases: { phase: string; ms: number }[];

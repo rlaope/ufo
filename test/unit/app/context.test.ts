@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { CONTROL_LOCK_WAIT_MS, controlLockWaitMs } from "../../../src/app/index.js";
 
-// Code review (step A) #7: a wait that is not a finite number ≥ 0 would make every control call
-// fail at once (NaN) or wait forever (Infinity).
+// Code review (step A) #7: a wait that is not a finite number ≥ 0 would make a control call wait
+// forever for a held lock (NaN, Infinity) or fail at once (a negative wait).
 describe("the control-lock wait of an app call", () => {
   it("is the context's when it is a finite number of milliseconds ≥ 0, else the CLI's", () => {
     expect(controlLockWaitMs({ cwd: "/" })).toBe(CONTROL_LOCK_WAIT_MS);
