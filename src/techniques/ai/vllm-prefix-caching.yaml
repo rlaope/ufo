@@ -2,7 +2,7 @@ id: ai.vllm-prefix-caching
 domain: ai
 title: Enable vLLM automatic prefix caching for shared prompt prefixes
 kind: guided
-riskClass: lossless
+riskClass: numeric
 stacks:
   - vllm
 bottlenecks:
@@ -13,21 +13,26 @@ signals:
   - vLLM prefix cache hit metrics are zero or low although prompts repeat, or the feature is disabled in the engine config log
 preconditions:
   - vLLM version with automatic prefix caching (engine arg --enable-prefix-caching / enable_prefix_caching)
-  - The default is not stated in the docs read; check the engine config printed at startup
+  - Current vLLM source defines CacheConfig.enable_prefix_caching with default True, but the docs pages do not state the default and it may be off for some models or older versions; check the engine config printed at startup
+  - "Output tolerance defined: vLLM does not guarantee reproducible results by default, so serving a prefix from cached blocks instead of recomputing it may shift floating-point results slightly"
 steps:
   - Check the startup config for the prefix caching setting
-  - Enable it with --enable-prefix-caching (or enable_prefix_caching=True in the Python engine)
+  - If it is off, enable it with --enable-prefix-caching (or enable_prefix_caching=True in the Python engine); --disable-prefix-caching turns it off
   - Put stable content first in the prompt and dynamic content last so prefixes match
-  - Replay repeated-prefix traffic and compare time to first token and prefix cache hit rate
+  - Replay repeated-prefix traffic and compare time to first token and the vllm:prefix_cache_hits / vllm:prefix_cache_queries ratio
 verification:
   - Prefix cache hit rate is above zero and time to first token drops for repeated prefixes
-  - Outputs match the baseline for deterministic sampling
+  - Outputs on a fixed prompt set stay within the agreed tolerance of the baseline
 traps:
   - The docs state it only reduces prefill time; it does not speed up token generation, so long-output workloads gain little
-  - No shared prefix means no gain; any change early in the prompt breaks matching for everything after it
-  - Cached blocks occupy KV cache and can raise eviction or preemption pressure; watch preemption metrics
+  - No shared prefix means no gain; any change early in the prompt breaks matching for everything after it (block hashes chain from the parent block and include LoRA ids, multimodal hashes and cache salts)
+  - Cached blocks stay in the KV cache after their request finishes and are evicted least-recently-used; watch preemption metrics under memory pressure
 expectedEffect: Skips recomputing shared prefixes, lowering time to first token for repeated long prompts; varies with prefix share, measure.
 sources:
   - https://docs.vllm.ai/en/latest/features/automatic_prefix_caching.html
+  - https://docs.vllm.ai/en/latest/design/prefix_caching.html
   - https://docs.vllm.ai/en/latest/configuration/engine_args.html
+  - https://docs.vllm.ai/en/latest/usage/reproducibility.html
+  - https://docs.vllm.ai/en/latest/design/metrics.html
+  - https://github.com/vllm-project/vllm/blob/main/vllm/config/cache.py
 verifiedIn: unverified

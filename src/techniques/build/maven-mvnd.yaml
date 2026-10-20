@@ -3,28 +3,34 @@ domain: build
 title: Use the Maven Daemon (mvnd) for warm JVM and cached plugin classloaders
 kind: guided
 riskClass: upgrade
-stacks: [maven, jvm]
-bottlenecks: [build, startup, caching]
+stacks:
+  - maven
+  - jvm
+bottlenecks:
+  - build
+  - startup
+  - caching
 signals:
-  - "Many short mvn invocations (CI steps, developer inner loop) each pay JVM start and plugin classloading, visible as seconds of overhead before the first mojo runs in mvn -X or timestamps."
-  - "Builds run with plain mvn and no daemon on a machine that runs repeated builds."
+  - Many short mvn invocations (CI steps, developer inner loop) each pay JVM start and plugin classloading, visible as seconds of overhead before the first mojo runs in mvn -X or timestamps.
+  - Builds run with plain mvn and no daemon on a machine that runs repeated builds.
 preconditions:
-  - "A JDK reachable through JAVA_HOME; check the mvnd release notes for the minimum Java version and the platforms that ship a native client."
-  - "mvnd 1.x tracks Maven 3.9.x; the 2.x preview tracks Maven 4."
+  - Java 17 or later for the daemon (mvnd README, Supported platforms); a JDK reachable through JAVA_HOME or the java.home property.
+  - The native bin/mvnd client ships for Linux x86_64, Linux aarch64, macOS aarch64 and Windows x86_64; on other platforms (for example macOS x86_64) bin/mvnd.sh or bin/mvnd.cmd runs the Java client instead, and on Linux an older glibc (below 2.12 on x86_64, 2.17 on aarch64) also falls back to it.
+  - mvnd 1.x embeds Maven 3.9.x; the 2.x preview embeds Maven 4.0.x.
 steps:
-  - "Install mvnd (it embeds Maven) and replace mvn with mvnd in the build or CI command."
-  - "mvnd builds modules in parallel by default (max(availableProcessors - 1, 1) threads); pass -T1 for serial if a plugin is not thread-safe."
-  - "Where scripts parse build output (for example help:evaluate), add --raw-streams."
+  - Install mvnd (it embeds Maven) and replace mvn with mvnd in the build or CI command. With Homebrew, `mvnd@1` installs the stable 1.x line (Maven 3.9.x) and `mvnd` installs the 2.x preview (Maven 4.0.x).
+  - mvnd builds modules in parallel by default (max(availableProcessors - 1, 1) threads); pass -T1 for serial if a plugin is not thread-safe.
+  - Where scripts parse build output (for example help:evaluate), add --raw-streams.
 verification:
-  - "Second and later invocations start faster than plain mvn on the same goals."
-  - "Artifacts and test results match a plain mvn run."
+  - Second and later invocations start faster than plain mvn on the same goals.
+  - Artifacts and test results match a plain mvn run.
 traps:
-  - "It is a toolchain change, not a project change: pin the mvnd version to avoid drift between machines."
-  - "Plugin output is collected per project and may be reordered or hidden by --quiet."
-  - "SNAPSHOT plugins are not classloader cached."
-  - "Short-lived one-shot CI containers gain little because the daemon does not persist."
-  - "Parallel-by-default exposes non-thread-safe plugins."
-expectedEffect: "Removes repeated JVM start and plugin load cost for repeated builds; varies, measure warm versus cold."
+  - "It is a toolchain change, not a project change: pin the mvnd version to avoid drift between machines, and pick the 1.x or 2.x line deliberately because the embedded Maven major version differs (Homebrew `mvnd` installs the 2.x preview)."
+  - Plugin System.out output is collected per project and may be reordered or, with --quiet, not shown at all.
+  - SNAPSHOT versions of Maven plugins are not classloader cached.
+  - Short-lived one-shot CI containers gain little because the daemon does not persist.
+  - Parallel-by-default exposes non-thread-safe plugins.
+expectedEffect: Removes repeated JVM start and plugin load cost for repeated builds; varies, measure warm versus cold.
 sources:
   - https://github.com/apache/maven-mvnd
   - https://cwiki.apache.org/confluence/display/MAVEN/Parallel+builds+in+Maven+3

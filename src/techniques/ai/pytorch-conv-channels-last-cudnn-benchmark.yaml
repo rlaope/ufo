@@ -23,11 +23,11 @@ steps:
 verification:
   - Step time falls in the profiler and output matches within floating-point tolerance
 traps:
-  - Operators without channels-last support return contiguous output, adding permute overhead and breaking format propagation (results stay correct)
-  - Format is ambiguous when C==1 or H==W==1; only .to sets strides correctly there
-  - cudnn.benchmark picks algorithms by timing, so choices can differ between runs and it is better off when input sizes vary widely
-  - The tutorial describes the feature as experimental with open work on operator coverage
-expectedEffect: The tutorial reports gains on ResNet-50 style models with AMP on Tensor Core GPUs; varies by model and hardware, measure.
+  - Operators without channels-last support return contiguous output, adding permute overhead and stopping format propagation (results stay correct)
+  - Format is ambiguous when C==1 or H==W==1; only .to sets strides correctly there, and a tensor with C==1 and H==W==1 cannot be marked channels_last
+  - cudnn.benchmark picks algorithms by timing, so choices can differ between runs, and the tuning guide advises against it for highly variable input sizes
+  - The tutorial says operator coverage and distributed-training testing for channels_last are still unfinished
+expectedEffect: The tutorial reports gains on Tensor Core GPUs with AMP (over 22% on ResNet-50) and on recent Intel Xeon CPUs for a listed set of models; varies by model and hardware, measure.
 sources:
   - https://docs.pytorch.org/tutorials/intermediate/memory_format_tutorial.html
   - https://docs.pytorch.org/tutorials/recipes/recipes/tuning_guide.html

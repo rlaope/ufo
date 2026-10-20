@@ -3,29 +3,31 @@ domain: data
 title: Find the statements worth tuning with pg_stat_statements before changing anything
 kind: guided
 riskClass: lossless
-stacks: [postgres]
-bottlenecks: [query]
+stacks:
+  - postgres
+bottlenecks:
+  - query
 signals:
-  - "Database time is suspected but no statement has been identified; the app has no per-query timing."
-  - "pg_stat_statements is installed and shows a few queryids with a large share of total_exec_time, or a cheap statement with enormous calls."
-  - "A statement has a low buffer hit percentage (shared_blks_hit / (hit + read)) or a large rows-per-call versus rows actually used by the caller."
+  - Database time is suspected but no statement has been identified; the app has no per-query timing.
+  - pg_stat_statements is installed and shows a few queryids with a large share of total_exec_time, or a cheap statement with enormous calls.
+  - A statement has a low buffer hit percentage (shared_blks_hit / (hit + read)) or a large rows-per-call versus rows actually used by the caller.
 preconditions:
-  - "PostgreSQL with `shared_preload_libraries = 'pg_stat_statements'` set (server restart required) and `CREATE EXTENSION pg_stat_statements` run in the target database. If it is not enabled and cannot be restarted, use the ORM or driver query log instead."
-  - "Permission to read the view; pg_stat_statements_reset is superuser by default."
+  - PostgreSQL with `shared_preload_libraries = 'pg_stat_statements'` set (server restart required), query id computation enabled (compute_query_id = auto or on), and `CREATE EXTENSION pg_stat_statements` run in each database you want to query. If it is not enabled and cannot be restarted, use the ORM or driver query log instead.
+  - Permission to read the view (only superusers and pg_read_all_stats members see other users' query text and queryid); pg_stat_statements_reset is superuser-only by default.
 steps:
   - "Reset the counters before the workload under test: `SELECT pg_stat_statements_reset();` so the numbers belong to the benchmark."
   - "Run the workload, then rank: `SELECT queryid, calls, total_exec_time, mean_exec_time, rows, 100.0*shared_blks_hit/NULLIF(shared_blks_hit+shared_blks_read,0) AS hit_pct, query FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT 10;`"
   - "Classify each top entry: high calls with low mean points to N+1 or missing batching or caching; high mean points to a plan problem (take it to EXPLAIN (ANALYZE, BUFFERS)); high shared_blks_read points to missing index or wide rows."
-  - "Pick the single statement with the largest total_exec_time share and apply the matching card; re-rank afterwards."
+  - Pick the single statement with the largest total_exec_time share and apply the matching card; re-rank afterwards.
 verification:
-  - "After the change, reset and re-run the same workload; the targeted queryid has lower total_exec_time or calls and no other statement rose to compensate."
-  - "Normalized query text confirms the statement is the intended one (literals appear as $1)."
+  - After the change, reset and re-run the same workload; the targeted queryid has lower total_exec_time or calls and no other statement rose to compensate.
+  - Normalized query text confirms the statement is the intended one (literals appear as $1).
 traps:
-  - "Statements differing only in literals merge into one queryid, but IN lists of different lengths and different search_path values may appear separately."
-  - "queryid is not stable across major versions or after recreating referenced objects; do not use it as a permanent key."
-  - "track_planning adds noticeable overhead; leave it off unless planning time is the question."
-  - "The view is per database and counters survive until reset or restart; stale history from other workloads skews the ranking."
-expectedEffect: "Selection step, no direct speedup; it directs effort to the statements that dominate database time; measure on the targeted statements."
+  - Statements differing only in literals merge into one queryid; the same text can split under different search_path values; IN lists of different lengths are collapsed into one entry in the current docs but may appear separately on older releases.
+  - queryid is not stable across major versions, machine architectures, or after dropping and recreating referenced objects; do not use it as a permanent key.
+  - track_planning is off by default and may cause a noticeable performance penalty under many concurrent identical statements; leave it off unless planning time is the question.
+  - The view only lists databases where the extension was created, counters survive until reset or restart, and entries beyond pg_stat_statements.max are dropped; stale history from other workloads skews the ranking.
+expectedEffect: Selection step, no direct speedup; it directs effort to the statements that dominate database time; measure on the targeted statements.
 sources:
   - https://www.postgresql.org/docs/current/pgstatstatements.html
 verifiedIn: unverified

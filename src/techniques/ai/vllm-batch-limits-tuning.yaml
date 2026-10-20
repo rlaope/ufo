@@ -2,19 +2,20 @@ id: ai.vllm-batch-limits-tuning
 domain: ai
 title: Tune vLLM max-num-seqs and max-num-batched-tokens for throughput or latency
 kind: guided
-riskClass: lossless
+riskClass: numeric
 stacks:
   - vllm
 bottlenecks:
   - inference
   - contention
 signals:
-  - vLLM logs/metrics show low GPU utilization with requests waiting (Prometheus num_requests_waiting greater than zero while KV cache usage is low)
-  - Preemption count is rising in metrics (requests are recomputed when KV cache space runs out)
+  - vLLM logs/metrics show low GPU utilization with requests waiting (Prometheus vllm:num_requests_waiting greater than zero while vllm:kv_cache_usage_perc is low)
+  - Preemption count is rising (vllm:num_preemptions counter, or the cumulative count logged with disable_log_stats=False); requests are recomputed when KV cache space runs out
   - Inter-token latency is poor while large prefills share batches with decodes
 preconditions:
-  - vLLM V1 engine (chunked prefill is enabled by default when possible)
-  - Engine args --max-num-seqs, --max-num-batched-tokens, --gpu-memory-utilization (default 0.92)
+  - vLLM V1 engine (the optimization guide states chunked prefill is enabled by default whenever possible)
+  - Engine args --max-num-seqs, --max-num-batched-tokens, --gpu-memory-utilization (default 0.92 in the engine args reference)
+  - "Output tolerance defined: vLLM does not guarantee reproducible results by default and outputs depend on scheduling unless batch invariance is enabled, so changing batch limits can shift floating-point results"
 steps:
   - Read current values and watch Prometheus metrics (or set disable_log_stats=False for logged stats) under a representative load
   - For throughput, raise --max-num-batched-tokens (the optimization guide suggests above 8192 for smaller models on large GPUs); for inter-token latency lower it (the guide gives 2048 as an example)
@@ -22,7 +23,7 @@ steps:
   - Re-run the same load test after each single change
 verification:
   - Throughput and the latency percentile you care about improve, preemption count stays near zero
-  - Outputs are unchanged apart from normal sampling variation
+  - Outputs on a fixed prompt set stay within the agreed quality tolerance (sampling variation and scheduling-dependent floating-point differences are expected)
 traps:
   - With chunked prefill disabled, --max-num-batched-tokens must exceed the model max length or startup can fail
   - Throughput and latency pull in opposite directions on max-num-batched-tokens; pick by the objective
@@ -32,4 +33,6 @@ expectedEffect: Higher throughput or lower inter-token latency depending on the 
 sources:
   - https://docs.vllm.ai/en/latest/configuration/optimization.html
   - https://docs.vllm.ai/en/latest/configuration/engine_args.html
+  - https://docs.vllm.ai/en/latest/usage/reproducibility.html
+  - https://docs.vllm.ai/en/latest/design/metrics.html
 verifiedIn: unverified

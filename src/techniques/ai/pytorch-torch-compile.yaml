@@ -15,9 +15,9 @@ preconditions:
   - PyTorch 2.0 or newer with a C++ compiler (for example g++) and Python development headers
   - Workload runs enough steps to amortize the first-call compilation
 steps:
-  - 'Wrap the model or hot function: compiled = torch.compile(model) (optionally modes "reduce-overhead" or "max-autotune" for CUDA graphs)'
+  - 'Wrap the model or hot function: compiled = torch.compile(model) (optionally modes "reduce-overhead" or "max-autotune" for CUDA graphs, per the tuning guide)'
   - Warm up before timing; the first calls compile and are slow
-  - Find graph breaks with torch._logging.set_logs(graph_breaks=True) or fullgraph=True and remove data-dependent Python branches (use torch.where or torch.cond)
+  - Find graph breaks with torch._logging.set_logs(graph_breaks=True) or fullgraph=True (which raises on the first break) and remove data-dependent Python branches (torch.where, torch.clamp, torch.nan_to_num, or torch.cond)
   - Compare steady-state step time and numerics against eager mode
 verification:
   - Steady-state step time falls and compiled output matches eager within tolerance
@@ -27,7 +27,7 @@ traps:
   - Graph breaks lose optimization and dynamic shapes can trigger recompilation
   - CUDA graph modes may raise device memory use and some models do not compile (per the tuning guide)
   - Kernel fusion changes floating-point rounding slightly
-expectedEffect: The tutorial example shows a median speedup of about 2.4x on its toy case; varies widely by model, measure.
+expectedEffect: The tutorial example (an elementwise function on a large CUDA tensor) shows about 2.45x median speedup after warm-up and says the speedup may vary or be smaller when GPU compute dominates; measure.
 sources:
   - https://docs.pytorch.org/tutorials/intermediate/torch_compile_tutorial.html
   - https://docs.pytorch.org/tutorials/recipes/recipes/tuning_guide.html

@@ -3,35 +3,43 @@ domain: data
 title: Load large data sets with COPY or batched inserts in one transaction
 kind: guided
 riskClass: lossless
-stacks: [postgres]
-bottlenecks: [io, query, network]
+stacks:
+  - postgres
+bottlenecks:
+  - io
+  - query
+  - network
 signals:
-  - "pg_stat_statements shows an INSERT with calls roughly equal to rows loaded (one row per statement) and high cumulative total_exec_time during an import or seed job."
-  - "Server log or pg_stat_wal shows frequent checkpoints (`checkpoints are occurring too frequently`) during the load."
-  - "Application log shows autocommit with one commit per row, or a per-row ORM save in a loop."
+  - pg_stat_statements shows an INSERT with calls roughly equal to rows loaded (one row per statement) and high cumulative total_exec_time during an import or seed job.
+  - Server log shows `checkpoints are occurring too frequently` (checkpoint_warning), or pg_stat_checkpointer num_requested (PostgreSQL 17+; pg_stat_bgwriter checkpoints_req before) climbs during the load.
+  - Application log shows autocommit with one commit per row, or a per-row ORM save in a loop.
 preconditions:
-  - "The data can be produced as CSV/text/binary or as a stream; COPY needs a source file or client stream."
-  - "COPY FROM is not supported on tables with row-level security; use batched INSERT there."
-  - "Know whether other sessions may read the table during the load."
+  - The data can be produced as CSV/text/binary or as a stream; COPY needs a source file or client stream.
+  - COPY FROM is not supported on tables with row-level security; use batched INSERT there.
+  - ON_ERROR ignore (and REJECT_LIMIT, LOG_VERBOSITY) needs PostgreSQL 17 or newer and only applies to text and csv format.
+  - Know whether other sessions may read the table during the load.
 steps:
-  - "Replace per-row INSERT with `COPY table (cols) FROM ... WITH (FORMAT csv)`; from a client without server file access use the driver's COPY stream API or psql's copy meta-command."
-  - "If COPY is not possible, wrap the inserts in one explicit transaction (no per-row commit) and use multi-row INSERT or a prepared statement."
-  - "For a fresh or truncated table, load first and create indexes and foreign keys afterwards; for very large loads on existing tables consider dropping and re-adding indexes and constraints, since the trigger event queue for foreign keys can exhaust memory."
-  - "For the load session set `maintenance_work_mem` higher before the index builds, and raise `max_wal_size` temporarily if checkpoints are frequent."
-  - "Run `ANALYZE table` (or VACUUM ANALYZE) after the load so the planner has fresh statistics."
+  - Replace per-row INSERT with `COPY table (cols) FROM ... WITH (FORMAT csv)`; from a client without server file access use the driver's COPY stream API or psql's \copy meta-command.
+  - If COPY is not possible, wrap the inserts in one explicit transaction (no per-row commit) and use multi-row INSERT or a prepared statement.
+  - For a fresh or truncated table, load first and create indexes and foreign keys afterwards; for very large loads on existing tables consider dropping and re-adding foreign keys (and indexes), since the pending trigger event queue can exhaust memory.
+  - Set `maintenance_work_mem` higher in the session that builds indexes or adds foreign keys (it does little for COPY itself), and raise `max_wal_size` temporarily in postgresql.conf (reload) if checkpoints are frequent.
+  - Run `ANALYZE table` (or VACUUM ANALYZE) after the load so the planner has fresh statistics.
 verification:
-  - "Row count and a checksum or sample comparison match the source data (`SELECT count(*)` and an aggregate)."
-  - "Constraints re-added without errors; indexes valid (no INVALID in psql `\\d`)."
-  - "Wall time of the load in A/B arms falls; pg_stat_statements no longer shows per-row INSERT calls."
+  - Row count and a checksum or sample comparison match the source data (`SELECT count(*)` and an aggregate).
+  - Constraints re-added without errors; indexes valid (no INVALID in psql `\d`).
+  - Wall time of the load in A/B arms falls; pg_stat_statements no longer shows per-row INSERT calls.
 traps:
-  - "COPY FROM fires triggers and check constraints but not rules; behavior depends on what the table defines."
-  - "With ON_ERROR ignore, bad rows are dropped and the rest become visible, so a partial load no longer fails; the default (stop) fails the whole command."
-  - "A failed COPY leaves dead tuples that occupy space until VACUUM."
-  - "The FREEZE option violates normal MVCC visibility and needs a table created or truncated in the same transaction."
-  - "Dropping a unique index or constraint removes duplicate checking during the load; validate afterwards."
-  - "Data-only dump restores do not rebuild indexes or constraints for you."
-expectedEffect: "Large reduction in per-row overhead for bulk imports; varies with row width, indexes, and WAL settings; measure."
+  - COPY FROM fires triggers and check constraints but not rules; behavior depends on what the table defines.
+  - With ON_ERROR ignore, bad rows are discarded (a NOTICE reports the count) and the rest are loaded, so a partial load no longer fails; the default (stop) fails the whole command.
+  - A failed COPY leaves its rows in a deleted state that occupies space until VACUUM.
+  - The FREEZE option violates normal MVCC visibility (other sessions see the data immediately), needs a table created or truncated in the current subtransaction, and is not possible on partitioned or foreign tables.
+  - Dropping a unique index or constraint removes duplicate checking during the load; validate afterwards.
+  - Data-only dump restores do not drop or recreate indexes or foreign keys for you.
+expectedEffect: Large reduction in per-row overhead for bulk imports; varies with row width, indexes, and WAL settings; measure.
 sources:
   - https://www.postgresql.org/docs/current/populate.html
   - https://www.postgresql.org/docs/current/sql-copy.html
+  - https://www.postgresql.org/docs/current/runtime-config-wal.html
+  - https://www.postgresql.org/docs/17/release-17.html
+  - https://www.postgresql.org/docs/current/monitoring-stats.html
 verifiedIn: unverified

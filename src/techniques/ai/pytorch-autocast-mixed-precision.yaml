@@ -12,25 +12,26 @@ signals:
   - Profiler shows matmul/convolution kernels in float32 dominating step time on a GPU with Tensor Cores
   - Training runs in full float32 with ample memory headroom but low throughput
 preconditions:
-  - GPU with fast float16 or bfloat16 support (Tensor Cores on Volta or newer) or CPU with bfloat16
+  - GPU with Tensor Cores and float16 or bfloat16 support, or a CPU with bfloat16 autocast support (the CPU default dtype is bfloat16)
   - "Quality oracle: loss curve or validation metric to compare with float32"
 steps:
-  - 'Wrap only the forward pass and loss in with torch.autocast(device_type="cuda"): keep backward() and optimizer.step() outside'
-  - For float16 add torch.amp.GradScaler (scale the loss, unscale before the step); for bfloat16 a GradScaler is not needed
+  - 'Wrap only the forward pass and loss in with torch.autocast(device_type="cuda"): the docs say backward passes under autocast are not recommended, so keep backward() and optimizer.step() outside'
+  - 'For float16 (the CUDA default dtype) use torch.amp.GradScaler("cuda"): scale the loss, call unscale_ before clipping, then scaler.step(optimizer) and scaler.update(); the torch.cuda.amp.GradScaler spelling is deprecated'
   - Do not call .half() or .bfloat16() on the model or inputs; autocast casts per op
-  - Use dimensions that are multiples of 8 for Tensor Cores; use the non-deprecated torch.amp.autocast API
+  - Use dimensions that are multiples of 8 so they map onto Tensor Cores (tuning guide); use the torch.amp.autocast API rather than the deprecated torch.cuda.amp.autocast
   - Compare loss curve and validation metric with the float32 run
 verification:
   - Throughput rises and the validation metric stays within tolerance of float32
   - No NaN or inf in loss or gradients
 traps:
-  - "Numerics change: some bf16-pretrained models overflow in the float16 range (max 65504) and produce NaNs"
-  - binary_cross_entropy and BCELoss raise errors in autocast; use the with-logits variants
-  - In-place ops, out= and explicit dtype arguments opt out of autocast
-  - Autocast state is thread-local, which matters for DataParallel and multi-GPU setups
-  - Ops like softmax, norms and cross_entropy run in float32 by design
+  - "Numerics change: the docs note that most bf16-pretrained models cannot operate in the float16 range (max 65504) and their gradients overflow"
+  - binary_cross_entropy and BCELoss raise an error in autocast regions; use binary_cross_entropy_with_logits or BCEWithLogitsLoss
+  - In-place variants and calls with out= are allowed but are not autocast, and ops called with an explicit dtype= argument are not eligible
+  - "Autocast state is thread-local: with DataParallel, or DistributedDataParallel running several devices per process, apply autocast inside the model forward so side threads get it"
+  - Some ops run in float32 by design (on CUDA this list includes softmax, cross_entropy and layer_norm); the op lists differ between CUDA and CPU
 expectedEffect: Higher training or inference throughput on supporting hardware, lower memory; varies, measure.
 sources:
   - https://docs.pytorch.org/docs/2.14/amp.html
+  - https://docs.pytorch.org/docs/2.14/notes/amp_examples.html
   - https://docs.pytorch.org/tutorials/recipes/recipes/tuning_guide.html
 verifiedIn: unverified

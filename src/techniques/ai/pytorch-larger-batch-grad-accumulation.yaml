@@ -15,19 +15,21 @@ preconditions:
   - User opted into changing training dynamics; validation metric available
   - Learning rate and schedule can be retuned
 steps:
-  - Raise the batch size until memory is nearly full (activation checkpointing with torch.utils.checkpoint can free memory) and re-tune the learning rate
-  - Or accumulate gradients over N micro-batches before optimizer.step() to keep the effective batch size, dividing the loss by N
+  - Raise the batch size until memory is nearly full (activation checkpointing with torch.utils.checkpoint can free memory and allow a larger batch) and re-tune the learning rate
+  - Or accumulate gradients over N micro-batches before optimizer.step() to keep the effective batch size, dividing each micro-batch loss by N; with a GradScaler call scaler.update() only after a full effective batch has been stepped
   - With DistributedDataParallel wrap the first N-1 micro-batches in model.no_sync() so gradients all-reduce only on the last
-  - Use optimizer.zero_grad(set_to_none=True)
   - Compare samples per second and validation metric to convergence
 verification:
   - Samples per second rises and the validation metric reaches the same quality in comparable or less wall time
 traps:
   - Larger effective batch changes optimization behavior and may need learning-rate and warmup changes
-  - Batch norm statistics depend on micro-batch size, so accumulation is not equivalent for batch-norm models
-  - set_to_none changes numerics slightly versus zeroing
+  - BatchNorm computes its statistics per forward batch (per micro-batch when accumulating), so accumulation is not equivalent to a larger batch for batch-norm models
+  - zero_grad(set_to_none=True) is the default in current PyTorch; None gradients behave differently from zeros, for example an optimizer skips a parameter whose grad is None but steps with a zero gradient, which matters with momentum or weight decay
   - Without no_sync, DDP all-reduces after every backward, wasting accumulation benefit
 expectedEffect: Higher throughput when the GPU was underfilled; convergence per step changes; measure time to target quality.
 sources:
   - https://docs.pytorch.org/tutorials/recipes/recipes/tuning_guide.html
+  - https://docs.pytorch.org/docs/2.14/notes/amp_examples.html
+  - https://docs.pytorch.org/docs/2.14/generated/torch.optim.Optimizer.zero_grad.html
+  - https://docs.pytorch.org/docs/2.14/generated/torch.nn.BatchNorm2d.html
 verifiedIn: unverified

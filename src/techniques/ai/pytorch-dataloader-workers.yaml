@@ -17,21 +17,23 @@ preconditions:
   - Dataset is safe to read from several processes
 steps:
   - Profile first with torch.profiler (schedule with wait, warmup, active and prof.step() per iteration) or time the data loop alone to confirm loading is the bottleneck
-  - Set num_workers to a positive value and tune it against core count and storage speed
-  - Set pin_memory=True for GPU training and copy tensors to the device with non_blocking=True
-  - Set persistent_workers=True when epochs are short so workers are not recreated each epoch; tune prefetch_factor (default 2 per worker)
-  - On macOS and Windows (spawn start method) guard the entry point with if __name__ == "__main__"
+  - Set num_workers to a positive value and tune it against core count and storage speed (the tuning guide says to tune it for the workload, CPU, GPU and data location)
+  - Set pin_memory=True for GPU training and copy tensors to the device with non_blocking=True (pinned host memory is what makes the asynchronous copy possible)
+  - Set persistent_workers=True when epochs are short so workers are not recreated each epoch; tune prefetch_factor (default 2 per worker when num_workers > 0)
+  - On macOS and Windows (spawn start method) guard the entry point with if __name__ == "__main__" and declare collate_fn, worker_init_fn and dataset code as top-level definitions
 verification:
   - Step time or samples per second improves and GPU idle gaps shrink in the profiler trace
-  - Data order and content are as before (same seeds, same transformations)
+  - Data order and content are as before for deterministic transforms; with random augmentation the random draws differ from the num_workers=0 run, so compare distributions or metrics, not exact samples
 traps:
-  - Each worker can hold a copy of Python objects it touches; memory may grow towards workers times parent size (use NumPy or Arrow style non-refcounted storage)
+  - Each worker gets a replica of the dataset object; Python objects it touches can be duplicated, so memory may grow towards workers times parent size (use NumPy, Pandas or PyArrow storage)
   - Too many workers hurt on few cores or slow disks
-  - Spawn start method pickles the dataset and costs startup time
-  - Random augmentations need per-worker seeding to avoid duplicates (PyTorch seeds workers by default)
+  - Under spawn the dataset and worker_init_fn must be picklable (no lambdas), and worker startup costs time
+  - Workers get PyTorch seed base_seed + worker_id, but other libraries such as NumPy may be seeded identically across workers, so augmentations can repeat; seed them in worker_init_fn
+  - Overusing pinned memory can cause problems when RAM is low
 expectedEffect: Removes GPU idle time caused by synchronous loading; varies with workload, measure.
 sources:
   - https://docs.pytorch.org/docs/2.14/data.html
+  - https://docs.pytorch.org/docs/2.14/notes/cuda.html
   - https://docs.pytorch.org/tutorials/recipes/recipes/tuning_guide.html
   - https://docs.pytorch.org/tutorials/recipes/recipes/profiler_recipe.html
 verifiedIn: unverified

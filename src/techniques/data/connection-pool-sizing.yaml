@@ -3,31 +3,38 @@ domain: data
 title: Size the database connection pool small and measure instead of growing it
 kind: guided
 riskClass: lossless
-stacks: [jvm, postgres, mysql]
-bottlenecks: [contention, query]
+stacks:
+  - jvm
+  - postgres
+  - mysql
+bottlenecks:
+  - contention
+  - query
 signals:
   - "Pool metrics (HikariCP via Micrometer or JMX: active, pending, timeouts, usage and acquire time) show many threads waiting for a connection, or the opposite: a pool of 50-100+ connections with most idle."
-  - "pg_stat_activity on PostgreSQL shows hundreds of connections with many active at once and the database CPU saturated, yet throughput does not rise with pool size."
-  - "Thread dumps (jstack, async-profiler wall mode) show request threads parked in the pool's getConnection."
+  - pg_stat_activity on PostgreSQL shows hundreds of connections with many active at once and the database CPU saturated, yet throughput does not rise with pool size.
+  - Thread dumps (jstack, async-profiler wall mode) show request threads parked in the pool's getConnection.
 preconditions:
-  - "The pool is HikariCP or a pool with equivalent knobs. Know the database server core count and whether data is mostly cached."
+  - The pool is HikariCP or a pool with equivalent knobs. Know the database server core count and whether data is mostly cached.
   - "Load-test ability: the final value must come from measurement."
 steps:
   - "Compute a starting point: connections = (database core_count * 2) + effective_spindle_count, with the spindle count near zero when the working set is cached. Hyperthreads do not count as cores. Treat it as a first guess."
   - "Set `maximumPoolSize` (Spring Boot: `spring.datasource.hikari.maximum-pool-size`) to that value, and leave minimumIdle unset so the pool is fixed-size."
-  - "Run the workload and step the size up and down around the start; keep the smallest size where throughput peaks and p99 latency is lowest."
-  - "If threads hold one connection while requesting another, ensure the pool is at least Tn x (Cm - 1) + 1 to avoid pool-locking deadlock, or remove the nested acquisition."
-  - "If long and short transactions are mixed, consider two separate pools."
+  - Run the workload and step the size up and down around the start; keep the smallest size where throughput peaks and p99 latency is lowest.
+  - If threads hold one connection while requesting another, ensure the pool is at least Tn x (Cm - 1) + 1 to avoid pool-locking deadlock, or remove the nested acquisition.
+  - If long and short transactions are mixed, consider two separate pools.
 verification:
-  - "Throughput and p99 latency at the new size are equal or better in A/B arms; pending-thread metric is non-zero but acquire time stays low."
-  - "pg_stat_activity or server CPU shows fewer concurrent active sessions with no increase in connection timeout errors."
-  - "No connection acquisition timeouts in the logs during the test."
+  - Throughput and p99 latency at the new size are equal or better in A/B arms; pending-thread metric is non-zero but acquire time stays low.
+  - pg_stat_activity or server CPU shows fewer concurrent active sessions with no increase in connection timeout errors.
+  - No connection acquisition timeouts in the logs during the test.
 traps:
   - "A pool shared across many app instances multiplies: total connections = pool size x instances; compare against the server max_connections."
-  - "Too small a pool with long-held connections (transactions that call external services) starves requests; fix the hold time first."
-  - "The formula is documented as untested on SSDs; it is a starting point only."
-  - "Open-in-view and slow clients can pin connections longer than the query takes."
-expectedEffect: "Lower latency and steadier throughput when the pool was oversized relative to database cores; varies; measure."
+  - Too small a pool with long-held connections (transactions that call external services) starves requests; fix the hold time first.
+  - The formula is documented as untested on SSDs; it is a starting point only.
+  - Open-in-view and slow clients can pin connections longer than the query takes.
+expectedEffect: Lower latency and steadier throughput when the pool was oversized relative to database cores; varies; measure.
 sources:
   - https://github.com/brettwooldridge/HikariCP/wiki/About-Pool-Sizing
+  - https://github.com/brettwooldridge/HikariCP
+  - https://docs.spring.io/spring-boot/reference/data/sql.html
 verifiedIn: unverified

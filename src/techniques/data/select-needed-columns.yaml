@@ -3,36 +3,48 @@ domain: data
 title: Select only the columns the caller uses instead of SELECT * over wide rows
 kind: guided
 riskClass: lossless
-stacks: [postgres, mysql, django, hibernate, sqlalchemy]
-bottlenecks: [query, io, network, serialization]
+stacks:
+  - postgres
+  - mysql
+  - django
+  - hibernate
+  - sqlalchemy
+bottlenecks:
+  - query
+  - io
+  - network
+  - serialization
 signals:
   - "pg_stat_statements shows a statement with a high bytes-per-row profile: large `rows` times wide result, high shared_blks_read, and `SELECT *` or full-entity text in the normalized query."
-  - "EXPLAIN (ANALYZE, BUFFERS) shows a large `width=` estimate on the scan node and many buffers read for a query whose consumer reads two or three fields."
-  - "pg_column_size() on text, bytea, or jsonb columns shows large values (kilobytes) that the endpoint never returns."
-  - "ORM SQL logging shows every column of a wide entity selected for a list or existence view."
+  - EXPLAIN (ANALYZE, BUFFERS) shows a large `width=` estimate on the scan node and many buffers read for a query whose consumer reads two or three fields.
+  - pg_column_size() on text, bytea, or jsonb columns shows large values (kilobytes) that the endpoint never returns.
+  - ORM SQL logging shows every column of a wide entity selected for a list or existence view.
 preconditions:
-  - "The caller's code path reads a known subset of columns."
+  - The caller's code path reads a known subset of columns.
   - "For index-only benefits: a B-tree (or supporting) index covers the selected columns and the table's visibility map is mostly set."
 steps:
-  - "List the fields the code path actually reads, then name them in the SELECT instead of `*`."
-  - "Django: `.only('a','b')` or `.defer('big_col')` for model instances, or `.values()`/`.values_list()` to skip building model objects. Do not defer fields the template later touches, to avoid one query per row."
-  - "JPA/Hibernate: use a constructor or interface projection (DTO query, `select new ...`, Spring Data projections) instead of loading the entity."
-  - "SQLAlchemy: `select(Model.a, Model.b)` or `load_only(...)` / `defer(...)`."
-  - "Optionally add an index with `INCLUDE (cols)` so the query can become an index-only scan."
-  - "For huge text/bytea columns, move rarely needed values to their own table or keep them out of list queries."
+  - List the fields the code path actually reads, then name them in the SELECT instead of `*`.
+  - "Django: `.only(...)` or `.defer(...)` for model instances (the docs call them advanced use: measure first), or `.values()`/`.values_list()` to skip building model instances. Do not defer fields the template later touches."
+  - "JPA/Hibernate: use an interface or class-based (DTO record) projection, for example Spring Data projections or a `select new ...` query, instead of loading the entity."
+  - "SQLAlchemy: `select(Model.a, Model.b)` for columns, or `load_only(...)` / `defer(...)` loader options on entity selects."
+  - Optionally add an index with `INCLUDE (cols)` so the query can become an index-only scan.
+  - For huge text/bytea columns, move rarely needed values to their own table or keep them out of list queries.
 verification:
-  - "The captured SQL no longer selects the dropped columns; response or computed output is identical to before."
-  - "EXPLAIN (ANALYZE, BUFFERS) shows lower `width` and fewer buffers; on TOASTed columns, no detoasting of omitted values."
-  - "Query count per request has not increased (no deferred-field access causing per-row loads)."
+  - The captured SQL no longer selects the dropped columns; response or computed output is identical to before.
+  - EXPLAIN (ANALYZE, BUFFERS) shows lower `width` and fewer buffers; on TOASTed columns, no detoasting of omitted values.
+  - Query count per request has not increased (no deferred-field access causing per-row loads).
 traps:
-  - "In PostgreSQL, TOASTed values are fetched out of line only when selected, so omitting them skips the TOAST table read and decompression; for narrow rows the gain is small."
-  - "Django defer/only: touching a deferred field later issues one query per instance, which turns a saving into an N+1."
-  - "Entities loaded partially in an ORM can be saved incompletely or fail lazy-initialization checks; use read-only projections."
-  - "Index-only scans fall back to heap visits when the visibility map is stale (high `Heap Fetches`)."
-  - "Explicit column lists survive column additions; SELECT * with cached plans can raise 'cached plan must not change result type' in pgJDBC."
-expectedEffect: "Less I/O, memory, and serialization per row; gain grows with row width and result size, varies; measure."
+  - In PostgreSQL, big TOASTed values are pulled out of line only if selected, at the time the result set is sent, so omitting them skips the TOAST read and decompression; for narrow rows the gain is small.
+  - "Django defer/only: each deferred field is fetched one at a time on first access per instance, which turns a saving into an N+1; deferred fields cannot lazy-load from async code (SynchronousOnlyOperation)."
+  - SQLAlchemy deferred columns lazy-load on access and fail on detached objects or under asyncio; use raiseload or undefer where needed. Partially loaded ORM entities can be saved incompletely, so use read-only projections.
+  - Index-only scans fall back to heap visits when the visibility map is stale (high `Heap Fetches`).
+  - Explicit column lists survive column additions; SELECT * with cached plans can raise 'cached plan must not change result type' in pgJDBC.
+expectedEffect: Less I/O, memory, and serialization per row; gain grows with row width and result size, varies; measure.
 sources:
   - https://www.postgresql.org/docs/current/storage-toast.html
   - https://www.postgresql.org/docs/current/indexes-index-only-scans.html
   - https://docs.djangoproject.com/en/stable/ref/models/querysets/
+  - https://docs.spring.io/spring-data/jpa/reference/repositories/projections.html
+  - https://docs.sqlalchemy.org/en/20/orm/queryguide/columns.html
+  - https://jdbc.postgresql.org/documentation/server-prepare/
 verifiedIn: unverified

@@ -3,31 +3,45 @@ domain: jvm
 title: GraalVM native image for Spring Boot (startup and memory)
 kind: guided
 riskClass: upgrade
-stacks: [spring-boot, jvm, maven, gradle, docker]
-bottlenecks: [startup, allocation]
+stacks:
+  - spring-boot
+  - jvm
+  - maven
+  - gradle
+  - docker
+bottlenecks:
+  - startup
+  - allocation
 signals:
-  - "Time-to-ready and resident memory (RSS) are the primary metrics and the deployment unit is a short-lived or scale-to-zero process."
-  - "Application workload is not dominated by long-run peak throughput (JFR shows little steady-state JIT-dependent hot-loop time)."
-  - "Dependencies are known to support native image; dynamic class loading and runtime bytecode generation are absent."
+  - Time-to-ready and resident memory (RSS) are the primary metrics and the deployment unit is a short-lived or scale-to-zero process.
+  - Application workload is not dominated by long-run peak throughput (JFR shows little steady-state JIT-dependent hot-loop time).
+  - Dependencies are known to support native image; dynamic class loading and runtime bytecode generation are absent.
 preconditions:
-  - "GraalVM JDK with native-image available, plus the Spring Boot Maven or Gradle plugin; this replaces the runtime, hence an upgrade."
-  - "Build environment with enough memory and time for AOT compilation."
+  - GraalVM JDK with native-image (the Spring Boot 4.1 docs use version 25; Buildpacks need the build JDK to be at least 25) plus the Spring Boot Maven or Gradle plugin; this replaces the runtime, hence an upgrade.
+  - Build environment with enough memory and time for AOT compilation; native-image does not cross-compile, and Docker is needed for the buildpack path (the docs suggest at least 8GB for Docker on macOS).
 steps:
-  - "Maven: `./mvnw -Pnative native:compile`, or `-Pnative spring-boot:build-image` for a container; Gradle: `./gradlew nativeCompile`."
-  - "Run the tests as native (`nativeTest` / `-PnativeTest`) so missing reflection, resource and proxy hints show up."
-  - "Add RuntimeHints or @RegisterReflectionForBinding for reflection, resources and serialization the AOT engine cannot infer."
-  - "Compare against the JVM arm on the same workload for both startup and steady-state."
+  - "Maven: `mvn -Pnative native:compile` (executable in target/), or `mvn -Pnative spring-boot:build-image` for a container; Gradle: `gradle nativeCompile` (executable in build/native/nativeCompile) or `gradle bootBuildImage`."
+  - "Run the tests as native so missing reflection, resource and proxy hints show up: Maven `mvn -PnativeTest test`, Gradle `gradle nativeTest`."
+  - "Add hints the AOT engine cannot infer: a RuntimeHintsRegistrar activated with @ImportRuntimeHints, @RegisterReflectionForBinding for JSON binding types, or the native-image tracing agent (`-agentlib:native-image-agent=config-output-dir=...`) to discover missing hints."
+  - Compare against the JVM arm on the same workload for both startup and steady-state.
 verification:
-  - "Native binary starts, serves the same responses, and passes the full native test run."
-  - "Measure time-to-ready and RSS in A/B arms; also measure steady-state throughput and latency."
+  - Native binary starts, serves the same responses, and passes the full native test run.
+  - Measure time-to-ready and RSS in A/B arms; also measure steady-state throughput and latency.
 traps:
-  - "Much longer builds and higher build memory than a normal jar."
-  - "Closed-world: reflection, proxies, resources and serialization must be known at build time; libraries relying on dynamic behavior may need manual hints or be incompatible."
-  - "Peak throughput is often lower than a warmed-up JIT JVM; a startup win can be a throughput loss."
-  - "JVM tooling (JFR, async-profiler, jcmd) behaves differently or is unavailable."
-  - "Spring AOT hard-codes profiles and conditions at build time."
-expectedEffect: "Much faster startup and lower memory than the JVM; lower peak throughput on long-running loads; varies; measure."
+  - Much longer builds and higher build memory than a normal jar; the native-image builder sizes its heap from available RAM (up to 32GB by default).
+  - "Closed-world: static analysis from main removes unreachable code, the class path is fixed at build time, and reflection, resources, serialization and dynamic proxies must be declared; libraries relying on dynamic behavior may need manual hints or be incompatible."
+  - Spring AOT hard-codes profiles and conditions at build time; properties that decide whether a bean exists (@ConditionalOnProperty, .enabled) are not supported.
+  - Throughput on long-running loads is not guaranteed to match a warmed-up JIT JVM; GraalVM recommends profile-guided optimization (PGO) for throughput, so measure steady-state before accepting a startup win.
+  - JVMTI and bytecode-based tools are not supported in native image (this rules out agent-based profilers such as async-profiler); JFR and jcmd work only when enabled at build time with --enable-monitoring (jfr, jcmd), and jcmd is not available on Windows.
+expectedEffect: The Spring Boot docs state a smaller memory footprint and much faster startup than the JVM, without figures; steady-state throughput may be lower; varies, measure.
 sources:
-  - https://docs.spring.io/spring-boot/reference/packaging/native-image/index.html
+  - https://docs.spring.io/spring-boot/reference/packaging/native-image/introducing-graalvm-native-images.html
+  - https://docs.spring.io/spring-boot/reference/packaging/native-image/advanced-topics.html
+  - https://docs.spring.io/spring-boot/how-to/native-image/developing-your-first-application.html
+  - https://docs.spring.io/spring-boot/how-to/native-image/testing-native-applications.html
   - https://docs.spring.io/spring-framework/reference/core/aot.html
+  - https://www.graalvm.org/latest/reference-manual/native-image/metadata/Compatibility/
+  - https://www.graalvm.org/latest/reference-manual/native-image/optimizations-and-performance/
+  - https://www.graalvm.org/latest/reference-manual/native-image/debugging-and-diagnostics/jcmd/
+  - https://www.graalvm.org/latest/reference-manual/native-image/overview/BuildConfiguration/
 verifiedIn: unverified
