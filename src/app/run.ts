@@ -571,12 +571,13 @@ export async function cancelRun(
         `run ${located.runId} ended before the cancel took effect`,
       );
     }
-    return {
+    // Like every result: Docker's stderr (`containers.error`) can name paths.
+    return redact({
       runId: located.runId,
       cancelledJobs: [],
       processes: killSummary(kill),
       observationsKept: (await readLedger(located.runDir)).length,
-    };
+    });
   }
   const active = await activeRun(context, options.runId);
   return withControlLock(active.runDir, controlLockWaitMs(context), () =>
@@ -623,12 +624,12 @@ async function cancelLocked(context: AppContext, active: ActiveRun): Promise<Can
     },
   );
   await releaseMachineLock({ runId: active.runId, home: active.home });
-  return {
+  return redact({
     runId: active.runId,
     cancelledJobs,
     processes: killSummary(kill),
     observationsKept: (await readLedger(runDir)).length,
-  };
+  });
 }
 
 /**
@@ -752,11 +753,11 @@ export async function measure(
       `the baseline ${job?.status ?? "did not finish"}: ${job?.error?.message ?? "no detail"}`,
     );
   }
-  return {
+  return redact({
     runId: started.runId,
     baseline: job.result as unknown as BaselineResult,
-    warnings: redact(started.warnings),
-  };
+    warnings: started.warnings,
+  });
 }
 
 /**

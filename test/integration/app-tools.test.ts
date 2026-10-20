@@ -1,6 +1,7 @@
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   cancelRun,
   checkCapabilities,
@@ -137,6 +138,74 @@ describe("listing techniques", { timeout: TIMEOUT_MS }, () => {
     const toyOnly = await listTechniques(toy.context, { domain: "toy" });
     expect(toyOnly.cards.length).toBeGreaterThan(0);
     expect(toyOnly.cards.every((card) => card.domain === "toy")).toBe(true);
+  });
+});
+
+const FAKE_KEY = `sk-proj-${"Z9y8X7w6".repeat(6)}`;
+
+// M2 B3d: these views reach an agent's model provider, so they go through the redactor too.
+describe("the views behind the read-only tools", { timeout: TIMEOUT_MS }, () => {
+  it("name the home as ~ and replace secrets", async () => {
+    const other = makeToy({
+      config: (yaml) => `${lightWorkload(`mytool --key ${FAKE_KEY}`)(yaml)}cardDirs:\n  - cards\n`,
+    });
+    try {
+      // A card of the repository whose text carries the key.
+      mkdirSync(path.join(other.repo, "cards", "secret"), { recursive: true });
+      writeFileSync(
+        path.join(other.repo, "cards", "secret", "leak.yaml"),
+        [
+          "id: secret.leak",
+          "domain: secret",
+          "title: A card that quotes a key",
+          "kind: guided",
+          "riskClass: lossless",
+          "signals:",
+          `  - the profile shows ${FAKE_KEY} in every request`,
+          "verifiedIn: unverified",
+          "",
+        ].join("\n"),
+      );
+      // A program under the home, on the PATH the commands get.
+      const bin = path.join(other.root, "bin");
+      mkdirSync(bin);
+      writeFileSync(path.join(bin, "mytool"), "#!/bin/sh\n");
+      chmodSync(path.join(bin, "mytool"), 0o755);
+      const context = {
+        ...other.context,
+        workerEnv: {
+          ...other.context.workerEnv,
+          PATH: `${bin}${path.delimiter}${process.env.PATH}`,
+        },
+      };
+      const homedir = vi.spyOn(os, "homedir").mockReturnValue(other.root);
+      try {
+        const inspected = await inspectTarget(context);
+        expect(inspected.repoRoot).toBe("~/repo");
+        expect(inspected.commands).toContainEqual({
+          what: "workload setup",
+          command: "mytool --key <redacted:api_key>",
+        });
+        const capabilities = await checkCapabilities(context);
+        expect(capabilities.programs[0]).toMatchObject({
+          program: "mytool",
+          found: true,
+          path: "~/bin/mytool",
+        });
+        const listed = await listTechniques(context, { domain: "secret" });
+        expect(listed.cards[0]?.signals).toEqual([
+          "the profile shows <redacted:api_key> in every request",
+        ]);
+        for (const view of [inspected, capabilities, listed]) {
+          expect(JSON.stringify(view)).not.toContain(FAKE_KEY);
+          expect(JSON.stringify(view)).not.toContain(other.root);
+        }
+      } finally {
+        homedir.mockRestore();
+      }
+    } finally {
+      await other.cleanup();
+    }
   });
 });
 

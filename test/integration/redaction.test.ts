@@ -172,7 +172,21 @@ describe("redaction of command output", { timeout: TIMEOUT_MS }, () => {
       expect(
         JSON.stringify({ ...view, current: { ...view.current, arms: undefined } }),
       ).not.toContain(toy.root);
-      expect((await resumeRun(toy.context, { runId })).arms).toEqual(arms);
+      // Docker's stderr in the resume and cancel results names the home too (M2 B3d).
+      const noisyDocker = {
+        ...toy.context,
+        exec: async () => {
+          throw new Error(`docker: not found in ${toy.root}/bin`);
+        },
+      };
+      const resumed = await resumeRun(noisyDocker, { runId });
+      expect(resumed.arms).toEqual(arms);
+      expect(resumed.processes.containers.error).toBe("docker: not found in ~/bin");
+      expect(JSON.stringify({ ...resumed, arms: undefined })).not.toContain(toy.root);
+      const cancelled = await cancelRun(noisyDocker, { runId });
+      runId = undefined;
+      expect(cancelled.processes.containers.error).toBe("docker: not found in ~/bin");
+      expect(JSON.stringify(cancelled)).not.toContain(toy.root);
     } finally {
       homedir.mockRestore();
       if (runId !== undefined) await cancelRun(toy.context, { runId });
