@@ -306,12 +306,32 @@ async function startRunFor(
   } catch (error) {
     await killRunProcesses(runDir, killOptions(context)).catch(() => undefined);
     // The arms and the branch first: without the run state, nothing would find them again.
-    if (created !== undefined) {
-      await removeRun(created.run, { deleteBranch: true }).catch(() => undefined);
-    }
+    const left = created === undefined ? undefined : await removeCreated(created.run, repo.root);
     await rm(runDir, { recursive: true, force: true });
     await releaseMachineLock({ runId, home });
+    // So the error names the branch that nothing else will: its class and code still say why
+    // the start failed.
+    if (left !== undefined && error instanceof Error) error.message = `${error.message}; ${left}`;
     throw error;
+  }
+}
+
+/**
+ * Removes the arms and branch of a start that failed. Returns what to tell the user when the run
+ * branch is left behind.
+ */
+async function removeCreated(run: CreatedRun["run"], root: string): Promise<string | undefined> {
+  try {
+    await removeRun(run, { deleteBranch: true });
+    return undefined;
+  } catch (error) {
+    const branch = await runGit(
+      ["rev-parse", "--verify", "--quiet", `refs/heads/${run.branch}`],
+      root,
+    ).catch(() => undefined);
+    if (branch?.code === 1) return undefined;
+    const why = error instanceof Error ? error.message : String(error);
+    return `could not remove the run branch ${run.branch} (${why}); delete it with \`git branch -D ${run.branch}\``;
   }
 }
 
