@@ -1,7 +1,6 @@
 // The MCP tool catalog (plan §2.4) over the app layer's workflows. There is no approval, opt-in,
 // or budget tool: those stay with the human at a terminal (`ufo approve`, `ufo extend-budget`).
 
-import path from "node:path";
 import type { McpServer, ToolAnnotations } from "@modelcontextprotocol/server";
 import * as z from "zod";
 import {
@@ -23,10 +22,10 @@ import {
 import { respond } from "./results.js";
 
 export interface ToolDeps {
-  /** The app context of one call: the server's own, at the repository the call names. */
-  context(repo: string | undefined): AppContext;
-  /** The host agent driving the run, as the MCP client names itself. */
-  hostAgent(): string;
+  /** The app context of every call, fixed by the process: the bound repository and the rest. */
+  readonly context: AppContext;
+  /** The host agent driving the run, from `ufo mcp --host`. */
+  readonly hostAgent: string;
 }
 
 /** Said by every tool whose result carries text from the repository or its commands. */
@@ -48,14 +47,6 @@ const QUEUES_WORK: ToolAnnotations = {
   openWorldHint: false,
 };
 
-const repo = z
-  .string()
-  .max(4096)
-  .refine((value) => path.isAbsolute(value), "must be an absolute path")
-  .optional()
-  .describe(
-    "Absolute path of the repository, or of any directory inside it. Default: the server's repository (--repo, CLAUDE_PROJECT_DIR, or its working directory).",
-  );
 const runId = z
   .string()
   .max(64)
@@ -85,10 +76,10 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
     {
       title: "Inspect the target repository",
       description: `The repository UFO would optimize: its root, the stack files at the root, whether ufo.yaml is present, valid, and approved for this repository, the objective, the enabled cards, and every command the approval covers. Start here. Only a person can approve ufo.yaml: ask the user to run \`ufo approve\` in their own terminal, and never run it yourself; no tool approves. ${DATA}`,
-      inputSchema: z.strictObject({ repo }),
+      inputSchema: z.strictObject({}),
       annotations: READ_ONLY,
     },
-    (args) => respond(() => inspectTarget(deps.context(args.repo))),
+    () => respond(() => inspectTarget(deps.context)),
   );
 
   server.registerTool(
@@ -96,10 +87,10 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
     {
       title: "Check the tools the workload needs",
       description: `The git, Node.js, and Docker versions, and whether each program the approved commands start is on the PATH those commands get, with an install hint for each missing one. Runs no repository command. ${DATA}`,
-      inputSchema: z.strictObject({ repo }),
+      inputSchema: z.strictObject({}),
       annotations: READ_ONLY,
     },
-    (args) => respond(() => checkCapabilities(deps.context(args.repo))),
+    () => respond(() => checkCapabilities(deps.context)),
   );
 
   server.registerTool(
@@ -108,17 +99,13 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
       title: "List technique cards",
       description: `The technique cards UFO knows for this repository: id, domain, title, kind (recipe or guided), risk class, the profiler signals that point at each card, and whether ufo.yaml enables it. Only an enabled card can be submitted; pick one whose signals match the evidence. ${DATA}`,
       inputSchema: z.strictObject({
-        repo,
         domain: z.string().max(64).optional().describe("Only cards of this domain."),
       }),
       annotations: READ_ONLY,
     },
     (args) =>
       respond(() =>
-        listTechniques(
-          deps.context(args.repo),
-          args.domain === undefined ? {} : { domain: args.domain },
-        ),
+        listTechniques(deps.context, args.domain === undefined ? {} : { domain: args.domain }),
       ),
   );
 
@@ -128,10 +115,10 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
       title: "Profile the workload once",
       description:
         "Queues one run of the workload in arm A at its commit, with the run's command environment, timing each step (setup, start, sample, teardown) and reading the workload's JSON line; kept as an artifact in the run state. Decides nothing and counts against no budget. Needs a running run. Returns a job id at once: poll get_job for the profile.",
-      inputSchema: z.strictObject({ repo, run_id: runId }),
+      inputSchema: z.strictObject({ run_id: runId }),
       annotations: QUEUES_WORK,
     },
-    (args) => respond(() => profileTarget(deps.context(args.repo), scoped(args))),
+    (args) => respond(() => profileTarget(deps.context, scoped(args))),
   );
 
   server.registerTool(
@@ -140,13 +127,13 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
       title: "Start a run",
       description:
         "Starts a run from the approved ufo.yaml: creates the branch ufo/run-<id> and two arms (UFO's own clones of the repository; read code in arm A, whose path is returned absolute), and queues the baseline (oracle snapshot, five samples, noise floor). Refuses a ufo.yaml that is not approved or changed since (policy:unapproved_config, policy:config_changed): ask the user to run `ufo approve` in their own terminal, and never run it yourself. Returns at once: poll get_job with baselineJobId.",
-      inputSchema: z.strictObject({ repo, model_id: modelId }),
+      inputSchema: z.strictObject({ model_id: modelId }),
       annotations: QUEUES_WORK,
     },
     (args) =>
       respond(() =>
-        startRun(deps.context(args.repo), {
-          hostAgent: deps.hostAgent(),
+        startRun(deps.context, {
+          hostAgent: deps.hostAgent,
           ...(args.model_id === undefined ? {} : { modelId: args.model_id }),
         }),
       ),
@@ -159,7 +146,6 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
       description:
         "Queues one change for UFO to decide: a unified diff against arm A's HEAD that implements one enabled technique card. UFO applies it in arm B, checks the oracles, and measures A against B in interleaved pairs; keep, drop, or inconclusive is UFO's call, and a keep is committed to the run branch. Never edit the arms, tests, benchmarks, oracles, or ufo.yaml. Returns a job id at once: poll get_job for the decision.",
       inputSchema: z.strictObject({
-        repo,
         run_id: runId,
         card_id: z.string().max(64).describe("The enabled technique card the change implements."),
         diff: z
@@ -185,7 +171,7 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
     },
     (args) =>
       respond(() =>
-        submitChange(deps.context(args.repo), {
+        submitChange(deps.context, {
           ...scoped(args),
           cardId: args.card_id,
           diff: args.diff,
@@ -202,7 +188,6 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
       title: "Get a job",
       description: `A job of the run (baseline, change, profile, or finish): its status, progress, and, once it is done, its result or error. Waits up to wait_s seconds for it to finish and returns earlier when it does; call again while it is queued or running. Fails with worker_not_running when no worker is left to run it: call resume_run. ${DATA}`,
       inputSchema: z.strictObject({
-        repo,
         run_id: runId,
         job_id: z.string().max(32).describe("The job id, e.g. job-000001."),
         wait_s: z
@@ -218,7 +203,7 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
     (args, ctx) =>
       respond(async () =>
         withoutDiff(
-          await getJob(deps.context(args.repo), {
+          await getJob(deps.context, {
             ...scoped(args),
             jobId: args.job_id,
             waitS: args.wait_s ?? 0,
@@ -233,10 +218,10 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
     {
       title: "Get a run",
       description: `The run: status, the arm paths (absolute), SHAs, jobs, the baseline, the decisions, the budget, and usable. usable false means the baseline was refused and no change can be decided: finish the run. Long lists keep their latest entries, and truncated says how many were left out. ${DATA}`,
-      inputSchema: z.strictObject({ repo, run_id: runId }),
+      inputSchema: z.strictObject({ run_id: runId }),
       annotations: READ_ONLY,
     },
-    (args) => respond(() => getRun(deps.context(args.repo), scoped(args))),
+    (args) => respond(() => getRun(deps.context, scoped(args))),
   );
 
   server.registerTool(
@@ -245,12 +230,12 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
       title: "Finish the run",
       description:
         "Queues the final check (the base commit against the run branch HEAD, five fresh pairs), the report, and the evidence bundle; from now on the run takes no more work. Returns a job id at once: poll get_job, then get_run has the headline. The run branch stays for review.",
-      inputSchema: z.strictObject({ repo, run_id: runId, model_id: modelId }),
+      inputSchema: z.strictObject({ run_id: runId, model_id: modelId }),
       annotations: { ...QUEUES_WORK, idempotentHint: true },
     },
     (args) =>
       respond(() =>
-        finishRun(deps.context(args.repo), {
+        finishRun(deps.context, {
           ...scoped(args),
           ...(args.model_id === undefined ? {} : { modelId: args.model_id }),
         }),
@@ -263,10 +248,10 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
       title: "Resume an interrupted run",
       description:
         "Continues a run whose worker stopped (worker_not_running): stops whatever the run left running, requeues interrupted jobs, resets both arms to the run branch, reconciles the ledger with its commits, and starts a worker.",
-      inputSchema: z.strictObject({ repo, run_id: runId }),
+      inputSchema: z.strictObject({ run_id: runId }),
       annotations: { ...QUEUES_WORK, destructiveHint: true },
     },
-    (args) => respond(() => resumeRun(deps.context(args.repo), scoped(args))),
+    (args) => respond(() => resumeRun(deps.context, scoped(args))),
   );
 
   server.registerTool(
@@ -275,9 +260,9 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
       title: "Cancel a run",
       description:
         "Ends the run: stops its worker and every process it started, cancels unfinished jobs, and removes the arms. The run branch and every completed observation stay.",
-      inputSchema: z.strictObject({ repo, run_id: runId }),
+      inputSchema: z.strictObject({ run_id: runId }),
       annotations: { ...QUEUES_WORK, destructiveHint: true, idempotentHint: true },
     },
-    (args) => respond(() => cancelRun(deps.context(args.repo), scoped(args))),
+    (args) => respond(() => cancelRun(deps.context, scoped(args))),
   );
 }

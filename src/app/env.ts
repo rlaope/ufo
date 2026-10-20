@@ -60,6 +60,18 @@ export function safePath(value: string, untrusted: readonly string[]): string {
 }
 
 /**
+ * `PATH` for UFO's own processes (git, ps, docker): `safePath`, and no entry with a
+ * `node_modules` segment either, since `npx` and npm scripts put a project's `.bin` directories,
+ * and those of its parents, first (security H1).
+ */
+export function processPath(value: string, untrusted: readonly string[]): string {
+  return safePath(value, untrusted)
+    .split(path.delimiter)
+    .filter((entry) => !entry.split(path.sep).includes("node_modules"))
+    .join(path.delimiter);
+}
+
+/**
  * The command environment of a run, captured once at `startRun` from the launcher's
  * environment: the default names, every `LC_*`, and the names `ufo.yaml` lists in `env:`.
  * `PATH` keeps only absolute entries outside `untrusted` (the repository, its git directory,

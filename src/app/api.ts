@@ -11,7 +11,7 @@ export { packageVersion } from "./cards.js";
 export type { QueuedChange, SubmitChangeOptions } from "./changes.js";
 export { profileTarget, submitChange } from "./changes.js";
 export type { AppContext } from "./context.js";
-export { CONTROL_LOCK_WAIT_MS } from "./context.js";
+export { CONTROL_LOCK_WAIT_MS, trustProcessPath } from "./context.js";
 export type { ExitCode, Failure } from "./errors.js";
 export {
   describeFailure,

@@ -8,7 +8,7 @@ is in [safety.md](safety.md).
 ## Starting the server
 
 ```
-ufo mcp [--repo <path>]
+ufo mcp --host <claude-code|codex|cursor> [--repo <path>]
 ```
 
 The host starts it as a stdio server. It reads JSON-RPC messages, one per line, on stdin and
@@ -18,11 +18,21 @@ writes only protocol messages on stdout; diagnostics go to stderr. It exits when
   for when the server knows it (2025-11-25, 2025-06-18, 2025-03-26, 2024-11-05, 2024-10-07), and
   2025-11-25 otherwise; the server never refuses the handshake. A client that negotiates the
   2026-07-28 revision (`server/discover`) is served too.
-- **Repository.** Each tool call acts on one repository: its `repo` argument (an absolute path,
-  the repository's root or any directory inside it), or else the server's default, which is
-  `--repo` (Cursor passes `${workspaceFolder}`), then `CLAUDE_PROJECT_DIR` (set by Claude Code),
-  then the server's working directory. Approval is per repository: a repository you have not
-  approved is refused at `start_run`.
+- **Repository.** The server is bound at startup to one repository, the real path of its top
+  level, and no tool argument names another. Which one depends on `--host`: `--repo` when given;
+  else for Claude Code `CLAUDE_PROJECT_DIR`, then the working directory; for Codex the working
+  directory; Cursor needs `--repo` (setup passes `${workspaceFolder}`). `--repo` must be an
+  absolute path; a relative one, or a placeholder the host did not substitute, is refused, never
+  resolved against the working directory. A directory outside any git working tree stops the
+  server at startup (`not_a_repo`, exit 2). Approval is per repository: an unapproved one is
+  refused at `start_run`.
+- **Host agent.** `--host` is recorded as the run's host agent; `model_id` (a tool argument) is
+  the agent's own model id, recorded as self-reported.
+- **PATH.** Before it runs anything, the server drops from its own `PATH` every relative entry,
+  every entry with a `node_modules` segment, and entries inside the working directory, the
+  repository, its git directories, and UFO's home ([safety.md](safety.md) R3b), so git, ps, and
+  docker are never a project's own. Start it with an absolute node and the absolute path of the
+  installed `dist/cli/index.js`, not `npx`.
 - **Fixed by the process.** The UFO home (`$UFO_HOME`, default `~/.ufo`), the card directories,
   the worker the server launches, the environment runs capture their command environment from,
   and the Docker runner and DNS resolver are the server process's own, exactly as the CLI's. No
@@ -34,25 +44,26 @@ must not run them itself, even where it has a shell; the messages that name them
 
 ## Tools
 
-Every tool has a JSON Schema for its arguments; unknown arguments are refused. All four
+Every tool has a JSON Schema for its arguments; unknown arguments, `repo` among them, are
+refused. All four
 annotation hints are set on every tool. None reaches outside the machine (`openWorldHint: false`).
 
 | Tool | Effect | Arguments | Result |
 |---|---|---|---|
-| `inspect_target` | read-only | `repo` | The repository root, the stack files at its root (`package.json`, `go.mod`, `Cargo.toml`, `pyproject.toml`, `pom.xml`, `build.gradle`, and others), whether `ufo.yaml` is present, valid, and approved, the objective, the enabled cards (`known: false` for a card no directory has), the opt-ins, and every command the approval covers. |
-| `check_capabilities` | read-only | `repo` | The git, Node.js, and Docker versions, and for each program the approved commands start, whether it is on the `PATH` those commands get, with an install hint when it is not. It runs `git --version` and `docker version`, never a repository command. |
-| `list_techniques` | read-only | `repo`, `domain` | Each card UFO knows for the repository: id, domain, title, kind, risk class, its profiler signals, and whether `ufo.yaml` enables it. |
-| `profile_target` | queues a job | `repo`, `run_id` | `{ runId, jobId }`. The job runs the workload once in arm A at its commit and returns each step's wall time (`setup`, `start`, `sample`, `teardown`, those the workload has) and the workload's JSON line, also kept in the run state as `artifacts/profile-<job-id>.json`. It decides nothing and counts against no budget. |
-| `start_run` | starts a run | `repo`, `model_id` | The run id, the branch `ufo/run-<id>`, the base SHA, the arm paths, and `baselineJobId`. Refuses an unapproved or changed `ufo.yaml`. |
-| `submit_change` | queues a job | `repo`, `run_id`, `card_id`, `diff`, `hypothesis`, `evidence_refs`, `base_sha` | `{ runId, changeId, jobId }`. The job's result is UFO's decision: keep (committed to the run branch), drop, or inconclusive, with its reason. |
-| `get_job` | read-only | `repo`, `run_id`, `job_id`, `wait_s` | The job: status, progress, and its result or error once done. It waits up to `wait_s` seconds (0 to 25, default 0; more waits 25) for the job to finish. A change job's `input` carries `diffChars` in place of the diff. |
-| `get_run` | read-only | `repo`, `run_id` | Status, arm paths, SHAs, jobs, the baseline, decisions, the budget, and `usable`: `false` with `unusableReason` once the baseline was refused for noise, when the run can only be finished. |
-| `finish_run` | queues a job | `repo`, `run_id`, `model_id` | `{ runId, jobId }`. The job runs the final check, writes the report and the evidence bundle, removes the arms, and releases the machine lock. From then on the run takes no more work. |
-| `resume_run` | destructive | `repo`, `run_id` | Stops what the run left running, requeues interrupted jobs, resets both arms, reconciles the ledger with the run branch, and starts a worker. |
-| `cancel_run` | destructive | `repo`, `run_id` | Stops the worker and everything it started, cancels unfinished jobs, and removes the arms. The run branch and completed observations stay. |
+| `inspect_target` | read-only | none | The repository root, the stack files at its root (`package.json`, `go.mod`, `Cargo.toml`, `pyproject.toml`, `pom.xml`, `build.gradle`, and others), whether `ufo.yaml` is present, valid, and approved, the objective, the enabled cards (`known: false` for a card no directory has), the opt-ins, and every command the approval covers. |
+| `check_capabilities` | read-only | none | The git, Node.js, and Docker versions, and for each program the approved commands start, whether it is on the `PATH` those commands get, with an install hint when it is not. It runs `git --version` and `docker version`, never a repository command. |
+| `list_techniques` | read-only | `domain` | Each card UFO knows for the repository: id, domain, title, kind, risk class, its profiler signals, and whether `ufo.yaml` enables it. |
+| `profile_target` | queues a job | `run_id` | `{ runId, jobId }`. The job runs the workload once in arm A at its commit and returns each step's wall time (`setup`, `start`, `sample`, `teardown`, those the workload has) and the workload's JSON line, also kept in the run state as `artifacts/profile-<job-id>.json`. It decides nothing and counts against no budget. |
+| `start_run` | starts a run | `model_id` | The run id, the branch `ufo/run-<id>`, the base SHA, the arm paths, and `baselineJobId`. Refuses an unapproved or changed `ufo.yaml`. |
+| `submit_change` | queues a job | `run_id`, `card_id`, `diff`, `hypothesis`, `evidence_refs`, `base_sha` | `{ runId, changeId, jobId }`. The job's result is UFO's decision: keep (committed to the run branch), drop, or inconclusive, with its reason. |
+| `get_job` | read-only | `run_id`, `job_id`, `wait_s` | The job: status, progress, and its result or error once done. It waits up to `wait_s` seconds (0 to 25, default 0; more waits 25) for the job to finish. A change job's `input` carries `diffChars` in place of the diff. |
+| `get_run` | read-only | `run_id` | Status, arm paths, SHAs, jobs, the baseline, decisions, the budget, and `usable`: `false` with `unusableReason` once the baseline was refused for noise, when the run can only be finished. |
+| `finish_run` | queues a job | `run_id`, `model_id` | `{ runId, jobId }`. The job runs the final check, writes the report and the evidence bundle, removes the arms, and releases the machine lock. From then on the run takes no more work. |
+| `resume_run` | destructive | `run_id` | Stops what the run left running, requeues interrupted jobs, resets both arms, reconciles the ledger with the run branch, and starts a worker. |
+| `cancel_run` | destructive | `run_id` | Stops the worker and everything it started, cancels unfinished jobs, and removes the arms. The run branch and completed observations stay. |
 
 `run_id` defaults to the repository's latest run. `model_id` is the agent's own model id, recorded
-as self-reported; the host agent is the name the MCP client gives itself (`claude-code`).
+as self-reported; the host agent is `--host`.
 
 Work that takes long (the baseline, a change, a profile, the finish) runs in UFO's detached
 worker. The tool that queues it returns a job id at once; poll `get_job` until the job is

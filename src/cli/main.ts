@@ -13,9 +13,10 @@ import {
   resumeRun,
   runToEnd,
   status,
+  trustProcessPath,
 } from "../app/api.js";
 import { approve, extendBudget, init, runAppWorker, WORKER_COMMAND } from "../app/api-cli.js";
-import { defaultRepository, serveMcp } from "../mcp/index.js";
+import { bindDirectory, HOSTS, isHost, serveMcp } from "../mcp/index.js";
 import {
   formatApprove,
   formatCancel,
@@ -84,8 +85,10 @@ Commands:
                         --techniques <n>  techniques to add (default: the configured cap)
                         --minutes <n>     minutes to add (default: 0)
   mcp                 Serve UFO's tools to an agent over MCP on stdin and stdout
-                        --repo <path>     the default repository (default: $CLAUDE_PROJECT_DIR,
-                                          else the working directory)
+                        --host <host>     claude-code, codex, or cursor (required)
+                        --repo <path>     the repository, an absolute path (required for cursor;
+                                          default: $CLAUDE_PROJECT_DIR for claude-code, else the
+                                          working directory)
 
 Options:
   --run <id>     The run for status, resume, cancel, report, extend-budget (default: latest)
@@ -122,7 +125,7 @@ const COMMANDS = {
     techniques: { type: "string" },
     minutes: { type: "string" },
   },
-  mcp: { repo: { type: "string" } },
+  mcp: { host: { type: "string" }, repo: { type: "string" } },
 } as const;
 type Command = keyof typeof COMMANDS;
 
@@ -214,6 +217,42 @@ async function execute(
   }
 }
 
+/**
+ * `ufo mcp --host <host> [--repo <path>]`: serves until stdin closes. stdout is the protocol's;
+ * nothing else may print there, so every failure goes to stderr.
+ */
+async function mcp(values: Values, io: CliIo): Promise<number> {
+  const fail = (failure: Pick<Failure, "code" | "message" | "exitCode">) => {
+    io.stderr(`ufo mcp: ${failure.code}: ${failure.message}\n`);
+    return failure.exitCode === EXIT_OK ? EXIT_INTERNAL : failure.exitCode;
+  };
+  if (!isHost(values.host)) {
+    return fail({
+      exitCode: EXIT_USAGE,
+      code: "usage",
+      message: `--host must be one of ${HOSTS.join(", ")}`,
+    });
+  }
+  const bound = bindDirectory({
+    host: values.host,
+    repo: typeof values.repo === "string" ? values.repo : undefined,
+    env: process.env,
+    cwd: io.cwd ?? process.cwd(),
+  });
+  if ("error" in bound) return fail({ exitCode: EXIT_USAGE, code: "usage", message: bound.error });
+  try {
+    await serveMcp({
+      dir: bound.dir,
+      host: values.host,
+      context: io.context,
+      log: (line) => io.stderr(`${line}\n`),
+    });
+  } catch (error) {
+    return fail(describeFailure(error));
+  }
+  return EXIT_OK;
+}
+
 /** Runs one `ufo` invocation and returns its exit code (docs/cli.md). */
 
 export async function main(argv: readonly string[], io: CliIo): Promise<number> {
@@ -251,22 +290,12 @@ export async function main(argv: readonly string[], io: CliIo): Promise<number> 
     io.stdout(USAGE);
     return EXIT_OK;
   }
-  if (first === "mcp") {
-    // Until stdin closes. stdout is the protocol's; nothing else may print there.
-    await serveMcp({
-      repo: defaultRepository({
-        repo: typeof values.repo === "string" ? values.repo : undefined,
-        env: process.env,
-        cwd: io.cwd ?? process.cwd(),
-      }),
-      context: io.context,
-      log: (line) => io.stderr(`${line}\n`),
-    });
-    return EXIT_OK;
-  }
+  if (first === "mcp") return mcp(values, io);
   const json = values.json === true;
   const context: AppContext = { ...io.context, cwd: io.cwd ?? process.cwd() };
   try {
+    // Before UFO runs anything: git, ps, and docker are found only outside the project.
+    await trustProcessPath({ cwd: context.cwd, home: context.home });
     const { result, text } = await execute(first, values, context, io, json);
     io.stdout(json ? `${JSON.stringify({ ok: true, command: first, result }, null, 2)}\n` : text);
     return EXIT_OK;

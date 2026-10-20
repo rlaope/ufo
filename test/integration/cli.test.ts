@@ -18,6 +18,7 @@ import {
   git,
   lightWorkload,
   makeToy,
+  plantPrograms,
   TIMEOUT_MS,
   type Toy,
   userState,
@@ -44,10 +45,10 @@ afterAll(async () => {
 });
 
 /** The built CLI with stdin piped from `input`, as `echo approve | ufo approve` would run it. */
-function built(target: Toy, args: string[], input = "") {
+function built(target: Toy, args: string[], input = "", env: NodeJS.ProcessEnv = {}) {
   const result = spawnSync(process.execPath, [BUILT_CLI, ...args], {
     cwd: target.repo,
-    env: { ...process.env, UFO_HOME: target.home },
+    env: { ...process.env, UFO_HOME: target.home, ...env },
     input,
     encoding: "utf8",
     timeout: 30_000,
@@ -110,6 +111,19 @@ describe("ufo CLI", { timeout: TIMEOUT_MS }, () => {
       expect(built(fresh, ["extend-budget"], "extend\n")).toMatchObject({ code: 1 });
       expect(built(fresh, ["report"]).code).toBe(2);
       noRunLeftover(fresh);
+
+      // Security H1, N4: git and ps from the project or a node_modules directory on the PATH
+      // (npx and npm scripts put them first) are never run.
+      const marker = path.join(fresh.root, "planted-ran");
+      const planted = [
+        path.join(fresh.repo, "node_modules", ".bin"),
+        path.join(fresh.root, "node_modules", ".bin"),
+        path.join(fresh.repo, "tools"),
+      ];
+      for (const dir of planted) plantPrograms(dir, marker);
+      const onPath = { PATH: [...planted, process.env.PATH ?? ""].join(path.delimiter) };
+      expect(built(fresh, ["status", "--json"], "", onPath).code).toBe(0);
+      expect(existsSync(marker) ? readFileSync(marker, "utf8") : "").toBe("");
     } finally {
       await fresh.cleanup();
     }

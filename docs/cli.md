@@ -22,7 +22,7 @@ ufo <command> [options]
 | `cancel` | Cancels a run. Its completed observations stay in the ledger. |
 | `report` | Prints a finished run's report, or what is known so far for an unfinished run. With `--json`, `result.finished` is `true` for the report and `false` for the run's view. |
 | `extend-budget` | Raises a run's technique cap or wall-clock budget. Needs an interactive terminal. |
-| `mcp` | Serves UFO's tools to an agent over MCP on stdin and stdout until stdin closes ([mcp.md](mcp.md)). Your agent's host starts it. |
+| `mcp` | Serves UFO's tools to an agent over MCP on stdin and stdout until stdin closes, bound to one repository ([mcp.md](mcp.md)). Your agent's host starts it; `ufo setup` writes its entry. |
 | `worker` | Internal: `ufo worker --run-dir <absolute path>` is the detached worker UFO launches itself. It accepts only a run directory under its own `$UFO_HOME/private/runs/` whose `run.json` names that run (`unsafe_state` otherwise). |
 
 ### Options
@@ -34,7 +34,8 @@ ufo <command> [options]
 | `--run <id>` | `status`, `resume`, `cancel`, `report`, `extend-budget` | The run to act on. Default: the latest run of the repository. A run the repository does not have is `no_run` (exit 2). |
 | `--techniques <n>` | `extend-budget` | Techniques to add to the cap. Default: the configured `maxTechniques`. |
 | `--minutes <n>` | `extend-budget` | Minutes to add to the wall-clock budget. Default: 0. |
-| `--repo <path>` | `mcp` | The repository of tool calls that name none. Default: `$CLAUDE_PROJECT_DIR`, else the working directory. |
+| `--host <host>` | `mcp` | Required: `claude-code`, `codex`, or `cursor`. It decides the repository the server binds to and is recorded as the run's host agent. |
+| `--repo <path>` | `mcp` | The repository, an absolute path; required for `cursor`. Default: `$CLAUDE_PROJECT_DIR` (for `claude-code`), else the working directory. A relative path or a placeholder the host left unsubstituted is a usage error (exit 2). |
 | `--json` | every command | Prints one JSON object on stdout instead of text. |
 | `-h`, `--help` | every command | Prints the usage and exits 0. |
 | `-v`, `--version` | alone | Prints the package version and exits 0. |

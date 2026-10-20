@@ -30,10 +30,14 @@ class RawServer {
   private buffered = "";
 
   constructor(toy: Toy) {
-    this.child = spawn(process.execPath, [BUILT_CLI, "mcp", "--repo", toy.repo], {
-      cwd: toy.root,
-      env: serverEnv(toy),
-    });
+    this.child = spawn(
+      process.execPath,
+      [BUILT_CLI, "mcp", "--host", "cursor", "--repo", toy.repo],
+      {
+        cwd: toy.root,
+        env: serverEnv(toy),
+      },
+    );
     this.child.stdout.setEncoding("utf8");
     this.child.stdout.on("data", (chunk: string) => {
       this.buffered += chunk;

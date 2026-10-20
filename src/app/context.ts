@@ -1,9 +1,11 @@
-import { readdir, realpath } from "node:fs/promises";
+import { lstat, readdir, realpath } from "node:fs/promises";
+import path from "node:path";
 import { repoId, runGit } from "../core/git/index.js";
 import { assertRealDir, isErrno, RunIdSchema, resolveGitCommonDir } from "../core/jobs/index.js";
 import { assertTrustedDir, runDirFor, runsRoot, trustedHome, ufoHome } from "../core/paths.js";
 import type { Resolver } from "../core/policy/index.js";
 import type { Exec } from "../worker/index.js";
+import { processPath } from "./env.js";
 import { AppError } from "./errors.js";
 
 /**
@@ -68,6 +70,52 @@ export async function resolveRepo(cwd: string): Promise<Repo> {
     commonDir: await realpath(await resolveGitCommonDir(root)),
     repoId: await repoId(root),
   };
+}
+
+/** The nearest directory at or above `dir` with a `.git` entry: its working tree, as git finds it. */
+async function nearestWorkTree(dir: string): Promise<string | undefined> {
+  for (let current = path.resolve(dir); ; current = path.dirname(current)) {
+    if ((await lstat(path.join(current, ".git")).catch(() => undefined)) !== undefined) {
+      return current;
+    }
+    if (path.dirname(current) === current) return undefined;
+  }
+}
+
+/**
+ * Filters this process's own `PATH` before UFO runs git, ps, or docker (security H1, N4): no
+ * empty or relative entry, none with a `node_modules` segment, and none inside the working
+ * directory, `repoDir`, UFO's home, or the repository there with its git directories. Before git
+ * finds that repository, the working tree around each directory is found by its `.git` entry,
+ * so the repository's own `git` never runs. Returns the repository, or `undefined` when there is
+ * none (an error when `requireRepo`).
+ */
+export async function trustProcessPath(options: {
+  readonly cwd: string;
+  readonly repoDir?: string | undefined;
+  readonly home?: string | undefined;
+  readonly requireRepo?: boolean;
+  readonly env?: NodeJS.ProcessEnv;
+}): Promise<Repo | undefined> {
+  const env = options.env ?? process.env;
+  const dirs = [options.cwd, ...(options.repoDir === undefined ? [] : [options.repoDir])];
+  const reals = await Promise.all(dirs.map((dir) => realpath(dir).catch(() => dir)));
+  const trees = await Promise.all([...dirs, ...reals].map(nearestWorkTree));
+  const untrusted = [
+    ...dirs,
+    ...reals,
+    ...trees.filter((tree) => tree !== undefined),
+    path.resolve(options.home ?? ufoHome(env)),
+  ];
+  env.PATH = processPath(env.PATH ?? "", untrusted);
+  const repo = await resolveRepo(options.repoDir ?? options.cwd).catch((error: unknown) => {
+    if (options.requireRepo === true) throw error;
+    return undefined;
+  });
+  if (repo !== undefined) {
+    env.PATH = processPath(env.PATH, [...untrusted, repo.root, repo.gitDir, repo.commonDir]);
+  }
+  return repo;
 }
 
 /**

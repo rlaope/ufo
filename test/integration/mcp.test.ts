@@ -1,14 +1,16 @@
-import { rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { Client, type ClientOptions, ProtocolError } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { afterEach, describe, expect, it } from "vitest";
+import { readAppState } from "../../src/app/index.js";
 import { CONTROL_LOCK_FILE } from "../../src/core/jobs/index.js";
 import {
   approveToy,
   BUILT_CLI,
   diffOf,
   mcpToy,
+  plantPrograms,
   serverEnv,
   TIMEOUT_MS,
   type Toy,
@@ -50,12 +52,17 @@ function toyFor(options: { readonly setup?: string } = {}): Toy {
   return toy;
 }
 
-async function connect(toy: Toy, options: ClientOptions = {}): Promise<Client> {
+/** `ufo mcp` as Cursor starts it: bound to the toy's repository with `--repo`. */
+async function connect(
+  toy: Toy,
+  options: ClientOptions = {},
+  spawned: { args?: string[]; cwd?: string; env?: Record<string, string> } = {},
+): Promise<Client> {
   const transport = new StdioClientTransport({
     command: process.execPath,
-    args: [BUILT_CLI, "mcp", "--repo", toy.repo],
-    env: serverEnv(toy),
-    cwd: toy.root,
+    args: [BUILT_CLI, "mcp", ...(spawned.args ?? ["--host", "cursor", "--repo", toy.repo])],
+    env: spawned.env ?? serverEnv(toy),
+    cwd: spawned.cwd ?? toy.root,
     stderr: "ignore",
   });
   const client = new Client({ name: "ufo-conformance", version: "1.0.0" }, options);
@@ -187,6 +194,11 @@ describe("a run through the tools", { timeout: TIMEOUT_MS }, () => {
     const started = (await ok(client, "start_run", { model_id: "test-model" }, SHORT_TIMEOUT_MS))
       .body as { runId: string; baselineJobId: string; arms: { a: string; b: string } };
     expect(started.arms.a).toBe(path.join(toy.home, "arms", toy.repoId, started.runId, "a"));
+    // The host agent is the one ufo mcp was started for; the model id is the agent's own.
+    expect(await readAppState(toy.runDir(started.runId))).toMatchObject({
+      hostAgent: "cursor",
+      modelId: "test-model",
+    });
     const baseline = await poll(client, started.runId, started.baselineJobId);
     expect(baseline.calls).toBeGreaterThan(1);
 
@@ -243,6 +255,55 @@ describe("a run through the tools", { timeout: TIMEOUT_MS }, () => {
   });
 });
 
+describe("the server's repository and PATH", { timeout: TIMEOUT_MS }, () => {
+  // Security H2: Codex starts the server in the project, and it acts on that repository only.
+  it("binds a Codex server to the repository of its working directory", async () => {
+    const toy = toyFor();
+    const client = await connect(
+      toy,
+      {},
+      { args: ["--host", "codex"], cwd: path.join(toy.repo, "bench") },
+    );
+    expect((await ok(client, "inspect_target")).body).toMatchObject({ repoRoot: toy.repo });
+  });
+
+  // Security H1: what a project puts on the PATH the server starts with (npx puts its own
+  // node_modules/.bin and its parents' first) is never run, nor a copy of UFO it ships.
+  it("runs no git, ps, or docker from the project or a node_modules directory", async () => {
+    const toy = toyFor();
+    await approveToy(toy);
+    const marker = path.join(toy.root, "planted-ran");
+    const inRepo = path.join(toy.repo, "node_modules", ".bin");
+    const inParent = path.join(toy.root, "node_modules", ".bin");
+    const inProject = path.join(toy.repo, "tools");
+    for (const dir of [inRepo, inParent, inProject]) plantPrograms(dir, marker);
+    const shipped = path.join(toy.repo, "node_modules", "ufo-agents", "dist", "cli");
+    mkdirSync(shipped, { recursive: true });
+    writeFileSync(
+      path.join(shipped, "index.js"),
+      `require("node:fs").appendFileSync(${JSON.stringify(marker)}, "ufo-agents\\n");\n`,
+    );
+    const env = {
+      ...serverEnv(toy),
+      PATH: [inRepo, inParent, inProject, process.env.PATH ?? ""].join(path.delimiter),
+    };
+    // Started in a subdirectory: the planted tools/ is inside the repository, not the cwd.
+    const cwd = path.join(toy.repo, "bench");
+    const client = await connect(toy, {}, { args: ["--host", "codex"], cwd, env });
+    expect((await ok(client, "inspect_target")).body).toMatchObject({
+      approval: { approved: true },
+    });
+    expect((await ok(client, "check_capabilities")).body).toMatchObject({ git: { found: true } });
+    const started = (await ok(client, "start_run")).body as {
+      runId: string;
+      baselineJobId: string;
+    };
+    await poll(client, started.runId, started.baselineJobId);
+    await ok(client, "cancel_run", { run_id: started.runId });
+    expect(existsSync(marker) ? readFileSync(marker, "utf8") : "").toBe("");
+  });
+});
+
 describe("failures", { timeout: TIMEOUT_MS }, () => {
   it("are isError results with code, message, retryable, and hint", async () => {
     const toy = toyFor();
@@ -291,7 +352,8 @@ describe("failures", { timeout: TIMEOUT_MS }, () => {
     for (const args of [
       { job_id: 7 },
       { job_id: "job-000001", extra: true },
-      { job_id: "job-000001", repo: "relative" },
+      // The server is bound at startup: no call names another repository (security H2).
+      { job_id: "job-000001", repo: "/" },
     ]) {
       const result = await client.callTool({ name: "get_job", arguments: args });
       expect(result.isError, JSON.stringify(args)).toBe(true);

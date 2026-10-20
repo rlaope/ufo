@@ -130,6 +130,7 @@ describe("the adapter modules", () => {
       "startRun",
       "status",
       "submitChange",
+      "trustProcessPath",
     ]);
     expect(Object.keys(apiCli).sort()).toEqual([
       "WORKER_COMMAND",

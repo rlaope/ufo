@@ -1,11 +1,15 @@
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   captureEnv,
   captureGitEnv,
   describeDefaultEnv,
+  processPath,
   safePath,
   secretLikeNames,
+  trustProcessPath,
 } from "../../../src/app/index.js";
 
 // Security F9: the run's command environment is an allowlist captured at start.
@@ -74,6 +78,45 @@ describe("safePath (security N4)", () => {
   it("is applied to PATH when the environment is captured", () => {
     const env = captureEnv({ PATH: `./bin${path.delimiter}/usr/bin` }, [], ["/repo"]);
     expect(env.PATH).toBe("/usr/bin");
+  });
+});
+
+// Security H1: npx and npm scripts put a project's node_modules/.bin, and its parents', first on
+// the PATH UFO starts with; UFO's own git, ps, and docker are never found there.
+describe("processPath", () => {
+  it("also drops every entry with a node_modules segment", () => {
+    const value = ["/usr/bin", "/p/node_modules/.bin", "/node_modules/x/bin", "/opt/bin"].join(
+      path.delimiter,
+    );
+    expect(processPath(value, [])).toBe(["/usr/bin", "/opt/bin"].join(path.delimiter));
+    expect(processPath(value, ["/opt"])).toBe("/usr/bin");
+  });
+});
+
+describe("trustProcessPath", () => {
+  it("drops the working tree around the working directory before git finds it", async () => {
+    const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), "ufo-path-")));
+    try {
+      // A working tree as git would find it from its subdirectory; no git runs to find it.
+      mkdirSync(path.join(root, "project", ".git"), { recursive: true });
+      mkdirSync(path.join(root, "project", "sub"), { recursive: true });
+      const env: NodeJS.ProcessEnv = {
+        UFO_HOME: path.join(root, "ufo-home"),
+        PATH: [
+          path.join(root, "project", "tools"),
+          path.join(root, "parent", "node_modules", ".bin"),
+          path.join(root, "ufo-home", "bin"),
+          "relative/bin",
+          "",
+          "/usr/bin",
+        ].join(path.delimiter),
+      };
+      const repo = await trustProcessPath({ cwd: path.join(root, "project", "sub"), env });
+      expect(repo).toBeUndefined();
+      expect(env.PATH).toBe("/usr/bin");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 

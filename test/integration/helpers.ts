@@ -1,7 +1,9 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  chmodSync,
   cpSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
@@ -183,6 +185,19 @@ export function mcpToy(options: { readonly setup?: string } = {}): Toy {
   git(toy.repo, "add", "--all");
   git(toy.repo, "commit", "--quiet", "--message", "toy cards");
   return { ...toy, context: { ...toy.context, cardDirs: [] } };
+}
+
+/**
+ * Plants `git`, `ps`, and `docker` in `dir` that only append their name to `marker`: what a
+ * project could put on the PATH UFO starts with (security H1).
+ */
+export function plantPrograms(dir: string, marker: string): void {
+  mkdirSync(dir, { recursive: true });
+  for (const name of ["git", "ps", "docker"]) {
+    const file = path.join(dir, name);
+    writeFileSync(file, `#!/bin/sh\necho ${name} >> '${marker}'\nexit 1\n`);
+    chmodSync(file, 0o755);
+  }
 }
 
 /** The environment `ufo mcp` runs in for `toy`: this process's, with the toy's UFO home. */

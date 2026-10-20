@@ -115,11 +115,14 @@ collaborators.
   their config files, are protected at any depth. A command that runs a repository script
   directly, or through a runner UFO does not recognize, is not protected that way; the review
   shows the command, so check what it runs.
-- **R3b. The PATH that finds git.** Commands get only `PATH` entries outside your repository and
-  UFO's home, but the `ufo` process finds git through its own `PATH`, keeping every absolute
-  entry. Run through `npx` or an npm script from the project, that `PATH` starts with the
-  project's `node_modules/.bin`, so a program planted there as `git` runs when UFO calls git. Run
-  `ufo` from a global install, with a `PATH` that names no directory inside the project.
+- **R3b. The PATH that finds git, ps, and docker.** Before it runs anything, the `ufo` process
+  (the CLI and `ufo mcp`) filters its own `PATH`: it drops empty and relative entries, every
+  entry with a `node_modules` segment (`npx` and npm scripts put the project's `.bin`
+  directories, and its parents', first), and entries inside the working directory, the
+  repository (its working tree is found by its `.git` entry before git runs), its git
+  directories, and UFO's home. Commands and the worker inherit that `PATH`. A program planted in
+  any other directory on your `PATH`, one outside the project, still runs; keep your `PATH` to
+  directories only you can write.
 - **R4. Redaction is a list of patterns.** The redactor removes known secret formats, your
   home path, user name, and host name from bundles and views. A secret in an unknown format can pass through. The
   ledger and logs under `$UFO_HOME/private` are not redacted. The arm paths in run views and in
@@ -130,14 +133,14 @@ collaborators.
 - **R5. Evidence can be forged by someone with a shell.** A bundle shows what UFO recorded, but a
   process with capability C could have written it. `ufo reproduce` re-measures on your machine and
   is the real check.
-- **R6. An MCP client chooses only the repository.** The MCP server (`ufo mcp`) fixes the UFO
-  home, the card directories, the worker it launches, the environment a run captures, the Docker
-  runner, and the resolver from its own process, as the CLI does; no tool argument sets any of
-  them, and there is no approval, opt-in, or budget tool. A call's `repo` argument can name any
-  repository on the machine, so an agent can start a run in every repository you have approved,
-  not only the one it was opened in; an unapproved one is refused at `start_run`. Tool results
-  carry repository text (file contents, command lines, command output), which the tools describe
-  as data, never instructions; an agent that follows instructions in that text anyway is outside
+- **R6. An MCP client chooses nothing about where UFO acts.** The MCP server (`ufo mcp`) is
+  bound at startup to one repository, by its host's convention (`--host`, and `--repo` for
+  Cursor), as a real path; no tool argument names another, so a session opened on one repository
+  cannot act on another you approved. It fixes the UFO home, the card directories, the worker it
+  launches, the environment a run captures, the Docker runner, and the resolver from its own
+  process, as the CLI does, and there is no approval, opt-in, or budget tool. Tool results carry
+  repository text (file contents, command lines, command output), which the tools describe as
+  data, never instructions; an agent that follows instructions in that text anyway is outside
   what UFO controls.
 - **R7. Your host may not protect `.git`.** Some agent hosts let tools edit `.git` silently.
   UFO trusts nothing there, but such an agent can still change your own branches; review the run
