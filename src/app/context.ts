@@ -108,17 +108,24 @@ export async function resolveRepo(cwd: string): Promise<Repo> {
 
 /**
  * Names a common directory itself (code review R4, W1): its device and inode, plus its birth time
- * on macOS, whose file systems keep one. Elsewhere Node may report the change time (which every
- * write to `.git` moves) or 0 as the birth time, and whether it does cannot be told from one stat:
- * a test like "differs from the change time" would name the same directory two ways before and
- * after a write. So elsewhere device and inode stand alone, and a file system may give a directory
- * made again the same inode. Exported for the tests.
+ * where it looks real: on macOS, whose file systems keep one, or where it is set and differs from
+ * the change time (Linux with statx). Without statx Node reports the change time (which every
+ * write to `.git` moves) or 0 as the birth time; a file system may also give a directory made
+ * again the same inode, which is why the birth time matters where there is one.
+ *
+ * `like` is an id named earlier (the pin): the directory is then named in that id's form, with or
+ * without the birth time, so a write to `.git` never turns the same directory into another id.
+ * Exported for the tests.
  */
 export function commonDirIdOf(
-  common: Pick<Stats, "dev" | "ino" | "birthtimeMs">,
+  common: Pick<Stats, "dev" | "ino" | "birthtimeMs" | "ctimeMs">,
   platform: NodeJS.Platform = process.platform,
+  like?: string,
 ): string {
-  const born = platform === "darwin" && common.birthtimeMs > 0;
+  const born =
+    like === undefined
+      ? common.birthtimeMs > 0 && (platform === "darwin" || common.birthtimeMs !== common.ctimeMs)
+      : like.split(":").length === 3;
   return born ? `${common.dev}:${common.ino}:${common.birthtimeMs}` : `${common.dev}:${common.ino}`;
 }
 
@@ -317,7 +324,8 @@ export async function refuseChangedRepository(pinned: Repo, since: string): Prom
     now.gitDir === pinned.gitDir &&
     now.commonDir === pinned.commonDir &&
     now.repoId === pinned.repoId &&
-    now.commonDirId === pinned.commonDirId
+    commonDirIdOf(await stat(now.commonDir), process.platform, pinned.commonDirId) ===
+      pinned.commonDirId
   ) {
     return;
   }

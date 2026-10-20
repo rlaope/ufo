@@ -15,20 +15,28 @@ describe("the control-lock wait of an app call", () => {
 });
 
 // Code review W1 and its last check: the pin of a repository names its common directory by device
-// and inode, with the birth time only on macOS. Elsewhere Node may report the change time (which
-// any write to .git moves) or 0 as the birth time, and one stat cannot tell which.
+// and inode, with the birth time where it looks real; once pinned, the directory is named in the
+// pin's form, so a write to .git (which moves the change time) never changes its id.
 describe("the identity of a common directory", () => {
   const ids = { dev: 1, ino: 2 };
-  it("has the birth time on macOS", () => {
-    expect(commonDirIdOf({ ...ids, birthtimeMs: 100 }, "darwin")).toBe("1:2:100");
-    expect(commonDirIdOf({ ...ids, birthtimeMs: 0 }, "darwin")).toBe("1:2");
+  it("has the birth time where it looks real", () => {
+    expect(commonDirIdOf({ ...ids, birthtimeMs: 100, ctimeMs: 100 }, "darwin")).toBe("1:2:100");
+    expect(commonDirIdOf({ ...ids, birthtimeMs: 100, ctimeMs: 250 }, "linux")).toBe("1:2:100");
+    expect(commonDirIdOf({ ...ids, birthtimeMs: 250, ctimeMs: 250 }, "linux")).toBe("1:2");
+    expect(commonDirIdOf({ ...ids, birthtimeMs: 0, ctimeMs: 250 }, "linux")).toBe("1:2");
   });
 
-  it("is device and inode alone elsewhere, before and after a write to .git", () => {
-    // Pinned while the reported birth time still equalled the change time, then .git was written:
-    // a real birth time stays, a reported change time moves; both name the directory the same way.
-    expect(commonDirIdOf({ ...ids, birthtimeMs: 250 }, "linux")).toBe("1:2");
-    expect(commonDirIdOf({ ...ids, birthtimeMs: 300 }, "linux")).toBe("1:2");
-    expect(commonDirIdOf({ ...ids, birthtimeMs: 0 }, "linux")).toBe("1:2");
+  it("keeps the pin's form after a write to .git, and tells a directory made again apart", () => {
+    // Pinned while the reported birth time equalled the change time; a write then moves both.
+    expect(commonDirIdOf({ ...ids, birthtimeMs: 300, ctimeMs: 300 }, "linux", "1:2")).toBe("1:2");
+    expect(commonDirIdOf({ ...ids, birthtimeMs: 300, ctimeMs: 400 }, "linux", "1:2")).toBe("1:2");
+    // Pinned with a real birth time: a write moves only the change time.
+    expect(commonDirIdOf({ ...ids, birthtimeMs: 100, ctimeMs: 400 }, "linux", "1:2:100")).toBe(
+      "1:2:100",
+    );
+    // Made again with the same inode: a new birth time.
+    expect(commonDirIdOf({ ...ids, birthtimeMs: 500, ctimeMs: 600 }, "linux", "1:2:100")).toBe(
+      "1:2:500",
+    );
   });
 });
