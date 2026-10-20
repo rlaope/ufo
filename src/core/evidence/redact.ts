@@ -126,12 +126,20 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 
 function createTextRedactor(options: RedactOptions): (text: string) => string {
   const env = options.env ?? process.env;
-  const envSecrets = Object.entries(env)
-    .filter(
-      ([key, v]) => v !== undefined && v.length >= MIN_ENV_SECRET_LENGTH && isSensitiveKey(key),
-    )
-    .map(([, v]) => v as string)
-    .sort((x, y) => y.length - x.length);
+  const sensitive = Object.entries(env).filter(
+    (entry): entry is [string, string] =>
+      entry[1] !== undefined &&
+      entry[1].length >= MIN_ENV_SECRET_LENGTH &&
+      isSensitiveKey(entry[0]),
+  );
+  const envSecrets = [...new Set(sensitive.map(([, value]) => value))]
+    .sort((x, y) => y.length - x.length)
+    .map((value) => ({
+      value,
+      // Only when no other sensitive variable holds the same value.
+      sessionId:
+        UUID.test(value) && sensitive.every(([key, v]) => v !== value || SESSION_ID_NAMES.has(key)),
+    }));
   const homeDir = options.homeDir ?? os.homedir();
   const home =
     homeDir !== "" && homeDir !== path.parse(homeDir).root
@@ -172,18 +180,28 @@ function createTextRedactor(options: RedactOptions): (text: string) => string {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** The hosts' session ids (UUIDs), which also name directories such as a host's scratch one. */
+const SESSION_ID_NAMES = new Set(["CLAUDE_CODE_SESSION_ID", "CODEX_SESSION_ID"]);
+
 /**
- * `text` with every occurrence of a sensitive variable's value replaced, except a UUID that is a
- * whole path segment: a session id in `SESSION_ID` also names directories (a host's scratch
- * directory), and a path with a placeholder in it no longer names anything.
+ * `text` with every occurrence of a sensitive variable's value replaced, except a host's session
+ * id where it is a whole segment of a local absolute path, since a path with a placeholder in it
+ * no longer names anything. A URL's segment (a word with `scheme://` in it) is no local path
+ * (security S2-5).
  */
-function withoutEnvSecret(text: string, secret: string): string {
-  if (!UUID.test(secret)) return text.split(secret).join(placeholder("secret"));
-  return text.replace(new RegExp(escapeRegExp(secret), "g"), (match, offset: number) => {
+function withoutEnvSecret(
+  text: string,
+  secret: { readonly value: string; readonly sessionId: boolean },
+): string {
+  if (!secret.sessionId) return text.split(secret.value).join(placeholder("secret"));
+  return text.replace(new RegExp(escapeRegExp(secret.value), "g"), (match, offset: number) => {
+    const before = text.slice(0, offset);
     const after = text[offset + match.length];
     const segment =
-      text[offset - 1] === "/" && (after === undefined || after === "/" || !/[\w.-]/.test(after));
-    return segment ? match : placeholder("secret");
+      before.endsWith("/") && (after === undefined || after === "/" || !/[\w.-]/.test(after));
+    const word = /[^\s"'`]*$/.exec(before)?.[0] ?? "";
+    const local = /[^\s"'`=([<,]*$/.exec(before)?.[0]?.startsWith("/") === true;
+    return segment && local && !word.includes("://") ? match : placeholder("secret");
   });
 }
 

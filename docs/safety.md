@@ -133,6 +133,10 @@ until it is, `ufo setup` refuses to install from the registry and takes a tarbal
   directories only you can write.
 - **R4. Redaction is a list of patterns.** The redactor removes known secret formats, your
   home path, user name, and host name from bundles, views, results, and failure messages. A secret in an unknown format can pass through. The
+  value of a sensitive-named variable is redacted wherever it appears, except a host's session id
+  (`CLAUDE_CODE_SESSION_ID`, `CODEX_SESSION_ID`) that is a whole segment of a local absolute path,
+  since hosts name directories after it; in a URL, or held by another sensitive variable too, it
+  is redacted. The
   ledger and logs under `$UFO_HOME/private` are not redacted. The arm paths in run views and in
   start and resume results, the MCP server's included, are absolute local paths and are not
   redacted, because the agent reads arm A to write its diffs. With `UFO_HOME` under your home

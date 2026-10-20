@@ -125,6 +125,29 @@ describe("redact", () => {
     expect(withSession(`/tmp/${ENV_TOKEN}/y`)).toBe("/tmp/<redacted:secret>/y");
   });
 
+  // Security S2-5: only a host's session id, only in a local path, never in a URL.
+  it("redacts a UUID value in a URL, or in any other sensitive variable", () => {
+    const uuid = "0b9e2f4c-6a1d-4e8b-9c3f-7d5a2e1b4c6f";
+    const withEnv = (env: NodeJS.ProcessEnv, text: string) => redact(text, { ...options, env });
+    const session = { CODEX_SESSION_ID: uuid };
+    expect(withEnv(session, `/tmp/${uuid}/x`)).toBe(`/tmp/${uuid}/x`);
+    expect(withEnv(session, `rmdir '/tmp/${uuid}'`)).toBe(`rmdir '/tmp/${uuid}'`);
+    for (const url of [
+      `https://example.com/${uuid}/x`,
+      `file:///tmp/${uuid}/x`,
+      `/go?to=https://example.com/${uuid}`,
+      `/proxy/https://example.com/${uuid}`,
+    ]) {
+      expect(withEnv(session, url)).toBe(url.replace(uuid, "<redacted:secret>"));
+    }
+    // Not a local absolute path.
+    expect(withEnv(session, `example.com/${uuid}`)).toBe("example.com/<redacted:secret>");
+    expect(withEnv({ API_TOKEN: uuid }, `/tmp/${uuid}/x`)).toBe("/tmp/<redacted:secret>/x");
+    expect(withEnv({ ...session, API_TOKEN: uuid }, `/tmp/${uuid}/x`)).toBe(
+      "/tmp/<redacted:secret>/x",
+    );
+  });
+
   it("is deterministic and idempotent", () => {
     const input = `postgres://u:p@h/db Authorization: x ${fake("ghp_", "A1b2", 9)} /home/alice/x`;
     expect(r(input)).toBe(r(input));
