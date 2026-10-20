@@ -4,7 +4,7 @@ import path from "node:path";
 import { Client, type ClientOptions, ProtocolError } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { afterEach, describe, expect, it } from "vitest";
-import { DRAFT_CONFIG, readAppState } from "../../src/app/index.js";
+import { draftConfigFor, readAppState } from "../../src/app/index.js";
 import { CONTROL_LOCK_FILE } from "../../src/core/jobs/index.js";
 import { ERROR_PREAMBLE, RESULT_PREAMBLE } from "../../src/mcp/index.js";
 import {
@@ -230,6 +230,15 @@ describe("a run through the tools", { timeout: TIMEOUT_MS }, () => {
     expect(techniques).toEqual(
       expect.arrayContaining([expect.objectContaining({ id: "toy.fast-path", enabled: true })]),
     );
+
+    // Filters reach the listing: toy cards apply to any stack and to the cpu bottleneck.
+    const byFilter = async (args: Record<string, string>) =>
+      (
+        (await ok(client, "list_techniques", { domain: "toy", ...args }, SHORT_TIMEOUT_MS)).body
+          .cards as { id: string; bottlenecks: string[]; sources: string[] }[]
+      ).map((c) => c.id);
+    expect(await byFilter({ stack: "jvm", bottleneck: "cpu" })).toContain("toy.fast-path");
+    expect(await byFilter({ bottleneck: "startup" })).toEqual([]);
 
     const started = (await ok(client, "start_run", { model_id: "test-model" }, SHORT_TIMEOUT_MS))
       .body as { runId: string; baselineJobId: string; arms: { a: string; b: string } };
@@ -689,7 +698,11 @@ describe("the draft ufo.yaml", { timeout: TIMEOUT_MS }, () => {
     );
     const inspected = (await ok(client, "inspect_target")).body;
     expect(inspected).toMatchObject({ config: { present: false, valid: false } });
-    expect(inspected.draftConfig).toBe(DRAFT_CONFIG);
+    // Whole, even past the probe token that matches a word in it, and only the draft built for
+    // the stacks the same result reports.
+    expect(inspected.draftConfig).toBe(draftConfigFor(inspected.stacks as never));
+    expect(inspected.draftConfig).toContain("direction: lower_is_better");
+    expect(inspected.draftConfig).toContain("# Detected node:");
   });
 });
 
@@ -712,8 +725,11 @@ describe("repository text that reads like instructions", { timeout: TIMEOUT_MS }
         `title: ${JSON.stringify(INJECTED)}`,
         "kind: guided",
         "riskClass: lossless",
+        "bottlenecks: [cpu]",
         "signals:",
         `  - ${JSON.stringify(INJECTED)}`,
+        "sources:",
+        "  - https://example.com/ufo-test-fixture",
         "verifiedIn: unverified",
         "",
       ].join("\n"),
@@ -814,6 +830,16 @@ describe("failures", { timeout: TIMEOUT_MS }, () => {
       { job_id: "job-000001", repo: "/" },
     ]) {
       const result = await client.callTool({ name: "get_job", arguments: args });
+      expect(result.isError, JSON.stringify(args)).toBe(true);
+      expect((result.content as { text: string }[])[0]?.text).toContain("Input validation error");
+    }
+    // list_techniques filters by the stack ids and bottleneck categories the cards use, no others.
+    for (const args of [
+      { stack: "cobol" },
+      { bottleneck: "slowness" },
+      { stack: "jvm", extra: 1 },
+    ]) {
+      const result = await client.callTool({ name: "list_techniques", arguments: args });
       expect(result.isError, JSON.stringify(args)).toBe(true);
       expect((result.content as { text: string }[])[0]?.text).toContain("Input validation error");
     }

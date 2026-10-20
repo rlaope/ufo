@@ -3,6 +3,7 @@ domain: toy
 title: Turn off the configured extra delay
 kind: recipe
 riskClass: lossless
+bottlenecks: [cpu]
 params:
   - name: delay_ms
     type: integer
@@ -19,4 +20,6 @@ commandTemplates:
     run: node --check server.mjs
 signals:
   - toy.properties sets a non-zero items.extra_delay_ms
+sources:
+  - https://example.com/ufo-test-fixture
 verifiedIn: unverified

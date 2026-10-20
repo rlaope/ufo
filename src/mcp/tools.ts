@@ -5,6 +5,7 @@ import type { McpServer, ToolAnnotations } from "@modelcontextprotocol/server";
 import * as z from "zod";
 import {
   type AppContext,
+  BottleneckSchema,
   cancelRun,
   checkCapabilities,
   finishRun,
@@ -16,6 +17,7 @@ import {
   profileTarget,
   RepoPathSchema,
   resumeRun,
+  StackIdSchema,
   startRun,
   submitChange,
 } from "../app/api.js";
@@ -99,15 +101,25 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
     "list_techniques",
     {
       title: "List technique cards",
-      description: `The technique cards UFO knows for this repository: id, domain, title, kind (recipe or guided), risk class, the profiler signals that point at each card, and whether ufo.yaml enables it. Only an enabled card can be submitted; pick one whose signals match the evidence. ${DATA}`,
+      description: `The technique cards UFO knows for this repository: id, domain, title, kind (recipe or guided), risk class, the stacks and bottlenecks each applies to, the profiler signals that point at it, its preconditions, steps, verification, traps, expected effect, and sources, and whether ufo.yaml enables it. Filter by the stack inspect_target detected and by the bottleneck the profile found; without a filter, cards for the detected stacks come first. Only an enabled card can be submitted; pick one whose signals match the evidence. ${DATA}`,
       inputSchema: z.strictObject({
         domain: z.string().max(64).optional().describe("Only cards of this domain."),
+        stack: StackIdSchema.optional().describe(
+          "Only cards for this stack (a stack id from inspect_target's stacks) and cards for any stack.",
+        ),
+        bottleneck: BottleneckSchema.optional().describe(
+          "Only cards for this bottleneck category.",
+        ),
       }),
       annotations: READ_ONLY,
     },
     (args) =>
       respond(() =>
-        listTechniques(deps.context(), args.domain === undefined ? {} : { domain: args.domain }),
+        listTechniques(deps.context(), {
+          ...(args.domain === undefined ? {} : { domain: args.domain }),
+          ...(args.stack === undefined ? {} : { stack: args.stack }),
+          ...(args.bottleneck === undefined ? {} : { bottleneck: args.bottleneck }),
+        }),
       ),
   );
 

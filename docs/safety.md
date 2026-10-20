@@ -158,7 +158,8 @@ until it is, `ufo setup` refuses to install from the registry and takes a tarbal
   redacted, because the agent reads arm A to write its diffs. With `UFO_HOME` under your home
   directory they name it and your user name, and an agent passes them to its model provider. Every
   other field of those results is redacted, except `inspect_target`'s `draftConfig`, UFO's own
-  draft `ufo.yaml`, which holds nothing of yours.
+  draft `ufo.yaml` (exempt only while it is exactly the draft built for the `stacks` the same
+  result reports), which holds nothing of yours.
 - **R5. Evidence can be forged by someone with a shell.** A bundle shows what UFO recorded, but a
   process with capability C could have written it. `ufo reproduce` re-measures on your machine and
   is the real check.

@@ -7,6 +7,7 @@ export * from "./changes.js";
 export * from "./commands.js";
 export * from "./config.js";
 export * from "./context.js";
+export * from "./detect.js";
 export * from "./env.js";
 export * from "./errors.js";
 export * from "./events.js";

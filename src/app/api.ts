@@ -7,11 +7,11 @@
 export { redact } from "../core/evidence/index.js";
 export type { JobRecord } from "../core/jobs/index.js";
 export { MAX_WAIT_S } from "../core/jobs/index.js";
-export { RepoPathSchema } from "../domain/index.js";
+export { BottleneckSchema, RepoPathSchema, StackIdSchema } from "../domain/index.js";
 export { packageVersion } from "./cards.js";
 export type { QueuedChange, SubmitChangeOptions } from "./changes.js";
 export { profileTarget, submitChange } from "./changes.js";
-export { DRAFT_CONFIG } from "./config.js";
+export { DRAFT_CONFIG, isDraftConfig } from "./config.js";
 export type { AppContext, Repo } from "./context.js";
 export {
   bindRepository,

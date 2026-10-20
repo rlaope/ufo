@@ -74,11 +74,13 @@ export function techniqueCard(): z.input<typeof TechniqueCardSchema> {
     title: "Size the heap for the workload",
     kind: "recipe",
     riskClass: "lossless",
+    bottlenecks: ["allocation"],
     params: [{ name: "heap_mb", type: "integer", min: 256, max: 16384, default: 1024 }],
     commandTemplates: [
       { id: "launch", run: "java -Xmx{{heap_mb}}m -jar target/app.jar", params: ["heap_mb"] },
     ],
     signals: ["GC pauses above 10% of wall time in the profile"],
+    sources: ["https://docs.oracle.com/en/java/javase/21/gctuning/"],
     verifiedIn: "unverified",
   };
 }

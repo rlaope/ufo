@@ -13,7 +13,7 @@ ufo <command> [options]
 
 | Command | What it does |
 |---|---|
-| `init` | Writes a draft `ufo.yaml` at the repository root. Never overwrites an existing file. |
+| `init` | Writes a draft `ufo.yaml` at the repository root, built from the stacks detected there (see [Stack detection](#stack-detection-and-the-draft)). Never overwrites an existing file. |
 | `approve` | Shows everything `ufo.yaml` lets UFO run and records your approval. Needs an interactive terminal. |
 | `measure` | Measures the current `HEAD`: the oracle snapshot, 5 samples, and the noise floor. Leaves no branch or arm behind. |
 | `run` | Starts a run, applies each enabled recipe card once with its default parameters, then runs the final check and prints the report. |
@@ -269,6 +269,8 @@ domain: example
 title: Turn off the configured extra delay
 kind: recipe
 riskClass: lossless
+stacks: [node]           # stack ids the card applies to; [] (the default) means any stack
+bottlenecks: [cpu]       # at least one bottleneck category
 params:
   - name: delay_ms
     type: integer        # integer | number | boolean | enum (no free-form strings)
@@ -289,8 +291,28 @@ commandTemplates:
     run: node --check server.mjs
 signals:
   - toy.properties sets a non-zero items.extra_delay_ms
+steps:                   # guided cards: the ordered how-to
+  - Set items.extra_delay_ms to 0 in toy.properties
+expectedEffect: latency drops by the configured delay; measure   # one line, with its condition
+sources:                 # primary https URLs; at least one unless the domain is generic
+  - https://example.com/docs/extra-delay
 verifiedIn: unverified
 ```
+
+Besides the fields above a card has `preconditions`, `verification`, and `traps` (lists of notes),
+`pinnedToolVersions`, `memoryBudget`, and `verifiedIn`. The fields that route an agent to a card:
+
+| Field | Meaning |
+|---|---|
+| `stacks` | Any of `jvm`, `spring-boot`, `gradle`, `maven`, `node`, `npm`, `pnpm`, `yarn`, `typescript`, `nextjs`, `vite`, `webpack`, `python`, `django`, `fastapi`, `flask`, `sqlalchemy`, `go`, `rust`, `cargo`, `docker`, `postgres`, `mysql`, `hibernate`, `llama-cpp`, `vllm`, `pytorch`, `openai-client`. Empty means any stack. Each at most once. |
+| `bottlenecks` | One or more of `startup`, `cpu`, `allocation` (GC and memory), `io`, `network`, `contention` (locks, pools, concurrency), `query` (database), `serialization`, `build`, `bundle` (payload size), `rendering`, `inference`, `data_loading`, `caching` (repeated work that could be reused). Required. |
+| `signals` | Observable evidence that points at the card; at least one. |
+| `steps` | The ordered how-to a guided card gives the agent. |
+| `expectedEffect` | One line saying what to expect and under which condition. |
+| `sources` | At most 16 `https` URLs of the primary sources the card was written from. A card outside the `generic` domain needs at least one. |
+
+`list_techniques` filters by `stack` and `bottleneck` and returns these fields (see
+[mcp.md](mcp.md)).
 
 | Edit | Effect |
 |---|---|
@@ -302,6 +324,32 @@ whose edits do not apply (missing file, `find` not found exactly once) is droppe
 `patch_failed`; one that leaves arm A unchanged is dropped as `no_effect` and does not count
 against the budget. Guided cards cannot have edits. In M1, the only command template UFO runs is
 the one with id `reset`; every template is still listed for approval.
+
+## Stack detection and the draft
+
+`ufo init` and `inspect_target` read the repository root to find its stacks. They only read files:
+no repository command runs, symbolic links are not followed, and a file over 256 KiB is skipped.
+
+| Stack ids | Read |
+|---|---|
+| `node`, `npm`, `pnpm`, `yarn`, `typescript`, `nextjs`, `vite`, `webpack`, `openai-client`, `postgres`, `mysql` | `package.json` (dependencies, `packageManager`, `scripts.test`) and the lockfiles `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`. Express and fastify are plain `node`. |
+| `jvm`, `maven`, `gradle`, `spring-boot`, `hibernate`, `postgres`, `mysql` | `pom.xml`, `build.gradle(.kts)`, `settings.gradle(.kts)`, `gradle/libs.versions.toml`: the Spring Boot plugin or a starter, JPA or Hibernate, a database driver. |
+| `python`, `django`, `fastapi`, `flask`, `sqlalchemy`, `pytorch`, `vllm`, `llama-cpp`, `openai-client`, `postgres`, `mysql` | `pyproject.toml`, `requirements*.txt`, `setup.cfg`, `setup.py`, `pytest.ini`. |
+| `go`, `rust`, `cargo` | `go.mod` (and its database drivers), `Cargo.toml`. |
+| `docker`, `postgres`, `mysql`, `llama-cpp`, `vllm` | `Dockerfile`, compose files (database images), and `package.json` scripts, `Dockerfile`, `Makefile`, `scripts/*.sh` for `llama-server` or `vllm serve`. |
+
+Each detected stack comes with the evidence (file and match) and two suggestions, fixed text of
+UFO's: a `testCommand` (`npm test`, `pnpm test`, `yarn test`, `./gradlew test` or `gradle test`,
+`./mvnw -q test` or `mvn -q test`, `pytest`, `go test ./...`, `cargo test`) and a `workloadHint`,
+one line on what to measure for the stack.
+
+The draft `ufo.yaml` is built from them: each stack's `workloadHint` as a comment above the
+workload command, the command to fill in marked `FILL IN` (the draft is valid as written, and the
+command exits 1 until replaced), the detected test command as a commented-out `test_pass_set`
+oracle, and a comment naming the detected stacks to filter `list_techniques` by. The oracle stays
+commented out because a `test_pass_set` command must print the `ufoTestResults` line (see [Test
+results](#test-results-the-ufotestresults-line)), which a plain `npm test` does not. Nothing
+detected gives the plain draft.
 
 ## Approval
 

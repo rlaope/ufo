@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { BottleneckSchema } from "./bottleneck.js";
 import {
   BundleIdSchema,
   CommandLineSchema,
@@ -6,11 +7,13 @@ import {
   labelSchema,
   MAX_ID_LENGTH,
   MAX_LABEL_LENGTH,
+  MAX_NOTE_LENGTH,
   NoteListSchema,
   RepoPathSchema,
   uniqueArray,
   VersionMapSchema,
 } from "./primitives.js";
+import { StackIdSchema } from "./stack.js";
 
 export const TechniqueKindSchema = z.enum(["recipe", "guided"]);
 export type TechniqueKind = z.infer<typeof TechniqueKindSchema>;
@@ -27,8 +30,15 @@ const MAX_COMMAND_TEMPLATES = 8;
 const MAX_ENUM_VALUES = 32;
 const MAX_VERIFIED_IN = 64;
 const MAX_EDITS = 16;
+const MAX_SOURCES = 16;
 /** Text a `replace_text` edit finds or inserts. Larger rewrites are guided changes, not recipes. */
 export const MAX_EDIT_TEXT_LENGTH = 10_000;
+
+/** A primary source: an https URL on one line. */
+const SourceUrlSchema = z
+  .string()
+  .max(MAX_NOTE_LENGTH)
+  .regex(/^https:\/\/[^\s\p{Cc}]+$/u, "must be an https URL");
 
 /** Enum values are substituted into commands, so they carry no shell metacharacters. */
 const ParamTokenSchema = z
@@ -148,6 +158,17 @@ export const TechniqueCardSchema = z
     title: labelSchema(),
     kind: TechniqueKindSchema,
     riskClass: RiskClassSchema,
+    /** Detected stacks the card applies to; empty means any stack. */
+    stacks: uniqueArray(StackIdSchema, StackIdSchema.options.length, (s) => s, "stacks").default(
+      [],
+    ),
+    /** What limits the target when this card helps. */
+    bottlenecks: uniqueArray(
+      BottleneckSchema,
+      BottleneckSchema.options.length,
+      (b) => b,
+      "bottlenecks",
+    ).min(1),
     params: uniqueArray(CardParamSchema, MAX_PARAMS, (p) => p.name, "param names").default([]),
     commandTemplates: uniqueArray(
       CommandTemplateSchema,
@@ -161,8 +182,14 @@ export const TechniqueCardSchema = z
     preconditions: NoteListSchema.default([]),
     /** Profiler evidence that points at this card. A card nothing points at is never chosen. */
     signals: NoteListSchema.min(1),
+    /** Guided cards: the ordered how-to the agent follows. */
+    steps: NoteListSchema.default([]),
     verification: NoteListSchema.default([]),
     traps: NoteListSchema.default([]),
+    /** One line with its condition, e.g. "startup -20-40% on JDK 24+ with a training run". */
+    expectedEffect: labelSchema().optional(),
+    /** Primary sources (documentation, specifications) the card was written from. */
+    sources: uniqueArray(SourceUrlSchema, MAX_SOURCES, (u) => u, "sources").default([]),
     /** Tools whose flags churn, pinned to the version the templates were written for. */
     pinnedToolVersions: VersionMapSchema.default({}),
     verifiedIn: z.union([
@@ -171,6 +198,13 @@ export const TechniqueCardSchema = z
     ]),
   })
   .superRefine((card, ctx) => {
+    if (card.domain !== "generic" && card.sources.length === 0) {
+      ctx.addIssue({
+        code: "custom",
+        message: "a card outside the generic domain needs at least one primary source",
+        path: ["sources"],
+      });
+    }
     if (card.kind === "recipe" && card.commandTemplates.length === 0 && card.edits.length === 0) {
       ctx.addIssue({
         code: "custom",

@@ -17,8 +17,11 @@ domain: extra
 title: Tune something
 kind: guided
 riskClass: lossless
+bottlenecks: [cpu]
 signals:
   - something is slow
+sources:
+  - https://example.com/ufo-test-fixture
 verifiedIn: unverified
 `;
 
@@ -55,6 +58,15 @@ describe("loadCatalog", () => {
     expect(catalog.dirs.get("generic.code-change")).toBe(BUILTIN_CARDS_DIR);
     expect(catalog.dirs.get("toy.no-delay")).toBe(FIXTURE_CARDS);
     expect(BUILTIN_CARDS_DIR.endsWith(`${path.sep}src${path.sep}techniques${path.sep}`)).toBe(true);
+  });
+
+  it("loads every packaged card through the card schema, with a bottleneck and a source outside generic", async () => {
+    const { cards } = await loadCatalog();
+    expect(cards.size).toBeGreaterThan(0);
+    for (const card of cards.values()) {
+      expect(card.bottlenecks.length, card.id).toBeGreaterThan(0);
+      if (card.domain !== "generic") expect(card.sources.length, card.id).toBeGreaterThan(0);
+    }
   });
 
   it("requires id <domain>.<file name> and domain = directory", async () => {

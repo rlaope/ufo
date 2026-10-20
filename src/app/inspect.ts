@@ -8,11 +8,12 @@ import { promisify } from "node:util";
 import { redact } from "../core/evidence/index.js";
 import { runGit } from "../core/git/index.js";
 import { checkApproval } from "../core/policy/index.js";
-import type { Objective, TechniqueCard, UfoConfig } from "../domain/index.js";
+import type { Bottleneck, Objective, StackId, TechniqueCard, UfoConfig } from "../domain/index.js";
 import type { Exec } from "../worker/index.js";
 import { approvalSubject, type CardSet, loadCards } from "./cards.js";
-import { DRAFT_CONFIG, type LoadedConfig, loadConfig } from "./config.js";
+import { draftConfigFor, type LoadedConfig, loadConfig } from "./config.js";
 import { type AppContext, homeFor, type Repo, repoOf } from "./context.js";
+import { type DetectedStack, detectStacks } from "./detect.js";
 import { captureEnv } from "./env.js";
 import { describeFailure } from "./errors.js";
 import { type ApprovedCommand, approvedCommands } from "./review.js";
@@ -71,9 +72,11 @@ export interface TargetInspection {
   repoRoot: string;
   /** Files at the repository root that name its stack (`STACK_MARKERS`). */
   stack: string[];
+  /** The stacks read from the repository's files, with the evidence for each. */
+  stacks: DetectedStack[];
   config: { present: boolean; valid: boolean; error?: string | undefined };
   /**
-   * While there is no ufo.yaml: the draft `ufo init` writes (`DRAFT_CONFIG`), to fill in and
+   * While there is no ufo.yaml: the draft `ufo init` writes, built from `stacks`, to fill in and
    * save as ufo.yaml at the repository root. UFO's own text, so it is not redacted.
    */
   draftConfig?: string;
@@ -95,15 +98,17 @@ export async function inspectTarget(context: AppContext): Promise<TargetInspecti
   for (const marker of STACK_MARKERS) {
     if (await lstat(path.join(repo.root, marker)).catch(() => undefined)) stack.push(marker);
   }
+  const stacks = await detectStacks(repo.root);
   const read = await readConfig(repo, context);
   if ("error" in read) {
     return {
       ...redact({
         repoRoot: repo.root,
         stack,
+        stacks,
         config: { present: read.present, valid: false, error: read.error },
       }),
-      ...(read.present ? {} : { draftConfig: DRAFT_CONFIG }),
+      ...(read.present ? {} : { draftConfig: draftConfigFor(stacks) }),
     };
   }
   const { loaded, cards } = read;
@@ -112,6 +117,7 @@ export async function inspectTarget(context: AppContext): Promise<TargetInspecti
   return redact({
     repoRoot: repo.root,
     stack,
+    stacks,
     config: { present: true, valid: true },
     approval:
       refused === undefined
@@ -344,8 +350,18 @@ export interface TechniqueListing {
     title: string;
     kind: string;
     riskClass: string;
+    /** Stacks the card applies to; empty means any. */
+    stacks: StackId[];
+    bottlenecks: Bottleneck[];
     /** Profiler evidence that points at the card. */
     signals: string[];
+    preconditions: string[];
+    /** The ordered how-to of a guided card. */
+    steps: string[];
+    verification: string[];
+    traps: string[];
+    expectedEffect?: string | undefined;
+    sources: string[];
     /** ufo.yaml enables it; only enabled cards can be submitted. */
     enabled: boolean;
   }[];
@@ -353,26 +369,63 @@ export interface TechniqueListing {
   configError?: string | undefined;
 }
 
-/** `list_techniques`: the cards UFO knows for this repository, optionally of one domain. */
+/** How early a card is listed: for the stacks asked for or detected, for any stack, for others. */
+function rank(card: TechniqueCard, wanted: ReadonlySet<StackId>): number {
+  if (card.stacks.some((id) => wanted.has(id))) return 0;
+  return card.stacks.length === 0 ? 1 : 2;
+}
+
+/**
+ * `list_techniques`: the cards UFO knows for this repository, optionally of one domain, one
+ * stack (cards for that stack and cards for any stack), or one bottleneck. Without a stack
+ * filter the cards for the repository's detected stacks come first, then the stack-independent
+ * ones.
+ */
 export async function listTechniques(
   context: AppContext,
-  options: { readonly domain?: string } = {},
+  options: {
+    readonly domain?: string;
+    readonly stack?: StackId;
+    readonly bottleneck?: Bottleneck;
+  } = {},
 ): Promise<TechniqueListing> {
   const repo = await repoOf(context);
   const read = await readConfig(repo, context);
   const cards = "error" in read ? await loadCards(repo.root, context) : read.cards;
   const enabled = new Set("error" in read ? [] : read.loaded.config.cards);
+  const wanted = new Set<StackId>(
+    options.stack === undefined
+      ? (await detectStacks(repo.root)).map((stack) => stack.id)
+      : [options.stack],
+  );
   const listed = [...cards.values()]
     .map(({ card }) => card)
     .filter((card) => options.domain === undefined || card.domain === options.domain)
-    .sort((a, b) => a.id.localeCompare(b.id))
+    .filter(
+      (card) =>
+        options.stack === undefined ||
+        card.stacks.length === 0 ||
+        card.stacks.includes(options.stack),
+    )
+    .filter(
+      (card) => options.bottleneck === undefined || card.bottlenecks.includes(options.bottleneck),
+    )
+    .sort((a, b) => rank(a, wanted) - rank(b, wanted) || a.id.localeCompare(b.id))
     .map((card) => ({
       id: card.id,
       domain: card.domain,
       title: card.title,
       kind: card.kind,
       riskClass: card.riskClass,
+      stacks: [...card.stacks],
+      bottlenecks: [...card.bottlenecks],
       signals: [...card.signals],
+      preconditions: [...card.preconditions],
+      steps: [...card.steps],
+      verification: [...card.verification],
+      traps: [...card.traps],
+      expectedEffect: card.expectedEffect,
+      sources: [...card.sources],
       enabled: enabled.has(card.id),
     }));
   return redact({

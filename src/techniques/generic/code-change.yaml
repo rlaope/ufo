@@ -6,8 +6,28 @@ domain: generic
 title: Plain behavior-preserving code change
 kind: guided
 riskClass: lossless
+stacks: []
+bottlenecks:
+  - startup
+  - cpu
+  - allocation
+  - io
+  - network
+  - contention
+  - query
+  - serialization
+  - build
+  - bundle
+  - rendering
+  - inference
+  - data_loading
+  - caching
 signals:
   - Profiler or measurement evidence points at code in the target that a behavior-preserving edit can make faster
+steps:
+  - Profile the target and name the bottleneck the evidence shows
+  - Write the smallest behavior-preserving change that removes the cost the profile shows
+  - Submit it with the evidence that points at it; UFO measures it against the baseline
 verification:
   - Every oracle in ufo.yaml runs on the candidate, and the baseline test pass set must still pass
   - The primary metric is measured in interleaved A/B pairs; UFO keeps or drops the change

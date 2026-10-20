@@ -1,7 +1,12 @@
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { AppError, DRAFT_CONFIG } from "../../../src/app/index.js";
+import {
+  AppError,
+  type DetectedStack,
+  DRAFT_CONFIG,
+  draftConfigFor,
+} from "../../../src/app/index.js";
 import { LockTimeoutError } from "../../../src/core/jobs/index.js";
 import { PolicyError, violation } from "../../../src/core/policy/index.js";
 import {
@@ -55,6 +60,31 @@ describe("a tool result", () => {
       expect(body(success({ draftConfig: `${DRAFT_CONFIG}# ${HOME}/x\n` }))).toEqual({
         draftConfig: `${DRAFT_CONFIG.replace("lower_is_better", "<redacted:secret>")}# ~/x\n`,
       });
+    } finally {
+      delete process.env.UFO_PROBE_TOKEN;
+    }
+  });
+
+  // M3 P3: the draft built from the detected stacks is exempt, and only when it is the draft for
+  // the stacks the same result reports.
+  it("keeps the draft built for the stacks it reports, and no other text", () => {
+    process.env.UFO_PROBE_TOKEN = "lower_is_better";
+    try {
+      const stacks: DetectedStack[] = [
+        { id: "node", evidence: ["package.json"], suggestions: { testCommand: "npm test" } },
+      ];
+      const draft = draftConfigFor(stacks);
+      expect(body(success({ stacks, draftConfig: draft })).draftConfig).toBe(draft);
+      // A draft for other stacks, a draft with a line added, and a draft with no stacks beside
+      // it are redacted like any field.
+      for (const other of [
+        { stacks: [], draftConfig: draft },
+        { stacks, draftConfig: `${draft}# extra\n` },
+        { draftConfig: draft },
+        { stacks: "node", draftConfig: draft },
+      ]) {
+        expect(body(success(other)).draftConfig).toContain("<redacted:secret>");
+      }
     } finally {
       delete process.env.UFO_PROBE_TOKEN;
     }

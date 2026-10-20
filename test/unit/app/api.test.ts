@@ -111,6 +111,7 @@ describe("the adapter modules", () => {
 
   it("export exactly the workflows, failure mapping, and constants adapters use", () => {
     expect(Object.keys(api).sort()).toEqual([
+      "BottleneckSchema",
       "CONTROL_LOCK_WAIT_MS",
       "DRAFT_CONFIG",
       "EXIT_INTERNAL",
@@ -119,6 +120,7 @@ describe("the adapter modules", () => {
       "EXIT_USAGE",
       "MAX_WAIT_S",
       "RepoPathSchema",
+      "StackIdSchema",
       "bindRepository",
       "cancelRun",
       "checkCapabilities",
@@ -128,6 +130,7 @@ describe("the adapter modules", () => {
       "getRun",
       "hintFor",
       "inspectTarget",
+      "isDraftConfig",
       "listTechniques",
       "measure",
       "packageVersion",

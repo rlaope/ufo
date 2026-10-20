@@ -3,6 +3,9 @@ domain: toy
 title: Remove a fixed delay from the request path
 kind: guided
 riskClass: lossless
+bottlenecks: [cpu]
 signals:
   - Request latency is dominated by a fixed sleep in the handler
+sources:
+  - https://example.com/ufo-test-fixture
 verifiedIn: unverified

@@ -2,7 +2,7 @@
 // host, and the same JSON as structured content and as one text block.
 
 import type { CallToolResult } from "@modelcontextprotocol/server";
-import { DRAFT_CONFIG, describeFailure, redact } from "../app/api.js";
+import { describeFailure, isDraftConfig, redact } from "../app/api.js";
 
 /**
  * The first line of every result's text block, before its JSON: the same static words for every
@@ -99,10 +99,11 @@ export function withinBudget(value: Record<string, unknown>): Record<string, unk
  * UFO's own draft ufo.yaml.
  */
 function forAgent(value: object): Record<string, unknown> {
-  const { arms, ...rest } = value as { arms?: unknown; draftConfig?: unknown };
-  // inspect_target's draft ufo.yaml is UFO's own text, with nothing to redact; only that text.
+  const { arms, ...rest } = value as { arms?: unknown; draftConfig?: unknown; stacks?: unknown };
+  // inspect_target's draft ufo.yaml is UFO's own text, with nothing to redact; only the draft
+  // built for the stacks it reports.
   const { draftConfig, ...others } = rest;
-  const draft = draftConfig === DRAFT_CONFIG;
+  const draft = isDraftConfig(draftConfig, rest.stacks ?? []);
   const redacted = redact(draft ? others : rest) as Record<string, unknown>;
   return {
     ...redacted,

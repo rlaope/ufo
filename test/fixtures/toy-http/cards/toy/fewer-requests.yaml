@@ -5,6 +5,7 @@ domain: toy
 title: Send fewer requests per sample
 kind: recipe
 riskClass: lossless
+bottlenecks: [cpu]
 params:
   - name: requests
     type: integer
@@ -18,4 +19,6 @@ edits:
     replace: "const REQUESTS = {{requests}};"
 signals:
   - Each sample takes long because the workload sends many requests
+sources:
+  - https://example.com/ufo-test-fixture
 verifiedIn: unverified

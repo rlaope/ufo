@@ -43,12 +43,17 @@ The tools are `inspect_target`, `check_capabilities`, `list_techniques`, `start_
    `usable: false`, the machine is too noisy to decide anything: tell the user `unusableReason`,
    call `finish_run`, and stop.
 
-6. **Profile.** Call `profile_target` and poll its job. Read its phase times and values, then read
-   the code in arm A (`arms.a` from `get_run`) where the time goes. Done when you can name the
-   code a change would target and the evidence for it.
+6. **Diagnose.** Call `profile_target` and poll its job. Read its phase times and values, then the
+   code and configuration in arm A (`arms.a` from `get_run`). Name the bottleneck with
+   [bottlenecks.md](bottlenecks.md): its category, and the evidence that shows it. Then call
+   `list_techniques` with the stack `inspect_target` detected and that `bottleneck`. Done when you
+   have the bottleneck, its evidence, and the cards whose signals the evidence matches, in the
+   order bottlenecks.md gives.
 
-7. **Changes.** For each idea, in order of expected gain:
-   - Pick the enabled card whose signals match your evidence.
+7. **Changes.** For each matching card, in that order:
+   - If the card is not in the enabled `cards` of `ufo.yaml`, ask the user to enable it and
+     approve again; a change under a card that is not enabled is refused.
+   - Follow the card's `steps`, mind its `traps`, and check its `preconditions` in arm A.
    - Write a unified diff against arm A's current commit (`shas.a` from `get_run`), touching only
      the code the card covers.
    - Call `submit_change` with `card_id`, `diff`, `hypothesis` (what should get faster, and why),

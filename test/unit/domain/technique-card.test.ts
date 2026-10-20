@@ -9,6 +9,42 @@ describe("TechniqueCardSchema", () => {
     expect(parsed.traps).toEqual([]);
     expect(parsed.pinnedToolVersions).toEqual({});
     expect(parsed.memoryBudget).toBeUndefined();
+    expect(parsed.stacks).toEqual([]);
+    expect(parsed.steps).toEqual([]);
+    expect(parsed.expectedEffect).toBeUndefined();
+  });
+
+  // The card format the domain cards are written in (docs/cli.md, "Technique cards").
+  it("accepts a card in the documented v2 format", () => {
+    const parsed = expectAccepts(TechniqueCardSchema, {
+      id: "jvm.aot-cache",
+      domain: "jvm",
+      title: "Start from an ahead-of-time cache",
+      kind: "guided",
+      riskClass: "lossless",
+      stacks: ["jvm", "spring-boot"],
+      bottlenecks: ["startup"],
+      signals: ["class loading and linking dominate the startup profile"],
+      preconditions: ["JDK 24 or newer"],
+      steps: ["record a training run", "create the cache", "start with the cache"],
+      verification: ["the application starts and answers its health endpoint"],
+      traps: ["the cache is tied to the JDK build and the class path that made it"],
+      expectedEffect: "startup shorter on JDK 24+ with a training run; measure",
+      sources: ["https://openjdk.org/jeps/483"],
+      verifiedIn: "unverified",
+    });
+    expect(parsed.stacks).toEqual(["jvm", "spring-boot"]);
+    expect(parsed.bottlenecks).toEqual(["startup"]);
+  });
+
+  it("accepts a generic card without sources, and refuses any other without one", () => {
+    const generic = { ...techniqueCard(), domain: "generic" };
+    delete (generic as { sources?: unknown }).sources;
+    expectAccepts(TechniqueCardSchema, generic);
+    const other = { ...techniqueCard() };
+    delete (other as { sources?: unknown }).sources;
+    expectRejects(TechniqueCardSchema, other);
+    expectRejects(TechniqueCardSchema, { ...other, sources: [] });
   });
 
   it("accepts a guided card without command templates", () => {
@@ -18,7 +54,9 @@ describe("TechniqueCardSchema", () => {
       title: "Batch-fetch an N+1 association",
       kind: "guided",
       riskClass: "lossless",
+      bottlenecks: ["query"],
       signals: ["one query per row of the parent result set"],
+      sources: ["https://hibernate.org/orm/documentation/"],
       verifiedIn: ["data-2026-10-20.1"],
     });
   });
@@ -94,18 +132,33 @@ describe("TechniqueCardSchema", () => {
     expectRejects(TechniqueCardSchema, {});
   });
 
-  it.each(["id", "domain", "title", "kind", "riskClass", "signals", "verifiedIn"] as const)(
-    "rejects a card missing %s",
-    (field) => {
-      const value: Record<string, unknown> = techniqueCard();
-      delete value[field];
-      expectRejects(TechniqueCardSchema, value);
-    },
-  );
+  it.each([
+    "id",
+    "domain",
+    "title",
+    "kind",
+    "riskClass",
+    "bottlenecks",
+    "signals",
+    "verifiedIn",
+  ] as const)("rejects a card missing %s", (field) => {
+    const value: Record<string, unknown> = techniqueCard();
+    delete value[field];
+    expectRejects(TechniqueCardSchema, value);
+  });
 
   it.each([
     ["bad kind", { kind: "auto" }],
     ["bad risk class", { riskClass: "safe" }],
+    ["no bottlenecks", { bottlenecks: [] }],
+    ["unknown bottleneck", { bottlenecks: ["slowness"] }],
+    ["repeated bottleneck", { bottlenecks: ["cpu", "cpu"] }],
+    ["unknown stack", { stacks: ["cobol"] }],
+    ["repeated stack", { stacks: ["jvm", "jvm"] }],
+    ["http source", { sources: ["http://example.com/doc"] }],
+    ["source that is not a URL", { sources: ["see the docs"] }],
+    ["too many sources", { sources: Array.from({ length: 17 }, (_, i) => `https://e.com/${i}`) }],
+    ["multi-line expected effect", { expectedEffect: "a\nb" }],
     ["no signals", { signals: [] }],
     ["overlong signal", { signals: ["s".repeat(MAX_NOTE_LENGTH + 1)] }],
     ["too many signals", { signals: Array.from({ length: 33 }, (_, i) => `signal ${i}`) }],

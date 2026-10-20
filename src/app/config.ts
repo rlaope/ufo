@@ -3,6 +3,7 @@ import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import { hashConfig, personMustRun } from "../core/policy/index.js";
 import { type UfoConfig, UfoConfigSchema } from "../domain/index.js";
+import type { DetectedStack } from "./detect.js";
 import { AppError } from "./errors.js";
 
 export const CONFIG_FILE = "ufo.yaml";
@@ -111,11 +112,19 @@ export async function loadConfig(repoRoot: string): Promise<LoadedConfig> {
   return { path: file, text, hash: hashConfig(bytes), config: parseConfigText(text) };
 }
 
-/**
- * The draft `ufo init` writes, and `inspect_target` returns while there is no ufo.yaml. It is
- * valid as written; the workload command is a placeholder.
- */
-export const DRAFT_CONFIG = `# UFO configuration. Edit it; then ${personMustRun("ufo approve")}.
+/** The command a draft marks for the person to fill in; it exits 1 until they do. */
+export const DRAFT_WORKLOAD_COMMAND = "echo replace this with your benchmark command; exit 1";
+
+const DRAFT_ORACLE_EXAMPLE = `#  - name: unit-tests
+#    kind: test_pass_set
+#    command: node --test --test-reporter=./test/reporter/ufo.mjs
+#  - name: smoke
+#    kind: smoke
+#    command: ./scripts/smoke.sh
+`;
+
+function renderDraft(workloadNotes: string, oracleNotes: string, cardNotes: string): string {
+  return `# UFO configuration. Edit it; then ${personMustRun("ufo approve")}.
 # Reference: docs/cli.md (ufo.yaml reference).
 version: 1
 objective:
@@ -138,19 +147,63 @@ objective:
 workload:
   # Runs in each arm's directory and prints one JSON line on stdout, e.g.
   # {"latency_ms": 12.3, "error_rate": 0}
-  command: "echo replace this with your benchmark command; exit 1"
-oracles: []
-#  - name: unit-tests
-#    kind: test_pass_set
-#    command: node --test --test-reporter=./test/reporter/ufo.mjs
-#  - name: smoke
-#    kind: smoke
-#    command: ./scripts/smoke.sh
-targets: []
+${workloadNotes}  command: "${DRAFT_WORKLOAD_COMMAND}"
+${oracleNotes}targets: []
 cards:
   - generic.code-change
-optIns: []
+${cardNotes}optIns: []
 # Environment variables commands may see besides PATH, HOME, LANG, LC_*, TMPDIR, USER, SHELL,
 # TERM; their values are read when a run starts. Everything else is left out.
 env: []
 `;
+}
+
+/**
+ * The draft `ufo init` writes, and `inspect_target` returns while there is no ufo.yaml and
+ * nothing is detected. It is valid as written; the workload command is a placeholder.
+ */
+export const DRAFT_CONFIG = renderDraft("", `oracles: []\n${DRAFT_ORACLE_EXAMPLE}`, "");
+
+/**
+ * The draft for the stacks found in the repository: their measuring hints, the detected test
+ * command as a commented-out oracle, and the stacks whose cards to enable. `DRAFT_CONFIG` when
+ * nothing was detected. It is valid as written; only the workload command is left to fill in.
+ */
+export function draftConfigFor(stacks: readonly DetectedStack[]): string {
+  if (stacks.length === 0) return DRAFT_CONFIG;
+  const hints = stacks.flatMap((stack) =>
+    stack.suggestions.workloadHint === undefined
+      ? []
+      : [`  # Detected ${stack.id}: ${stack.suggestions.workloadHint}\n`],
+  );
+  const workloadNotes = `${hints.join("")}  # FILL IN: the command below fails until you replace it with the one command that\n  # measures your scenario and prints that JSON line.\n`;
+  const test = stacks.find((stack) => stack.suggestions.testCommand !== undefined);
+  const oracleNotes =
+    test?.suggestions.testCommand === undefined
+      ? `oracles: []\n${DRAFT_ORACLE_EXAMPLE}`
+      : `# Detected test command: ${test.suggestions.testCommand} (${test.id}). A test_pass_set oracle must print one
+# stdout line {"ufoTestResults":1,"tests":[{"id":"<test>","outcome":"pass"}]} (docs/cli.md, "Test
+# results"), which this command does not do on its own: make it print that line, then uncomment.
+oracles: []
+#  - name: unit-tests
+#    kind: test_pass_set
+#    command: ${test.suggestions.testCommand}
+`;
+  const cardNotes = `# Detected: ${stacks.map((stack) => stack.id).join(", ")}. List the cards for them with the
+# list_techniques tool (filter by stack and by the bottleneck the profile shows), then add their ids.
+`;
+  return renderDraft(workloadNotes, oracleNotes, cardNotes);
+}
+
+/**
+ * Whether `text` is exactly the draft this app builds for `stacks`, as `inspect_target` returns
+ * them. An MCP adapter exempts that text, and nothing else, from redaction.
+ */
+export function isDraftConfig(text: unknown, stacks: unknown = []): boolean {
+  if (typeof text !== "string" || !Array.isArray(stacks)) return false;
+  const shaped = stacks.every((stack: unknown) => {
+    const entry = stack as { id?: unknown; suggestions?: unknown } | null;
+    return typeof entry?.id === "string" && typeof entry.suggestions === "object";
+  });
+  return shaped && text === draftConfigFor(stacks as DetectedStack[]);
+}

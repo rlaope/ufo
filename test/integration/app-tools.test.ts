@@ -5,13 +5,15 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   cancelRun,
   checkCapabilities,
-  DRAFT_CONFIG,
+  draftConfigFor,
   finishRun,
   getJob,
   getRun,
+  init,
   inspectTarget,
   JOB_KINDS,
   listTechniques,
+  parseConfigText,
   profileTarget,
   readAppState,
   resolveRepo,
@@ -96,14 +98,39 @@ describe("inspecting the target", { timeout: TIMEOUT_MS }, () => {
       expect(missing).toEqual({
         repoRoot: other.repo,
         stack: ["package.json"],
+        stacks: [
+          {
+            id: "node",
+            evidence: ["package.json"],
+            suggestions: { workloadHint: expect.stringContaining("latency") },
+          },
+        ],
         config: {
           present: false,
           valid: false,
           error: "config_missing: no ufo.yaml at the repository root; run ufo init",
         },
         // Code review R7: the draft to fill in, since the agent may have no ufo on its PATH.
-        draftConfig: DRAFT_CONFIG,
+        draftConfig: draftConfigFor(missing.stacks),
       });
+      expect(missing.draftConfig).toContain("# Detected node: latency");
+      // A Node project with a test script gets its command as a commented-out oracle, and the
+      // draft still parses: only the marked workload command is left to fill in.
+      writeFileSync(
+        path.join(other.repo, "package.json"),
+        JSON.stringify({ scripts: { test: "node --test" }, dependencies: { vite: "6.0.0" } }),
+      );
+      const withTests = await inspectTarget(other.context);
+      expect(withTests.stacks.map((stack) => stack.id)).toEqual(["node", "vite"]);
+      const draft = withTests.draftConfig ?? "";
+      expect(draft).toContain("#    command: npm test");
+      expect(draft).toContain("# FILL IN:");
+      expect(parseConfigText(draft).workload.command).toContain("replace this with your benchmark");
+      expect(parseConfigText(draft).oracles).toEqual([]);
+      // ufo init writes the draft inspect_target returns.
+      const written = await init(other.context);
+      expect(readFileSync(written.path, "utf8")).toBe(withTests.draftConfig);
+      await expect(init(other.context)).rejects.toMatchObject({ code: "config_exists" });
       writeFileSync(path.join(other.repo, "ufo.yaml"), "version: [\n");
       const invalid = await inspectTarget(other.context);
       expect(invalid.config).toMatchObject({ present: true, valid: false });
@@ -209,6 +236,80 @@ describe("listing techniques", { timeout: TIMEOUT_MS }, () => {
   });
 });
 
+describe("filtering and ordering techniques by stack and bottleneck", {
+  timeout: TIMEOUT_MS,
+}, () => {
+  function card(name: string, stacks: string[], bottlenecks: string[]): string {
+    return [
+      `id: stk.${name}`,
+      "domain: stk",
+      `title: Card ${name}`,
+      "kind: guided",
+      "riskClass: lossless",
+      `stacks: [${stacks.join(", ")}]`,
+      `bottlenecks: [${bottlenecks.join(", ")}]`,
+      "signals:",
+      "  - evidence",
+      "steps:",
+      "  - first",
+      "  - second",
+      "expectedEffect: faster when measured",
+      "sources:",
+      "  - https://example.com/ufo-test-fixture",
+      "verifiedIn: unverified",
+      "",
+    ].join("\n");
+  }
+
+  it("keeps the cards for the stack asked for and for any stack, and the bottleneck asked for", async () => {
+    // The toy repository is a Node project.
+    const other = makeToy({
+      config: (yaml) => `${lightWorkload()(yaml)}cardDirs:\n  - cards\n`,
+    });
+    try {
+      mkdirSync(path.join(other.repo, "cards", "stk"), { recursive: true });
+      const write = (name: string, stacks: string[], bottlenecks: string[]) =>
+        writeFileSync(
+          path.join(other.repo, "cards", "stk", `${name}.yaml`),
+          card(name, stacks, bottlenecks),
+        );
+      write("a-jvm-startup", ["jvm", "spring-boot"], ["startup"]);
+      write("b-any-io", [], ["io"]);
+      write("c-node-cpu", ["node"], ["cpu", "io"]);
+      const ids = async (options: Parameters<typeof listTechniques>[1] = {}) =>
+        (await listTechniques(other.context, { domain: "stk", ...options })).cards.map(
+          (listed) => listed.id,
+        );
+      // The detected stack first, then any stack, then the others.
+      expect(await ids()).toEqual(["stk.c-node-cpu", "stk.b-any-io", "stk.a-jvm-startup"]);
+      expect(await ids({ stack: "jvm" })).toEqual(["stk.a-jvm-startup", "stk.b-any-io"]);
+      expect(await ids({ stack: "python" })).toEqual(["stk.b-any-io"]);
+      expect(await ids({ bottleneck: "io" })).toEqual(["stk.c-node-cpu", "stk.b-any-io"]);
+      expect(await ids({ stack: "node", bottleneck: "startup" })).toEqual([]);
+      const { cards } = await listTechniques(other.context);
+      expect(cards.map((listed) => listed.id).slice(0, 1)).toEqual(["stk.c-node-cpu"]);
+      expect(cards.at(-1)?.id).toBe("stk.a-jvm-startup");
+      expect(cards.find((listed) => listed.id === "generic.code-change")?.bottlenecks).toContain(
+        "startup",
+      );
+      const listed = cards.find((entry) => entry.id === "stk.c-node-cpu");
+      expect(listed).toMatchObject({
+        stacks: ["node"],
+        bottlenecks: ["cpu", "io"],
+        steps: ["first", "second"],
+        expectedEffect: "faster when measured",
+        sources: ["https://example.com/ufo-test-fixture"],
+        preconditions: [],
+        verification: [],
+        traps: [],
+        enabled: false,
+      });
+    } finally {
+      await other.cleanup();
+    }
+  });
+});
+
 const FAKE_KEY = `sk-proj-${"Z9y8X7w6".repeat(6)}`;
 
 // M2 B3d: these views reach an agent's model provider, so they go through the redactor too.
@@ -228,8 +329,11 @@ describe("the views behind the read-only tools", { timeout: TIMEOUT_MS }, () => 
           "title: A card that quotes a key",
           "kind: guided",
           "riskClass: lossless",
+          "bottlenecks: [cpu]",
           "signals:",
           `  - the profile shows ${FAKE_KEY} in every request`,
+          "sources:",
+          "  - https://example.com/ufo-test-fixture",
           "verifiedIn: unverified",
           "",
         ].join("\n"),
