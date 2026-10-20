@@ -38,4 +38,5 @@ sources:
   - https://jdbc.postgresql.org/documentation/server-prepare/
   - https://www.postgresql.org/docs/current/pgstatstatements.html
   - https://www.pgbouncer.org/config.html
+  - https://www.postgresql.org/docs/release/12.0/
 verifiedIn: unverified
