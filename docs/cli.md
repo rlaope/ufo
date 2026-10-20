@@ -530,15 +530,18 @@ npm runs from the prefix, with every `npm_config_*` variable removed from its en
 flags beat an `.npmrc` that turns the lockfile off or makes the install a dry run. Setup first
 reads the registry's metadata for that version, then checks that npm wrote a lockfile
 (`install_failed` otherwise), that it installed `ufo-agents@<version>`, that the lockfile's
-integrity for it is the registry's `dist.integrity`, and that every package in the lockfile came
-from `https://registry.npmjs.org/` (a scoped registry in an `.npmrc` must not swap a dependency);
-`integrity_mismatch` otherwise, and nothing is set up. It refuses (`package_unavailable`) to
+integrity for it is the registry's `dist.integrity`, and that every package in the lockfile is
+the registry's own tarball of its name and version,
+`https://registry.npmjs.org/<name>/-/<basename>-<version>.tgz` (a scoped registry in an `.npmrc`,
+or a URL to another package's tarball, must not swap a dependency); `integrity_mismatch`
+otherwise, and nothing is set up. It refuses (`package_unavailable`) to
 install `0.0.0` (an unreleased checkout), a version that is not exact, or one the registry does
 not have. The name `ufo-agents` is not published yet, so until it is, install a tarball:
 `--package <file.tgz>` (from `npm pack`) installs that file instead, and setup records its
 sha512 and checks the lockfile against it. The installed copy is placed only once it checks out
-(a copy it replaces is put back if that fails), and leftovers of an interrupted install are swept
-from `pkg/` at the next setup or uninstall. A copy already installed with the integrity the
+(a copy it replaces is put back if that fails), and leftovers of an interrupted install
+(`pkg/.install-*` and `pkg/.old-*`, never a version's own directory) are swept at the next setup or
+uninstall. A copy already installed with the integrity the
 record holds is reused without asking the registry, so a second setup works offline.
 
 While a run holds the machine lock, setup and uninstall refuse to replace or remove an installed
@@ -546,26 +549,28 @@ copy (`run_in_progress`): the run's worker may be running from it. Finish or can
 first. Installing a new version beside it is allowed.
 
 Every host entry starts that copy with an absolute node: the `node` on the filtered `PATH` when it
-is the binary running setup (a stable link such as Homebrew's), else that binary's own path.
+is the binary running setup (a stable link such as Homebrew's), else that binary's real path.
 Either way, that binary's real directory must pass the same `PATH` rules: setup refuses
 (`node_untrusted`) a node inside the working directory's project or under `node_modules`, since
-hosts would start it at every launch. When `UFO_HOME` is not `~/.ufo`, each entry also passes it
-(`env` in Codex's and Cursor's entries, `claude mcp add -e UFO_HOME=...`), since hosts start
-servers with an environment of their own. A `UFO_HOME` inside the working directory's project is
-refused (`unsafe_home`).
+hosts would start it at every launch. Every entry also names the UFO home, `~/.ufo` included
+(`env` in Codex's and Cursor's entries, `claude mcp add -e UFO_HOME=...`): hosts start servers
+with an environment of their own, and one that passes a `UFO_HOME` must not move the server's
+home. A `UFO_HOME` inside the working directory's project is refused (`unsafe_home`).
 
 ```toml
 [mcp_servers.ufo]
 command = "/opt/homebrew/bin/node"
 args = ["/Users/you/.ufo/pkg/1.2.3/node_modules/ufo-agents/dist/cli/index.js", "mcp", "--host", "codex"]
 startup_timeout_sec = 60
+env = { UFO_HOME = "/Users/you/.ufo" }
 ```
 
 ```json
 "ufo": {
   "type": "stdio",
   "command": "/opt/homebrew/bin/node",
-  "args": ["/Users/you/.ufo/pkg/1.2.3/node_modules/ufo-agents/dist/cli/index.js", "mcp", "--host", "cursor", "--repo", "${workspaceFolder}"]
+  "args": ["/Users/you/.ufo/pkg/1.2.3/node_modules/ufo-agents/dist/cli/index.js", "mcp", "--host", "cursor", "--repo", "${workspaceFolder}"],
+  "env": { "UFO_HOME": "/Users/you/.ufo" }
 }
 ```
 
@@ -608,8 +613,10 @@ it may list the skill twice. Setup stores no credentials of its own.
 
 Each step re-reads its file first. If the file changed after the plan was shown, setup stops
 (`changed_during_setup`) and writes nothing more; run it again. Hosts edit their own files:
-Codex's `codex mcp add` rewrites UFO's `startup_timeout_sec = 60` as `60.0`, which setup reads as
-the same entry.
+Codex's `codex mcp add` rewrites UFO's `startup_timeout_sec = 60` as `60.0`, and its inline
+`env = { ... }` as an `[mcp_servers.ufo.env]` table after UFO's; setup reads both as the same
+entry, and uninstall and re-pins take out that table with UFO's. An `env` table with anything but
+strings, or another `[mcp_servers.ufo.*]` table, is not UFO's (`entry_conflict`).
 
 When `claude mcp add` fails, or succeeds without the entry showing up as UFO's in
 `~/.claude.json` (for example because `CLAUDE_CONFIG_DIR` differs), setup removes what it added

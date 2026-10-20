@@ -210,7 +210,8 @@ until it is, `ufo setup` refuses to install from the registry and takes a tarbal
 
 - **R9. What setup registers runs at every host start.** `ufo setup` adds a server that each of
   your agent hosts starts at launch, in every project you open, as you: the copy of UFO in
-  `$UFO_HOME/pkg/<version>`, started with an absolute node, never through `npx`. Setup installs it
+  `$UFO_HOME/pkg/<version>`, started with an absolute node, never through `npx`, and with the
+  UFO home named in the entry, so a host that passes its own `UFO_HOME` cannot move it. Setup installs it
   from the public registry with no install scripts and checks it against the registry's integrity,
   or from a tarball you name (`--package`, recorded by its sha512). Anyone who can write
   `$UFO_HOME` can change what your hosts start (R2). `--yes` applies setup's changes without
