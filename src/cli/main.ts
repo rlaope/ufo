@@ -258,6 +258,7 @@ async function execute(
       const tarball = typeof values.package === "string" ? values.package : undefined;
       const result = await SETUP_COMMANDS[command]({
         cwd: context.cwd,
+        env: io.env ?? process.env,
         ...io.setup,
         print,
         yes: values.yes === true,

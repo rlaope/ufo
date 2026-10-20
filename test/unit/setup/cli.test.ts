@@ -73,6 +73,21 @@ describe("ufo setup, uninstall, update on the command line", () => {
     expect(JSON.parse(result.stdout).result.version).toBe("0.0.0");
   });
 
+  it("finds programs on the PATH of the CLI's env when setup is given none", async () => {
+    await put(codexFile(), "a = 1\n");
+    const { env, ...environment } = box.environment;
+    const code = await main(["setup", "--host", "codex", "--yes"], {
+      stdout: () => {},
+      stderr: () => {},
+      cwd: box.environment.cwd ?? box.root,
+      env: { ...env },
+      setup: environment,
+    });
+    expect(code).toBe(0);
+    const npm = box.fakes.calls.find((call) => call.program === "npm");
+    expect(npm?.file).toBe(path.join(box.bin, "npm"));
+  });
+
   it("reports refusals with their exit codes", async () => {
     expect(await ufo("setup", "--host", "nope")).toMatchObject({
       code: 2,
