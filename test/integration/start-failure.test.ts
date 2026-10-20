@@ -24,7 +24,20 @@ const fault = vi.hoisted(() => ({
   onBranchDelete: undefined as (() => Promise<void>) | undefined,
   /** Git commands, by their arguments, that fail. */
   failGit: undefined as ((args: readonly string[]) => boolean) | undefined,
+  /** Taking the machine lock throws. */
+  failLock: false,
 }));
+
+vi.mock("../../src/core/jobs/index.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/core/jobs/index.js")>();
+  return {
+    ...actual,
+    acquireMachineLock: async (...args: Parameters<typeof actual.acquireMachineLock>) => {
+      if (fault.failLock) throw new Error("the machine lock could not be read");
+      return actual.acquireMachineLock(...args);
+    },
+  };
+});
 
 vi.mock("../../src/core/git/exec.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../src/core/git/exec.js")>();
@@ -58,6 +71,7 @@ afterEach(async () => {
   fault.onLaunch = undefined;
   fault.onBranchDelete = undefined;
   fault.failGit = undefined;
+  fault.failLock = false;
   await toy?.cleanup();
   toy = undefined;
 });
@@ -87,6 +101,18 @@ describe("a start that fails after it created the arms", { timeout: TIMEOUT_MS }
     const arms = path.dirname(path.dirname(runLayout(current.home, current.repoId, "x").armA));
     expect(existsSync(arms) ? readdirSync(arms) : []).toEqual([]);
     expect(await readMachineLock({ home: current.home })).toBeUndefined();
+  });
+
+  // Code review CR-N2: a start that fails taking the machine lock ends its run too, so no run
+  // stays running and unstarted behind a starter that lives on (an MCP server).
+  it("ends its run when taking the machine lock fails", async () => {
+    const current = await approvedToy();
+    fault.failLock = true;
+    await expect(startRun(current.context)).rejects.toThrow("the machine lock could not be read");
+    expect(runIds(current)).toEqual([]);
+    fault.failLock = false;
+    // The next start is not refused by a run left behind.
+    await expect(startRun(current.context)).rejects.toThrow("the worker could not start");
   });
 
   // Code review (step A) #5: no cancel acts on a run while it starts, so none can end it between

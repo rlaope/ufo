@@ -248,15 +248,14 @@ async function startRunFor(
   // Held from here until the worker runs, so no cancel or other call acts on the run while it
   // starts. Nothing else takes the lock of a run whose start is in progress.
   return withControlLock(runDir, controlLockWaitMs(context), async () => {
-    const lock = await acquireMachineLock({ home, runId, repoId: repo.repoId });
-    if (!lock.acquired) {
-      await endRun(runDir, "failed");
-      await rm(runDir, { recursive: true, force: true });
-      const refusal = runInProgress(lock.holder);
-      throw new AppError(refusal.code, `${refusal.message}${cleanupNote(cleanupWarnings)}`);
-    }
     let created: CreatedRun | undefined;
+    // Everything from the machine lock on fails into the catch, which ends the run.
     try {
+      const lock = await acquireMachineLock({ home, runId, repoId: repo.repoId });
+      if (!lock.acquired) {
+        const refusal = runInProgress(lock.holder);
+        throw new AppError(refusal.code, `${refusal.message}${cleanupNote(cleanupWarnings)}`);
+      }
       created = await createRunArms(repo.root, runId, { home });
       const { run } = created;
       await updateRun(runDir, (record) => ({
@@ -326,7 +325,7 @@ async function startRunFor(
           ? undefined
           : await removeRunLeaving(created.run, { deleteBranch: true });
       await rm(runDir, { recursive: true, force: true });
-      await releaseMachineLock({ runId, home });
+      await releaseMachineLock({ runId, home }).catch(() => undefined);
       throw withLeftovers(error, left);
     }
   });
