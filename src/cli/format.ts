@@ -63,6 +63,7 @@ function formatView(view: RunView): string[] {
       `  baseline median ${view.baseline.median}, noise floor ${floor === undefined ? "unknown" : percent(floor)}`,
     );
   }
+  if (!view.usable) lines.push(`  not usable: ${view.unusableReason ?? "unknown"}`);
   for (const job of view.jobs) {
     lines.push(
       `  ${job.jobId} ${job.kind}: ${job.status}${job.progress ? ` (${job.progress})` : ""}${job.error ? `: ${job.error}` : ""}`,

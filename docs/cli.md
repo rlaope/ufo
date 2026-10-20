@@ -428,7 +428,10 @@ arm since the last job is not measured.
   `policy:noise_floor`, naming the likely cause. When the samples at the current A already put it
   above 10%, a change is refused before it is applied or measured and does not count against the
   budget. The samples at A are the latest kept change's B values, or the baseline before any keep;
-  after a deterministic keep (fewer than five values), the change's own five A samples.
+  after a deterministic keep (fewer than five values), the change's own five A samples. A
+  baseline refused this way leaves the run unable to decide any change: its view (`ufo status`,
+  MCP `get_run`) says `usable: false` with the reason (`not usable:` in the text output), so the
+  run should be finished; `ufo run` finishes it at once.
 - Finishing the run runs the final check (the base commit in B against the final commit in A, five
   fresh pairs), writes the report and the redacted evidence bundle, publishes the run branch,
   removes the arms (the run branch stays for review), and releases the machine lock. From the moment the finish job is

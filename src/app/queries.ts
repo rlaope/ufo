@@ -155,6 +155,12 @@ export interface RunView {
   baseline?:
     | { sha: string; median: number; noiseFloor?: number | undefined; refusal?: unknown }
     | undefined;
+  /**
+   * False once the baseline was refused (noise floor): every change would be refused the same
+   * way, so the run can only be finished. `unusableReason` says why.
+   */
+  usable: boolean;
+  unusableReason?: string | undefined;
   decisions: DecisionSummary[];
   budget: {
     maxTechniques: number;
@@ -184,6 +190,7 @@ export async function getRun(
   ]);
   const budget = budgetStatus(events, open.config.objective.budget, run.createdAt);
   const baseline = latestBaseline(events);
+  const refusal = baseline?.refusal;
   const report = (await readJsonIfExists(path.join(runDir, REPORT_FILE))) as RunReport | undefined;
   return redactView(
     toJson({
@@ -212,6 +219,11 @@ export async function getRun(
               noiseFloor: baseline.noiseFloor,
               refusal: baseline.refusal,
             },
+      usable: refusal === undefined,
+      unusableReason:
+        refusal === undefined
+          ? undefined
+          : `the baseline was refused (${refusal.reason}: ${refusal.detail}); no change can be decided, so finish the run`,
       decisions: summarizeDecisions(events),
       budget: {
         maxTechniques: budget.limits.maxTechniques,

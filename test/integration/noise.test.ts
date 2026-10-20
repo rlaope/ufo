@@ -4,6 +4,7 @@ import {
   getRun,
   openRun,
   startRun,
+  status,
   submitChange,
 } from "../../src/app/index.js";
 import { listChangeIds } from "../../src/core/git/index.js";
@@ -70,6 +71,15 @@ describe("noise floor above 10%", { timeout: TIMEOUT_MS }, () => {
     expect(git(run.arms.b, "status", "--porcelain")).toBe("");
     const view = await getRun(toy.context, { runId: run.runId });
     expect(view.baseline?.refusal).toMatchObject({ reason: "policy:noise_floor" });
+    // M2 A7: the view says the run cannot decide anything, so an agent finishes it.
+    expect(view.usable).toBe(false);
+    expect(view.unusableReason).toMatch(
+      /^the baseline was refused \(policy:noise_floor: noise floor \d+\.\d% exceeds 10\.0%; .+\); no change can be decided, so finish the run$/,
+    );
+    expect((await status(toy.context, { runId: run.runId })).current).toMatchObject({
+      usable: false,
+      unusableReason: view.unusableReason,
+    });
     expect(view.decisions).toMatchObject([
       { outcome: "inconclusive", reason: "policy:noise_floor" },
     ]);

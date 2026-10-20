@@ -111,11 +111,11 @@ describe("status of a run that does not exist", () => {
 describe("the report of a run", { timeout: TIMEOUT_MS }, () => {
   it("is the view with finished false until the run finished, then the report with finished true", async () => {
     const run = await startedRun();
-    expect(await report(toy.context, { runId: run.runId })).toMatchObject({
-      finished: false,
-      runId: run.runId,
-      status: "running",
-    });
+    const unfinished = await report(toy.context, { runId: run.runId });
+    expect(unfinished).toMatchObject({ finished: false, runId: run.runId, status: "running" });
+    // M2 A7: a run whose baseline was not refused is usable.
+    expect(unfinished).toMatchObject({ usable: true });
+    expect(unfinished).not.toHaveProperty("unusableReason");
     const finish = await finishRun(toy.context, { runId: run.runId });
     expect((await waitDone(toy, run.runId, finish.jobId)).status).toBe("succeeded");
     expect(await report(toy.context, { runId: run.runId })).toMatchObject({
