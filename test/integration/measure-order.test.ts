@@ -85,6 +85,11 @@ describe("ufo measure", { timeout: TIMEOUT_MS }, () => {
     }
     const result = await measuring;
     expect(result).toMatchObject({ baseline: { values: [1, 1, 1, 1, 1] } });
+    // Code review CR-N7: and says so, with how to end the run if nothing else does.
+    const runId = path.basename(runDir);
+    expect((result as { warnings: string[] }).warnings).toContain(
+      `measure run ${runId} was left to the call holding its control lock; if nothing ends it, run \`ufo cancel --run ${runId}\``,
+    );
     expect((await readRun(runDir)).status).toBe("running");
     rmSync(path.join(runDir, CONTROL_LOCK_FILE));
     await cancelRun(current.context, { runId: path.basename(runDir) });

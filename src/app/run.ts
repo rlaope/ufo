@@ -719,6 +719,7 @@ export async function measure(
   );
   let job: JobRecord | undefined;
   let cancelled = false;
+  let closeWarning: string | undefined;
   try {
     // Nothing more is printed for the baseline once interrupted.
     const progress = (current: JobRecord) => {
@@ -744,7 +745,7 @@ export async function measure(
     }
     throw error;
   } finally {
-    if (!cancelled) await closeMeasureRun(context, started, job);
+    if (!cancelled) closeWarning = await closeMeasureRun(context, started, job);
   }
   if (job?.status !== "succeeded") {
     throw new AppError(
@@ -755,7 +756,7 @@ export async function measure(
   return redact({
     runId: started.runId,
     baseline: job.result as unknown as BaselineResult,
-    warnings: started.warnings,
+    warnings: [...started.warnings, ...(closeWarning === undefined ? [] : [closeWarning])],
   });
 }
 
@@ -764,14 +765,15 @@ export async function measure(
  * run something else ended first (`ufo cancel`) was cleaned up by that, or is by the next start.
  * Under the run's control lock: a `ufo cancel` that marked the baseline cancelled finishes first,
  * instead of racing this close, and one that holds the lock past this call's wait ends the run.
+ * Returns a warning when the run was left to that call.
  */
 async function closeMeasureRun(
   context: AppContext,
   started: { runId: string; runDir: string; home: string },
   job: JobRecord | undefined,
-): Promise<void> {
+): Promise<string | undefined> {
   const control = path.join(started.runDir, CONTROL_LOCK_FILE);
-  await withControlLock(started.runDir, controlLockWaitMs(context), async () => {
+  return withControlLock(started.runDir, controlLockWaitMs(context), async () => {
     await killRunProcesses(started.runDir, killOptions(context));
     // The status first, as everywhere: a crash in the cleanup below leaves an ended run whose
     // arms and branch the next start removes.
@@ -786,9 +788,12 @@ async function closeMeasureRun(
       });
     });
     await releaseMachineLock({ runId: started.runId, home: started.home });
+    return undefined;
   }).catch((error: unknown) => {
     // Whoever holds the run's control lock this long (an outside cancel) is ending the run.
-    if (error instanceof LockTimeoutError && error.file === control) return;
+    if (error instanceof LockTimeoutError && error.file === control) {
+      return `measure run ${started.runId} was left to the call holding its control lock; if nothing ends it, run \`ufo cancel --run ${started.runId}\``;
+    }
     throw error;
   });
 }
