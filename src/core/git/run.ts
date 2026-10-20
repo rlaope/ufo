@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { lstat, mkdir, realpath, rm, rmdir, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readdir, realpath, rm, rmdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Change } from "../../domain/index.js";
 import { armsDirFor, ensureTrustedDir, ufoHome } from "../paths.js";
@@ -411,6 +411,54 @@ export async function resetBTo(run: Run, sha: string): Promise<void> {
     throw new GitError("arms_diverged", `${sha} is not on the run branch ${run.branch}`);
   }
   await resetB(run, target);
+}
+
+/** Lock files git keeps at the top of a git directory while it writes. */
+const TOP_LEVEL_LOCKS = [
+  "index.lock",
+  "HEAD.lock",
+  "ORIG_HEAD.lock",
+  "FETCH_HEAD.lock",
+  "packed-refs.lock",
+  "config.lock",
+  "shallow.lock",
+];
+
+async function refLocks(dir: string, depth = 0): Promise<string[]> {
+  if (depth > 8) return [];
+  const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
+  const found: string[] = [];
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) found.push(...(await refLocks(full, depth + 1)));
+    else if (entry.name.endsWith(".lock")) found.push(full);
+  }
+  return found;
+}
+
+/**
+ * Removes the lock files a git process killed mid-write left in either arm (`index.lock`,
+ * `HEAD.lock`, ref locks), which would make every later git command there fail. Only safe once
+ * nothing of the run is running: the arms are UFO's own clones, and only the run's worker runs git
+ * in them, so the caller has stopped the run's processes first (`resumeRun`). Returns the files
+ * removed, relative to their arm.
+ */
+export async function clearStaleArmLocks(run: Run): Promise<string[]> {
+  const removed: string[] = [];
+  for (const arm of [run.armA, run.armB]) {
+    await assertArm(arm);
+    const gitDir = path.join(arm, ".git");
+    const locks = [
+      ...TOP_LEVEL_LOCKS.map((name) => path.join(gitDir, name)),
+      ...(await refLocks(path.join(gitDir, "refs"))),
+    ];
+    for (const lock of locks) {
+      if ((await lstat(lock).catch(() => undefined)) === undefined) continue;
+      await rm(lock, { force: true });
+      removed.push(path.relative(arm, lock));
+    }
+  }
+  return removed;
 }
 
 /**

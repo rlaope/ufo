@@ -20,6 +20,7 @@ import {
   applyToB,
   attributeDrivers,
   checkRepoConfig,
+  clearStaleArmLocks,
   commitKeep,
   createRunArms,
   diffFromFiles,
@@ -814,6 +815,35 @@ describe("resetBTo and resetArms", () => {
     for (const arm of [run.armA, run.armB]) {
       expect(gitIn(arm, "status", "--porcelain")).toBe("");
     }
+    await removeRun(run, { deleteBranch: true });
+  });
+});
+
+// M2 E1b: a git the run's worker was running when it was stopped leaves its locks in the arm, and
+// every later git there fails "index.lock: File exists" until they are gone.
+describe("clearStaleArmLocks", () => {
+  it("removes git's lock files from both arms and nothing else", async () => {
+    const { run } = await createRunArms(newRepo(), nextRunId(), { home });
+    const locks = [
+      path.join(run.armB, ".git", "index.lock"),
+      path.join(run.armA, ".git", "HEAD.lock"),
+      path.join(run.armA, ".git", "refs", "heads", `${run.branch}.lock`),
+    ];
+    for (const lock of locks) {
+      mkdirSync(path.dirname(lock), { recursive: true });
+      writeFileSync(lock, "");
+    }
+    writeFileSync(path.join(run.armB, "src/app.js"), "partial\n");
+    // The first lock git meets (A's HEAD.lock) already stops the reset.
+    await expect(resetArms(run)).rejects.toThrow(/\.lock/);
+    expect((await clearStaleArmLocks(run)).sort()).toEqual(
+      [".git/HEAD.lock", ".git/index.lock", `.git/refs/heads/${run.branch}.lock`].sort(),
+    );
+    for (const lock of locks) expect(existsSync(lock)).toBe(false);
+    expect(existsSync(path.join(run.armA, ".git", "HEAD"))).toBe(true);
+    expect(await resetArms(run)).toBe(run.baseSha);
+    expect(gitIn(run.armB, "status", "--porcelain")).toBe("");
+    expect(await clearStaleArmLocks(run)).toEqual([]);
     await removeRun(run, { deleteBranch: true });
   });
 });

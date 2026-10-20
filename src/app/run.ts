@@ -5,6 +5,7 @@ import path from "node:path";
 import { redact } from "../core/evidence/index.js";
 import {
   type CreatedRun,
+  clearStaleArmLocks,
   createRunArms,
   listChangeIds,
   publishBranch,
@@ -495,6 +496,9 @@ async function resumeLocked(context: AppContext, active: ActiveRun): Promise<Res
     );
   }
   const kill = await killRunProcesses(runDir, killOptions(context));
+  // A git the stopped worker was running when it died leaves its lock files behind; with nothing
+  // of the run left running, they are stale.
+  if (kill.survivors.length === 0) await clearStaleArmLocks(git);
   const armSha = await resetArms(git);
   // Reconciled before any job is requeued, so a refused resume changes no job.
   const events = await readLedger(runDir);

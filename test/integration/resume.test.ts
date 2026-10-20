@@ -1,8 +1,9 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  cancelRun,
   finishRun,
   getJob,
   type RunReport,
@@ -144,5 +145,22 @@ describe("resume after kill -9", { timeout: TIMEOUT_MS }, () => {
     } finally {
       await other.cleanup();
     }
+  });
+});
+
+// M2 E1b: the worker resume stops may have been in the middle of a git command in an arm; the
+// lock file it left must not make resume's reset fail.
+describe("resume after a worker stopped mid-git", { timeout: TIMEOUT_MS }, () => {
+  it("clears the stale lock files in the arms and resets them", async () => {
+    await approveToy(toy);
+    const run = await startRun(toy.context);
+    expect((await waitDone(toy, run.runId, run.baselineJobId)).status).toBe("succeeded");
+    const lock = path.join(run.arms.b, ".git", "index.lock");
+    writeFileSync(lock, "");
+    const resumed = await resumeRun(toy.context, { runId: run.runId });
+    expect(resumed.armSha).toBe(run.baseSha);
+    expect(existsSync(lock)).toBe(false);
+    expect(git(run.arms.b, "status", "--porcelain")).toBe("");
+    await cancelRun(toy.context, { runId: run.runId });
   });
 });
