@@ -90,21 +90,23 @@ export function redactExceptArms<T extends { arms: { a: string; b: string } }>(v
   return { ...redact(value), arms: value.arms };
 }
 
+export interface GetJobOptions {
+  readonly runId?: string;
+  readonly jobId: string;
+  readonly waitS?: number;
+  /** Ends the wait early with `interrupted`: an MCP client cancelled the call. */
+  readonly signal?: AbortSignal;
+}
+
 /**
  * `get_job`: the job once it is terminal, or its current state after `waitS` (≤ 25 s). Ends
  * early with `worker_not_running` when the job is unfinished and no worker is left to run it.
  */
-export async function getJob(
-  context: AppContext,
-  options: { readonly runId?: string; readonly jobId: string; readonly waitS?: number },
-): Promise<JobRecord> {
+export async function getJob(context: AppContext, options: GetJobOptions): Promise<JobRecord> {
   return redactView(await pollJob(context, options));
 }
 
-async function pollJob(
-  context: AppContext,
-  options: { readonly runId?: string; readonly jobId: string; readonly waitS?: number },
-): Promise<JobRecord> {
+async function pollJob(context: AppContext, options: GetJobOptions): Promise<JobRecord> {
   const located = await locateRun(context, options.runId);
   const deadline = Date.now() + clampWaitS(options.waitS ?? 0) * 1000;
   let checks = 0;
@@ -117,6 +119,7 @@ async function pollJob(
         Math.min(remainingS, WORKER_CHECK_S),
       );
       if (TERMINAL_JOB_STATUSES.has(polled.status)) return polled;
+      if (options.signal?.aborted) throw new AppError("interrupted", "the wait was cancelled");
       const full = checks++ % FULL_WORKER_CHECK_EVERY === 0;
       const job = await requireWorker(located.runDir, located.runId, polled, full);
       if (TERMINAL_JOB_STATUSES.has(job.status) || Date.now() >= deadline) return job;

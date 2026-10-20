@@ -193,7 +193,7 @@ anything else stay out unless `env:` names them. UFO adds these variables:
 | `UFO_ARM` | `a` or `b` |
 | `UFO_PORT` | A free loopback port, fixed per arm for the job |
 | `UFO_RUN_ID` | The run id |
-| `UFO_PHASE` | `baseline`, `change`, or `final_check` |
+| `UFO_PHASE` | `baseline`, `change`, `final_check`, or `profile` (one profiling run, MCP `profile_target`) |
 | `UFO_SAMPLE_INDEX` | The sample's index, on the workload `command` only |
 | `UFO_TARGET_ADDR` | When `targets:` is set: each entry as `host=address`, comma-separated, as checked when the run started |
 
@@ -503,8 +503,9 @@ A run state directory holds:
 | `jobs/job-NNNNNN.json` | One record per job, with status, progress, and result. |
 | `logs/` | `worker.out.log`, `worker.err.log`, `commands.log` (every command with its exit status), and `start-<arm>.log`. |
 | `report.json` | The finished run's report. |
+| `artifacts/profile-<job-id>.json` | A profile (MCP `profile_target`): arm A's commit, each workload step's wall time, and the workload's JSON line, or why the sample was not valid. |
 | `bundles/<bundle-id>/` | The evidence bundle: `bundle.json`, `diffs/<change-id>.diff`, and `manifest.json` with SHA-256 hashes. |
-| other | `heartbeat.json` (the worker's last sign of life), `cancel.json` (a requested cancel), `run.lock` and `control.lock`, and the `samples/` and `artifacts/` directories reserved for packs. |
+| other | `heartbeat.json` (the worker's last sign of life), `cancel.json` (a requested cancel), `run.lock` and `control.lock`, and the `samples/` directory reserved for packs. |
 
 Run ids look like `20261017-153000-a1b2c3` (UTC time, then random hex). The ledger, job records,
 and logs are local, private (mode 0600 in 0700 directories), and unredacted. The evidence bundle is redacted before it is written:

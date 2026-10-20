@@ -1,5 +1,6 @@
 // Work queued on a running run: agent changes (`submit_change`) and recipe changes (`ufo run`),
-// each refused up front once the budget is used up or the run is finishing.
+// each refused up front once the budget is used up or the run is finishing, and profiling runs
+// (`profile_target`), which count against nothing.
 import { randomUUID } from "node:crypto";
 import {
   cancelJob,
@@ -123,6 +124,26 @@ export async function submitChange(
     });
     await ensureWorkerFor(context, active, [job]);
     return { runId: active.runId, changeId, jobId: job.jobId };
+  });
+}
+
+/**
+ * `profile_target`: queues one run of the workload in arm A, timed step by step (see
+ * `handleProfile`). It decides nothing and counts against no budget; poll `getJob` for it.
+ */
+export async function profileTarget(
+  context: AppContext,
+  options: { readonly runId?: string } = {},
+): Promise<{ runId: string; jobId: string }> {
+  const active = await activeRun(context, options.runId);
+  if (active.open.state.purpose !== "run") {
+    throw new AppError("run_not_active", `run ${active.runId} only measures; it takes no work`);
+  }
+  return withControlLock(active.runDir, controlLockWaitMs(context), async () => {
+    await refuseIfFinishing(active);
+    const job = await enqueueJob(active.runDir, { kind: JOB_KINDS.profile, input: {} });
+    await ensureWorkerFor(context, active, [job]);
+    return { runId: active.runId, jobId: job.jobId };
   });
 }
 

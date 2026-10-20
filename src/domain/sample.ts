@@ -4,8 +4,11 @@ import { GitShaSchema, IdSchema, idRecord, labelSchema } from "./primitives.js";
 export const ArmSchema = z.enum(["a", "b"]);
 export type Arm = z.infer<typeof ArmSchema>;
 
-/** Baseline runs at A, decision pairs for one change, or the final baseline-vs-final check. */
-export const SamplePhaseSchema = z.enum(["baseline", "change", "final_check"]);
+/**
+ * Baseline runs at A, decision pairs for one change, the final baseline-vs-final check, or one
+ * profiling run at A (`profile_target`), which decides nothing.
+ */
+export const SamplePhaseSchema = z.enum(["baseline", "change", "final_check", "profile"]);
 export type SamplePhase = z.infer<typeof SamplePhaseSchema>;
 
 /** One day. A single replication unit (one launch, load run, build, ...) never takes longer. */

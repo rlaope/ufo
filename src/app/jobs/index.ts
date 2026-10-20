@@ -17,11 +17,13 @@ import { type Machine, systemMachine } from "../workload.js";
 import { handleBaseline } from "./baseline.js";
 import { handleChange } from "./change.js";
 import { handleFinish } from "./finish.js";
+import { handleProfile } from "./profile.js";
 import { JOB_KINDS } from "./shared.js";
 
 export * from "./baseline.js";
 export * from "./change.js";
 export * from "./finish.js";
+export * from "./profile.js";
 export * from "./shared.js";
 
 /** How long an idle worker waits for the agent's next change before it exits. */
@@ -37,6 +39,7 @@ export function createJobHandlers(machine: Machine, home: string): Record<string
     [JOB_KINDS.baseline]: (job, context) => handleBaseline(job, context, options),
     [JOB_KINDS.change]: (job, context) => handleChange(job, context, options),
     [JOB_KINDS.finish]: (job, context) => handleFinish(job, context, options),
+    [JOB_KINDS.profile]: (job, context) => handleProfile(job, context, options),
   };
 }
 

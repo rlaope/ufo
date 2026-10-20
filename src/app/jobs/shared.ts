@@ -24,6 +24,7 @@ export const JOB_KINDS = {
   baseline: "baseline",
   change: "change",
   finish: "finish",
+  profile: "profile",
 } as const;
 
 /** Samples per arm at baseline and pairs in the final check (plan §2.3, §4.6). */
