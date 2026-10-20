@@ -39,9 +39,10 @@ export interface AppContext {
 /** The CLI's wait for a run's control lock. */
 export const CONTROL_LOCK_WAIT_MS = 120_000;
 
-/** The wait every `withControlLock` of an app call is given. */
+/** The wait every `withControlLock` of an app call is given: a finite wait ≥ 0, else the CLI's. */
 export function controlLockWaitMs(context: AppContext): number {
-  return context.controlLockWaitMs ?? CONTROL_LOCK_WAIT_MS;
+  const wait = context.controlLockWaitMs;
+  return wait !== undefined && Number.isFinite(wait) && wait >= 0 ? wait : CONTROL_LOCK_WAIT_MS;
 }
 
 export interface Repo {
