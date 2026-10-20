@@ -25,8 +25,8 @@ export interface ProfileResult {
 
 /**
  * `profile_target`: the run's workload once in arm A at its commit, with the run's command
- * environment, timing each step. Decides nothing and counts against no budget; the result is
- * kept as an artifact in the run state.
+ * environment, timing each step. Decides nothing and is no technique (`profileTarget` keeps it
+ * within the wall-clock budget); the result is kept as an artifact in the run state.
  */
 export async function handleProfile(
   job: JobRecord,

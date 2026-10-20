@@ -18,7 +18,7 @@ import { PolicyError } from "../core/policy/index.js";
 import { type ActiveRun, activeRun, refuseIfFinishing, rethrowAsUsage } from "./active.js";
 import { type AppContext, controlLockWaitMs } from "./context.js";
 import { AppError } from "./errors.js";
-import { budgetStatus } from "./events.js";
+import { budgetStatus, wallClockViolation } from "./events.js";
 import { ChangeJobInputSchema, JOB_KINDS } from "./jobs/index.js";
 import { ensureWorker } from "./launch.js";
 import { jsonData } from "./state.js";
@@ -129,7 +129,8 @@ export async function submitChange(
 
 /**
  * `profile_target`: queues one run of the workload in arm A, timed step by step (see
- * `handleProfile`). It decides nothing and counts against no budget; poll `getJob` for it.
+ * `handleProfile`). It decides nothing and is no technique, but runs only within the run's
+ * wall-clock budget; poll `getJob` for it.
  */
 export async function profileTarget(
   context: AppContext,
@@ -141,6 +142,11 @@ export async function profileTarget(
   }
   return withControlLock(active.runDir, controlLockWaitMs(context), async () => {
     await refuseIfFinishing(active);
+    const { createdAt } = await readRun(active.runDir);
+    const spent = wallClockViolation(
+      budgetStatus(await readLedger(active.runDir), active.open.config.objective.budget, createdAt),
+    );
+    if (spent !== undefined) throw new PolicyError(spent);
     const job = await enqueueJob(active.runDir, { kind: JOB_KINDS.profile, input: {} });
     await ensureWorkerFor(context, active, [job]);
     return { runId: active.runId, jobId: job.jobId };

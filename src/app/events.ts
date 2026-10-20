@@ -5,6 +5,7 @@ import {
   consume,
   type PolicyViolation,
   startBudget,
+  violation,
 } from "../core/policy/index.js";
 import {
   type Budget,
@@ -154,6 +155,20 @@ export interface BudgetStatus {
   readonly counter: BudgetCounter;
   /** Set once a cap is reached: the run stops until `extendBudget` raises it. */
   readonly violation: PolicyViolation | undefined;
+}
+
+/**
+ * `budget_exceeded` once the wall-clock budget is spent, whatever the technique count: work that
+ * is no technique (a profile) still runs only within the run's time (security N2).
+ */
+export function wallClockViolation(status: BudgetStatus): PolicyViolation | undefined {
+  const { wallClockMs } = status.counter;
+  const { wallClockMinutes } = status.limits;
+  if (wallClockMs < wallClockMinutes * 60_000) return undefined;
+  return violation(
+    "budget_exceeded",
+    `${Math.floor(wallClockMs / 60_000)} of ${wallClockMinutes} minutes used`,
+  );
 }
 
 /**

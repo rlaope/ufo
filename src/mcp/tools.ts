@@ -121,7 +121,7 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
     {
       title: "Profile the workload once",
       description:
-        "Queues one run of the workload in arm A at its commit, with the run's command environment, timing each step (setup, start, sample, teardown) and reading the workload's JSON line; kept as an artifact in the run state. Decides nothing and counts against no budget. Needs a running run. Returns a job id at once: poll get_job for the profile.",
+        "Queues one run of the workload in arm A at its commit, with the run's command environment, timing each step (setup, start, sample, teardown) and reading the workload's JSON line; kept as an artifact in the run state. Decides nothing and is no technique, but runs only within the run's wall-clock budget. Needs a running run. Returns a job id at once: poll get_job for the profile.",
       inputSchema: z.strictObject({ run_id: runId }),
       annotations: QUEUES_WORK,
     },

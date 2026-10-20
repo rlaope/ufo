@@ -13,6 +13,7 @@ import {
   profileTarget,
   startRun,
 } from "../../src/app/index.js";
+import { readRun, updateRun } from "../../src/core/jobs/index.js";
 import { approveToy, lightWorkload, makeToy, TIMEOUT_MS, type Toy, waitDone } from "./helpers.js";
 
 // M2 B2: the app workflows behind the MCP tools inspect_target, check_capabilities,
@@ -211,7 +212,7 @@ describe("the views behind the read-only tools", { timeout: TIMEOUT_MS }, () => 
 });
 
 describe("profiling the target", { timeout: TIMEOUT_MS }, () => {
-  it("runs the workload once in arm A, times its steps, and counts against nothing", async () => {
+  it("runs the workload once in arm A, times its steps, and is no technique but wall clock", async () => {
     const run = await startRun(toy.context);
     try {
       expect((await waitDone(toy, run.runId, run.baselineJobId)).status).toBe("succeeded");
@@ -239,6 +240,17 @@ describe("profiling the target", { timeout: TIMEOUT_MS }, () => {
       const view = await getRun(toy.context, { runId: run.runId });
       expect(view.budget.techniquesTried).toBe(0);
       expect(view.decisions).toEqual([]);
+
+      // Security N2: no technique, but only within the run's wall-clock budget (30 min here).
+      const started = (await readRun(toy.runDir(run.runId))).createdAt;
+      await updateRun(toy.runDir(run.runId), (record) => ({
+        ...record,
+        createdAt: new Date(Date.now() - 31 * 60_000).toISOString(),
+      }));
+      await expect(profileTarget(toy.context, { runId: run.runId })).rejects.toMatchObject({
+        violation: { rule: "budget_exceeded", detail: "31 of 30 minutes used" },
+      });
+      await updateRun(toy.runDir(run.runId), (record) => ({ ...record, createdAt: started }));
 
       await finishRun(toy.context, { runId: run.runId });
       await expect(profileTarget(toy.context, { runId: run.runId })).rejects.toMatchObject({
