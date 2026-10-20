@@ -7,7 +7,7 @@ import { PolicyError, violation } from "../../../src/core/policy/index.js";
 import {
   ERROR_PREAMBLE,
   failure,
-  MAX_RESULT_CHARS,
+  MAX_RESULT_BYTES,
   RESULT_PREAMBLE,
   respond,
   success,
@@ -91,12 +91,27 @@ describe("withinBudget", () => {
     }));
     const arms = { a: `/${"d".repeat(2000)}/a`, b: `/${"d".repeat(2000)}/b` };
     const fitted = withinBudget({ runId: "run-1", arms, jobs });
-    expect(JSON.stringify(fitted).length).toBeLessThanOrEqual(MAX_RESULT_CHARS);
+    expect(Buffer.byteLength(JSON.stringify(fitted))).toBeLessThanOrEqual(MAX_RESULT_BYTES);
     expect(fitted.arms).toEqual(arms);
     const kept = fitted.jobs as { jobId: string; error: string }[];
     expect(kept.at(-1)?.jobId).toBe("job-000200");
     expect(kept.length).toBeLessThan(200);
     expect(kept[0]?.error.endsWith("…")).toBe(true);
     expect(fitted.truncated).toEqual({ strings: kept.length, items: 200 - kept.length });
+  });
+
+  // Code review CR-N3: the budget is in bytes, ordered lists keep their head, and paths stay whole.
+  it("counts bytes, keeps the head of ordered lists, and never cuts a path", () => {
+    const repoRoot = `/${"r".repeat(3000)}`;
+    const values = Array.from({ length: 200 }, (_, i) => ({ name: `metric_${i}`, value: i }));
+    // Two bytes a character: under the budget in characters, over it in bytes.
+    const notes = Array.from({ length: 4 }, () => "é".repeat(6000));
+    const fitted = withinBudget({ repoRoot, values, notes, bundleDir: `/${"b".repeat(3000)}` });
+    expect(Buffer.byteLength(JSON.stringify(fitted))).toBeLessThanOrEqual(MAX_RESULT_BYTES);
+    expect(JSON.stringify({ notes }).length).toBeLessThan(MAX_RESULT_BYTES);
+    expect(fitted.repoRoot).toBe(repoRoot);
+    expect(fitted.bundleDir).toBe(`/${"b".repeat(3000)}`);
+    expect((fitted.values as { name: string }[])[0]?.name).toBe("metric_0");
+    expect((fitted.notes as string[])[0]?.endsWith("…")).toBe(true);
   });
 });

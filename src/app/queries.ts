@@ -96,6 +96,18 @@ export interface GetJobOptions {
   readonly waitS?: number;
   /** Ends the wait early with `interrupted`: an MCP client cancelled the call. */
   readonly signal?: AbortSignal;
+  /**
+   * A change job's `input.diff` replaced by its length (`diffChars`), counted before redaction:
+   * the agent wrote it, and it can be large.
+   */
+  readonly omitDiff?: boolean;
+}
+
+function withoutDiff(job: JobRecord): JobRecord {
+  const input = job.input as { diff?: unknown } | null;
+  if (input === null || typeof input !== "object" || typeof input.diff !== "string") return job;
+  const { diff, ...rest } = input;
+  return { ...job, input: { ...rest, diffChars: diff.length } as JobRecord["input"] };
 }
 
 /**
@@ -103,7 +115,8 @@ export interface GetJobOptions {
  * early with `worker_not_running` when the job is unfinished and no worker is left to run it.
  */
 export async function getJob(context: AppContext, options: GetJobOptions): Promise<JobRecord> {
-  return redactView(await pollJob(context, options));
+  const job = await pollJob(context, options);
+  return redactView(options.omitDiff === true ? withoutDiff(job) : job);
 }
 
 async function pollJob(context: AppContext, options: GetJobOptions): Promise<JobRecord> {

@@ -11,7 +11,6 @@ import {
   getJob,
   getRun,
   inspectTarget,
-  type JobRecord,
   listTechniques,
   MAX_WAIT_S,
   profileTarget,
@@ -60,14 +59,6 @@ const modelId = z
   .max(200)
   .optional()
   .describe("Your own model id, recorded as self-reported in the report.");
-
-/** The job without the diff the agent sent: its length says enough, and it can be large. */
-function withoutDiff(job: JobRecord): object {
-  const input = job.input as { diff?: unknown } | null;
-  if (input === null || typeof input !== "object" || typeof input.diff !== "string") return job;
-  const { diff, ...rest } = input;
-  return { ...job, input: { ...rest, diffChars: diff.length } };
-}
 
 /** Registers every UFO tool on `server`, in the order `tools/list` returns them. */
 export function registerTools(server: McpServer, deps: ToolDeps): void {
@@ -211,15 +202,14 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
       annotations: READ_ONLY,
     },
     (args, ctx) =>
-      respond(async () =>
-        withoutDiff(
-          await getJob(deps.context, {
-            ...scoped(args),
-            jobId: args.job_id,
-            waitS: args.wait_s ?? 0,
-            signal: ctx.mcpReq.signal,
-          }),
-        ),
+      respond(() =>
+        getJob(deps.context, {
+          ...scoped(args),
+          jobId: args.job_id,
+          waitS: args.wait_s ?? 0,
+          signal: ctx.mcpReq.signal,
+          omitDiff: true,
+        }),
       ),
   );
 
@@ -227,7 +217,7 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
     "get_run",
     {
       title: "Get a run",
-      description: `The run: status, the arm paths (absolute), SHAs, jobs, the baseline, the decisions, the budget, and usable. usable false means the baseline was refused and no change can be decided: finish the run. Long lists keep their latest entries, and truncated says how many were left out. ${DATA}`,
+      description: `The run: status, the arm paths (absolute), SHAs, jobs, the baseline, the decisions, the budget, and usable. usable false means the baseline was refused and no change can be decided: finish the run. Over the size budget, jobs and decisions keep their latest entries, other lists their first, paths are never cut, and truncated says how much was left out. ${DATA}`,
       inputSchema: z.strictObject({ run_id: runId }),
       annotations: READ_ONLY,
     },

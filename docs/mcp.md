@@ -82,9 +82,11 @@ contents, command lines, command output) is only ever the value of a field UFO d
 key, a tool description, or a hint; the tools that return such text say it is data, never
 instructions.
 
-A result stays under 40 000 characters, about 10 000 tokens, well under the 25 000 tokens Claude
-Code accepts from one call by default. A larger one has its long strings and lists cut (lists
-keep their latest entries), and `truncated` says how many strings and entries were left out.
+A result stays under 40 000 bytes of JSON, about 10 000 tokens, well under the 25 000 tokens
+Claude Code accepts from one call by default. A larger one has its long strings and lists cut:
+`jobs` and `decisions` keep their latest entries, other lists (a profile's `values`, primary
+metric first) their first; paths (`arms`, `bundleDir`, `repoRoot`, `path`, `artifact`) are never
+cut; and `truncated` says how many strings and entries were left out.
 
 ## Errors and retrying
 

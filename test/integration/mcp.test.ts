@@ -224,7 +224,13 @@ describe("a run through the tools", { timeout: TIMEOUT_MS }, () => {
       ],
     });
 
-    const diff = diffOf(toy, "server.mjs", (s) => s.replace("      await sleep(20);\n", ""));
+    // The diff quotes a key: its length is counted before redaction (code review CR-N3).
+    const key = `sk-proj-${"Z9y8X7w6".repeat(6)}`;
+    const diff = diffOf(
+      toy,
+      "server.mjs",
+      (s) => `${s.replace("      await sleep(20);\n", "")}// ${key}\n`,
+    );
     const submitted = (
       await ok(client, "submit_change", {
         run_id: started.runId,
