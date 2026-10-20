@@ -135,8 +135,9 @@ collaborators.
   is the real check.
 - **R6. An MCP client chooses nothing about where UFO acts.** The MCP server (`ufo mcp`) is
   bound at startup to one repository, by its host's convention (`--host`, and `--repo` for
-  Cursor), as a real path; no tool argument names another, so a session opened on one repository
-  cannot act on another you approved. It fixes the UFO home, the card directories, the worker it
+  Cursor): it pins that repository's real top level, git directory, common directory, and id,
+  and checks them before every call (R7). No tool argument names another repository, so a
+  session opened on one cannot act on another you approved. It fixes the UFO home, the card directories, the worker it
   launches, the environment a run captures, the Docker runner, and the resolver from its own
   process, as the CLI does, and there is no approval, opt-in, or budget tool. Tool results carry
   repository text (file contents, command lines, command output), which the tools describe as
@@ -147,7 +148,13 @@ collaborators.
   branch before you merge it. UFO checks `.git/config` when a run starts and again right before
   each write to your repository (the run branch, the fetch into it, its removal); an edit that
   lands between a check and the command after it is not caught, and the reads in between
-  (`status`, `rev-parse`) run with the config as it is then.
+  (`status`, `rev-parse`) run with the config as it is then. Such an agent could also point
+  `.git` at another repository's git directory, which gives your work tree that repository's id
+  and so its runs. UFO acts on a run only from the work tree that started it (`unsafe_state`
+  otherwise), the MCP server refuses at startup a work tree whose git directory is outside it
+  unless that git directory names it back (a linked worktree or a submodule), and it refuses
+  every call once the repository's git directory, common directory, or id differs from the one
+  pinned at startup.
 
 - **R8. Drivers from your own git config.** UFO refuses filter, diff, and merge drivers defined
   in the repository's config, but not those in your global or system config. When the

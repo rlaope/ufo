@@ -4,7 +4,14 @@
 import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
-import { type AppContext, packageVersion, trustProcessPath } from "../app/api.js";
+import {
+  type AppContext,
+  packageVersion,
+  type Repo,
+  refuseChangedRepository,
+  refuseForeignGitDir,
+  trustProcessPath,
+} from "../app/api.js";
 import { registerTools } from "./tools.js";
 
 /**
@@ -61,18 +68,23 @@ export interface McpServeOptions {
   readonly log: (line: string) => void;
 }
 
-/** One server instance with every UFO tool registered, acting on the repository at `root`. */
-export function createServer(options: McpServeOptions & { readonly root: string }): McpServer {
+/** One server instance with every UFO tool registered, acting on the pinned repository. */
+export function createServer(options: McpServeOptions & { readonly repo: Repo }): McpServer {
   const server = new McpServer(
     { name: "ufo", version: packageVersion() },
     { capabilities: { tools: {} } },
   );
   const context: AppContext = {
     ...options.context,
-    cwd: options.root,
+    cwd: options.repo.root,
     controlLockWaitMs: MCP_CONTROL_LOCK_WAIT_MS,
   };
-  registerTools(server, { context, hostAgent: options.host });
+  registerTools(server, {
+    context,
+    hostAgent: options.host,
+    // Before every call: the repository is still the one pinned at startup.
+    guard: () => refuseChangedRepository(options.repo, "ufo mcp"),
+  });
   return server;
 }
 
@@ -89,12 +101,13 @@ export async function serveMcp(options: McpServeOptions): Promise<void> {
     home: options.context?.home,
     requireRepo: true,
   });
-  const root = repo?.root ?? options.dir;
+  if (repo === undefined) throw new Error(`${options.dir} is not inside a git working tree`);
+  await refuseForeignGitDir(repo);
   const closed = new Promise<void>((resolve) => {
     process.stdin.once("end", resolve);
     process.stdin.once("close", resolve);
   });
-  serveStdio(() => createServer({ ...options, root }), {
+  serveStdio(() => createServer({ ...options, repo }), {
     legacy: "serve",
     onerror: (error) => options.log(`ufo mcp: ${error.message}`),
   });

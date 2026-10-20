@@ -1,8 +1,21 @@
 import { lstat, readdir, realpath } from "node:fs/promises";
 import path from "node:path";
 import { repoId, runGit } from "../core/git/index.js";
-import { assertRealDir, isErrno, RunIdSchema, resolveGitCommonDir } from "../core/jobs/index.js";
-import { assertTrustedDir, runDirFor, runsRoot, trustedHome, ufoHome } from "../core/paths.js";
+import {
+  assertRealDir,
+  isErrno,
+  RunIdSchema,
+  readTextNoFollow,
+  resolveGitCommonDir,
+} from "../core/jobs/index.js";
+import {
+  assertTrustedDir,
+  runDirFor,
+  runsRoot,
+  TrustError,
+  trustedHome,
+  ufoHome,
+} from "../core/paths.js";
 import type { Resolver } from "../core/policy/index.js";
 import type { Exec } from "../worker/index.js";
 import { processPath } from "./env.js";
@@ -116,6 +129,68 @@ export async function trustProcessPath(options: {
     env.PATH = processPath(env.PATH, [...untrusted, repo.root, repo.gitDir, repo.commonDir]);
   }
   return repo;
+}
+
+function within(dir: string, root: string): boolean {
+  return dir === root || dir.startsWith(`${root}${path.sep}`);
+}
+
+/** Whether the git directory of `repo`, outside its work tree, names that work tree back. */
+async function namesWorkTree(repo: Repo): Promise<boolean> {
+  // A linked worktree: `<git dir>/gitdir` holds the path of the work tree's `.git` file.
+  const linked = await readTextNoFollow(path.join(repo.gitDir, "gitdir")).catch(() => undefined);
+  if (linked !== undefined) {
+    const named = await realpath(path.dirname(path.resolve(repo.gitDir, linked.trim()))).catch(
+      () => undefined,
+    );
+    if (named === repo.root) return true;
+  }
+  // A submodule: `core.worktree` in its own config, relative to its git directory.
+  const configured = await runGit(
+    ["config", "--file", path.join(repo.gitDir, "config"), "--get", "core.worktree"],
+    repo.root,
+  ).catch(() => undefined);
+  if (configured?.code === 0) {
+    const named = await realpath(path.resolve(repo.gitDir, configured.stdout.trim())).catch(
+      () => undefined,
+    );
+    if (named === repo.root) return true;
+  }
+  return false;
+}
+
+/**
+ * Refuses a work tree whose git directory is outside it unless that git directory names it back,
+ * as a linked worktree's or a submodule's does (security N1): a `.git` pointed at another
+ * repository's git directory would act on that repository's runs.
+ */
+export async function refuseForeignGitDir(repo: Repo): Promise<void> {
+  if (within(repo.commonDir, repo.root) || (await namesWorkTree(repo))) return;
+  throw new TrustError(
+    "unsafe_state",
+    `the git directory of ${repo.root} is ${repo.gitDir}, outside it, and does not name it as its work tree`,
+  );
+}
+
+/**
+ * Refuses to go on when the repository at `pinned.root` is no longer the one pinned: its git
+ * directory, common directory, or id changed, so `.git` now names another repository's
+ * (security N1). `since` names what pinned it, for the message.
+ */
+export async function refuseChangedRepository(pinned: Repo, since: string): Promise<void> {
+  const now = await resolveRepo(pinned.root);
+  if (
+    now.root === pinned.root &&
+    now.gitDir === pinned.gitDir &&
+    now.commonDir === pinned.commonDir &&
+    now.repoId === pinned.repoId
+  ) {
+    return;
+  }
+  throw new TrustError(
+    "unsafe_state",
+    `the repository's git directory changed since ${since} started`,
+  );
 }
 
 /**

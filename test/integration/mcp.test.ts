@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { Client, type ClientOptions, ProtocolError } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
@@ -10,6 +11,7 @@ import {
   approveToy,
   BUILT_CLI,
   diffOf,
+  git,
   mcpToy,
   plantPrograms,
   serverEnv,
@@ -276,6 +278,50 @@ describe("the server's repository and PATH", { timeout: TIMEOUT_MS }, () => {
       { args: ["--host", "codex"], cwd: path.join(toy.repo, "bench") },
     );
     expect((await ok(client, "inspect_target")).body).toMatchObject({ repoRoot: toy.repo });
+  });
+
+  // Security N1: the server pins the repository it was started for; a `.git` pointed at another
+  // repository's git directory afterwards stops every call, before any workflow runs.
+  it("refuses every call once the repository's .git names another git directory", async () => {
+    const toy = toyFor();
+    const client = await connect(toy);
+    await ok(client, "inspect_target");
+    renameSync(path.join(toy.repo, ".git"), path.join(toy.root, "repo.git"));
+    writeFileSync(path.join(toy.repo, ".git"), `gitdir: ${path.join(toy.scratch, ".git")}\n`);
+    for (const name of ["inspect_target", "list_techniques", "get_run", "start_run"]) {
+      expect(await call(client, name), name).toMatchObject({
+        isError: true,
+        body: {
+          code: "unsafe_state",
+          message: "the repository's git directory changed since ufo mcp started",
+          retryable: false,
+        },
+      });
+    }
+  });
+
+  // Security N1: at startup, a work tree whose git directory is elsewhere is served only when that
+  // git directory names it back, as a linked worktree's does.
+  it("refuses at startup a .git that names another repository's git directory", async () => {
+    const toy = toyFor();
+    const imposter = path.join(toy.root, "imposter");
+    mkdirSync(imposter);
+    writeFileSync(path.join(imposter, ".git"), `gitdir: ${path.join(toy.scratch, ".git")}\n`);
+    const started = spawnSync(
+      process.execPath,
+      [BUILT_CLI, "mcp", "--host", "cursor", "--repo", imposter],
+      { env: serverEnv(toy), input: "", encoding: "utf8", timeout: 30_000 },
+    );
+    expect(started.status).toBe(1);
+    expect(started.stdout).toBe("");
+    expect(started.stderr).toBe(
+      `ufo mcp: unsafe_state: the git directory of ${imposter} is ${path.join(toy.scratch, ".git")}, outside it, and does not name it as its work tree\n`,
+    );
+
+    const worktree = path.join(toy.root, "worktree");
+    git(toy.repo, "worktree", "add", "--quiet", worktree);
+    const client = await connect(toy, {}, { args: ["--host", "cursor", "--repo", worktree] });
+    expect((await ok(client, "inspect_target")).body).toMatchObject({ repoRoot: worktree });
   });
 
   // Security H1: what a project puts on the PATH the server starts with (npx puts its own

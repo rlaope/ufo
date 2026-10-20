@@ -19,13 +19,15 @@ import {
   startRun,
   submitChange,
 } from "../app/api.js";
-import { respond } from "./results.js";
+import { respond as respondTo } from "./results.js";
 
 export interface ToolDeps {
   /** The app context of every call, fixed by the process: the bound repository and the rest. */
   readonly context: AppContext;
   /** The host agent driving the run, from `ufo mcp --host`. */
   readonly hostAgent: string;
+  /** Runs before every call's workflow; a failure is the call's result. */
+  readonly guard: () => Promise<void>;
 }
 
 /** Said by every tool whose result carries text from the repository or its commands. */
@@ -68,6 +70,11 @@ function withoutDiff(job: JobRecord): object {
 
 /** Registers every UFO tool on `server`, in the order `tools/list` returns them. */
 export function registerTools(server: McpServer, deps: ToolDeps): void {
+  const respond = (work: () => Promise<object>) =>
+    respondTo(async () => {
+      await deps.guard();
+      return work();
+    });
   const scoped = (args: { run_id?: string | undefined }) =>
     args.run_id === undefined ? {} : { runId: args.run_id };
 

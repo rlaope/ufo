@@ -124,6 +124,8 @@ describe("the adapter modules", () => {
       "packageVersion",
       "profileTarget",
       "redact",
+      "refuseChangedRepository",
+      "refuseForeignGitDir",
       "report",
       "resumeRun",
       "runToEnd",
