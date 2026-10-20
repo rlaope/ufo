@@ -168,7 +168,12 @@ until it is, `ufo setup` refuses to install from the registry and takes a tarbal
   and checks them before every call (R7). No tool argument names another repository, so a
   session opened on one cannot act on another you approved. It fixes the UFO home, the card directories, the worker it
   launches, the environment a run captures, the Docker runner, and the resolver from its own
-  process, as the CLI does, and there is no approval, opt-in, or budget tool. Tool results carry
+  process, as the CLI does, and there is no approval, opt-in, or budget tool. All of that comes
+  from how the host starts the server, so the binding is only as trustworthy as the host's own
+  environment and project configuration: a project's `.mcp.json`, or project settings that set
+  the server's arguments or environment (`--repo`, `CLAUDE_PROJECT_DIR`, `UFO_HOME`, `PATH`), can
+  start it bound elsewhere; keep UFO's entry in your user configuration, as `ufo setup` writes it,
+  and do not approve a project's own server entries for it. Tool results carry
   repository text (file contents, command lines, command output), which the tools describe as
   data, never instructions; an agent that follows instructions in that text anyway is outside
   what UFO controls.
