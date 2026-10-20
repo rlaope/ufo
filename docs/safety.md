@@ -76,9 +76,11 @@ whole life, keeps two runs from measuring at once; control operations on one run
 **Measured decisions.** UFO, not the agent, decides keep or drop, from interleaved samples of
 both arms, guardrails, and oracles.
 
-**Redacted views.** Evidence bundles, `report.json`, and every view UFO returns (`get_job`,
-`get_run`, `status`, `report`) go through the same redactor; the raw values stay in the run's
-ledger and logs under `$UFO_HOME/private`. The arm paths are not redacted (R4).
+**Redacted views.** Evidence bundles, `report.json`, every view UFO returns (`get_job`, `get_run`,
+`status`, `report`, and the read-only MCP tools `inspect_target`, `check_capabilities`, and
+`list_techniques`), the start, resume, cancel, and measure results, and the message of every
+failure, on the command line and over MCP, go through the same redactor; the raw values stay in
+the run's ledger and logs under `$UFO_HOME/private`. The arm paths are not redacted (R4).
 
 **Load targets are checked, not enforced.** UFO resolves each `targets:` entry when the run starts
 and refuses public, link-local, and CGNAT addresses; it passes the checked addresses to the
@@ -124,7 +126,7 @@ collaborators.
   any other directory on your `PATH`, one outside the project, still runs; keep your `PATH` to
   directories only you can write.
 - **R4. Redaction is a list of patterns.** The redactor removes known secret formats, your
-  home path, user name, and host name from bundles and views. A secret in an unknown format can pass through. The
+  home path, user name, and host name from bundles, views, results, and failure messages. A secret in an unknown format can pass through. The
   ledger and logs under `$UFO_HOME/private` are not redacted. The arm paths in run views and in
   start and resume results, the MCP server's included, are absolute local paths and are not
   redacted, because the agent reads arm A to write its diffs. With `UFO_HOME` under your home
