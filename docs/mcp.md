@@ -33,10 +33,12 @@ writes only protocol messages on stdout; diagnostics go to stderr. It exits when
   server runs no git and answers every tool with `not_a_repo`, naming the setting it came from:
   open a project folder ([safety.md](safety.md) R3b). A folder inside a repository at your home
   (dotfiles) is answered `not_a_repo` the same way, until it is a repository of its own. A work tree that shares a git directory
-  elsewhere is served only as a linked worktree or a submodule whose own git directory is
-  outside it ([safety.md](safety.md) R7); otherwise `unsafe_state`. Once
-  bound, the repository's top level, git directory, common directory, and id are pinned and
-  checked before every call. Approval is per repository: an unapproved one is refused at
+  elsewhere, or a nested repository's, is served only as a linked worktree or a submodule whose
+  own git directory is outside it ([safety.md](safety.md) R7); otherwise `unsafe_state`. Calls
+  that arrive together before the first bind share it. Once bound, the repository's top level,
+  git directory, common directory (the directory itself, so a repository made again at the same
+  path is another), and id are pinned and checked before every call, and every call acts on
+  the pinned repository. Approval is per repository: an unapproved one is refused at
   `start_run`.
 - **Host agent.** `--host` is recorded as the run's host agent; `model_id` (a tool argument) is
   the agent's own model id, recorded as self-reported.

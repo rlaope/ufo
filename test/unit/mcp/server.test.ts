@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { bindDirectory, isHost } from "../../../src/mcp/server.js";
+import type { Repo } from "../../../src/app/index.js";
+import { bindDirectory, bindingFor, isHost } from "../../../src/mcp/server.js";
 
 // M2 B3 (security H2): the server is bound to one repository at startup, by its host's
 // convention; no tool input changes it.
@@ -55,6 +56,29 @@ describe("the directory ufo mcp binds to", () => {
     expect(
       bindDirectory({ host: "claude-code", env: { CLAUDE_PROJECT_DIR: "rel" }, cwd: "/cwd" }),
     ).toEqual({ error: 'CLAUDE_PROJECT_DIR must be an absolute path, not "rel"' });
+  });
+});
+
+// Code review R4: calls that arrive together before the first bind share one; a failed bind is
+// tried again by the next call, and the pinned repository is what the workflows get.
+describe("a late binding", () => {
+  it("binds once for calls that arrive together, and again after a failure", async () => {
+    const repo = { root: "/projects/late" } as Repo;
+    let binds = 0;
+    let fail = true;
+    const binding = bindingFor("/projects/late", undefined, async () => {
+      binds += 1;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      if (fail) throw new Error("not yet");
+      return repo;
+    });
+    await expect(Promise.all([binding.guard(), binding.guard()])).rejects.toThrow("not yet");
+    expect(binds).toBe(1);
+    fail = false;
+    await Promise.all([binding.guard(), binding.guard(), binding.guard()]);
+    expect(binds).toBe(2);
+    expect(binding.repo()).toBe(repo);
+    expect(binding.root()).toBe("/projects/late");
   });
 });
 

@@ -96,7 +96,7 @@ function startup(
 
 /** Why a work tree that shares the git directory `common` is refused. */
 function foreign(root: string, common: string): string {
-  return `the git directory of ${root} is ${common}, outside it, and ${root} is no linked worktree or submodule of it`;
+  return `${root} uses the git directory ${common}, not its own .git, and is no linked worktree or submodule of it`;
 }
 
 interface Called {
@@ -339,6 +339,23 @@ describe("the server's repository and PATH", { timeout: TIMEOUT_MS }, () => {
     }
   });
 
+  // Code review R4: another repository made at the same path has the same paths and id; the
+  // common directory itself is not the one pinned.
+  it("refuses every call once another repository is made at the same path", async () => {
+    const toy = toyFor();
+    const client = await connect(toy);
+    await ok(client, "inspect_target");
+    rmSync(path.join(toy.repo, ".git"), { recursive: true });
+    git(toy.repo, "init", "--quiet");
+    expect(await call(client, "inspect_target")).toMatchObject({
+      isError: true,
+      body: {
+        code: "unsafe_state",
+        message: "the repository's git directory changed since ufo mcp started",
+      },
+    });
+  });
+
   // Code review CR-N8: a user-scope server starts in every session; outside a repository it
   // keeps serving, answers not_a_repo, and binds once the folder is one, pinned from then on.
   it("serves outside a repository, answering not_a_repo until the folder is one", async () => {
@@ -511,6 +528,16 @@ describe("the server's repository and PATH", { timeout: TIMEOUT_MS }, () => {
     writeFileSync(path.join(inside, ".git"), "gitdir: x\n");
     expect(startup(toy, ["--repo", inside], inside)).toBe(
       `ufo mcp: unsafe_state: ${foreign(inside, path.join(other, ".git"))}`,
+    );
+
+    // Code review R4: a .git file naming a nested repository's git directory, inside the work
+    // tree, would pin that repository.
+    const outer = path.join(toy.root, "outer");
+    mkdirSync(path.join(outer, "nested"), { recursive: true });
+    git(path.join(outer, "nested"), "init", "--quiet");
+    writeFileSync(path.join(outer, ".git"), "gitdir: nested/.git\n");
+    expect(startup(toy, ["--repo", outer], outer)).toBe(
+      `ufo mcp: unsafe_state: ${foreign(outer, path.join(outer, "nested", ".git"))}`,
     );
   });
 

@@ -79,7 +79,7 @@ export interface McpServeOptions {
    * directories, worker entry, environment source, command runner, and resolver. No tool
    * argument sets any of them (safety.md R6).
    */
-  readonly context?: Omit<AppContext, "cwd" | "controlLockWaitMs"> | undefined;
+  readonly context?: Omit<AppContext, "cwd" | "controlLockWaitMs" | "repo"> | undefined;
   /** The environment whose PATH is filtered; `process.env` by default. */
   readonly env?: NodeJS.ProcessEnv | undefined;
   readonly log: (line: string) => void;
@@ -92,6 +92,8 @@ export interface McpServeOptions {
  */
 export interface Binding {
   readonly root: () => string;
+  /** The pinned repository, which every call's workflow acts on (code review R4). */
+  readonly repo: () => Repo | undefined;
   readonly guard: () => Promise<void>;
 }
 
@@ -101,11 +103,17 @@ export function bindingFor(
   bind: () => Promise<Repo | undefined>,
 ): Binding {
   let pinned = repo;
+  // Calls that arrive together before the first bind share it; one that failed is tried again.
+  let binding: Promise<Repo | undefined> | undefined;
   return {
     root: () => pinned?.root ?? dir,
+    repo: () => pinned,
     guard: async () => {
       if (pinned === undefined) {
-        pinned = await bind();
+        binding ??= bind().finally(() => {
+          binding = undefined;
+        });
+        pinned = await binding;
         return;
       }
       await refuseChangedRepository(pinned, "ufo mcp");
@@ -120,11 +128,15 @@ export function createServer(options: McpServeOptions & { readonly binding: Bind
     { capabilities: { tools: {} } },
   );
   registerTools(server, {
-    context: () => ({
-      ...options.context,
-      cwd: options.binding.root(),
-      controlLockWaitMs: MCP_CONTROL_LOCK_WAIT_MS,
-    }),
+    context: () => {
+      const repo = options.binding.repo();
+      return {
+        ...options.context,
+        cwd: options.binding.root(),
+        ...(repo === undefined ? {} : { repo }),
+        controlLockWaitMs: MCP_CONTROL_LOCK_WAIT_MS,
+      };
+    },
     hostAgent: options.host,
     guard: options.binding.guard,
   });
@@ -179,7 +191,11 @@ export async function serveMcp(options: McpServeOptions): Promise<void> {
     // At your home or above it, no git runs and every tool answers not_a_repo (security S2-2).
     (error: unknown): Binding => {
       options.log(`ufo mcp: ${error instanceof Error ? error.message : String(error)}`);
-      return { root: () => options.dir, guard: () => Promise.reject(error) };
+      return {
+        root: () => options.dir,
+        repo: () => undefined,
+        guard: () => Promise.reject(error),
+      };
     },
   );
   const closed = new Promise<void>((resolve) => {

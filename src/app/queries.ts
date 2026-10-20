@@ -21,7 +21,7 @@ import {
 } from "../core/jobs/index.js";
 import { isWorkerAlive } from "../worker/index.js";
 import { refuseOtherWorkTree, refuseUnstarted } from "./active.js";
-import { type AppContext, homeFor, listRunIds, locateRun, resolveRepo } from "./context.js";
+import { type AppContext, homeFor, listRunIds, locateRun, repoOf } from "./context.js";
 import { AppError } from "./errors.js";
 import { budgetStatus, latestBaseline } from "./events.js";
 import { type DecisionSummary, type RunReport, summarizeDecisions } from "./jobs/index.js";
@@ -278,7 +278,7 @@ export async function status(
   context: AppContext,
   options: { readonly runId?: string } = {},
 ): Promise<StatusView> {
-  const repo = await resolveRepo(context.cwd);
+  const repo = await repoOf(context);
   const home = await homeFor(context, repo);
   const ids = await listRunIds(home, repo);
   if (options.runId !== undefined && !ids.includes(options.runId)) {

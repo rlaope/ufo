@@ -18,7 +18,7 @@ import { MAX_TECHNIQUES, MAX_WALL_CLOCK_MINUTES, type OptIn } from "../domain/in
 import { activeRun } from "./active.js";
 import { approvalSubject, loadCards } from "./cards.js";
 import { loadConfig } from "./config.js";
-import { type AppContext, homeFor, resolveRepo } from "./context.js";
+import { type AppContext, homeFor, repoOf } from "./context.js";
 import { AppError } from "./errors.js";
 import { budgetStatus, EVENTS } from "./events.js";
 import { approvalReview, approvedCommands } from "./review.js";
@@ -67,7 +67,7 @@ export async function approveWithGate(
   options: ApproveOptions & HumanGate,
 ): Promise<ApproveResult> {
   requireTty(options.stdin);
-  const repo = await resolveRepo(context.cwd);
+  const repo = await repoOf(context);
   const home = await homeFor(context, repo);
   const loaded = await loadConfig(repo.root);
   const catalog = await loadCards(repo.root, context, loaded.config);

@@ -1,4 +1,4 @@
-import { lstat, readdir, realpath } from "node:fs/promises";
+import { lstat, readdir, realpath, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { repoId, runGit } from "../core/git/index.js";
@@ -50,6 +50,11 @@ export interface AppContext {
    * server sets it under its host's tool timeout.
    */
   readonly controlLockWaitMs?: number;
+  /**
+   * The repository, as the caller found and checked it (an MCP server's pinned one), so a call's
+   * check and its workflow act on one resolution; else it is found from `cwd` (`repoOf`).
+   */
+  readonly repo?: Repo;
 }
 
 /** The CLI's wait for a run's control lock. */
@@ -69,6 +74,11 @@ export interface Repo {
   /** The `.git` directory shared by all worktrees. */
   readonly commonDir: string;
   readonly repoId: string;
+  /**
+   * The common directory itself (device, inode, birth time), which a repository re-created at
+   * the same path does not keep, though its paths and id are the same (code review R4).
+   */
+  readonly commonDirId: string;
 }
 
 export async function resolveRepo(cwd: string): Promise<Repo> {
@@ -78,12 +88,20 @@ export async function resolveRepo(cwd: string): Promise<Repo> {
   }
   const root = await realpath(top.stdout.trim());
   const gitDir = await runGit(["rev-parse", "--absolute-git-dir"], root);
+  const commonDir = await realpath(await resolveGitCommonDir(root));
+  const common = await stat(commonDir);
   return {
     root,
     gitDir: await realpath(gitDir.stdout.trim()),
-    commonDir: await realpath(await resolveGitCommonDir(root)),
+    commonDir,
     repoId: await repoId(root),
+    commonDirId: `${common.dev}:${common.ino}:${common.birthtimeMs}`,
   };
+}
+
+/** The repository of an app call: the one its caller pinned, else the one at `cwd`. */
+export function repoOf(context: AppContext): Promise<Repo> {
+  return context.repo === undefined ? resolveRepo(context.cwd) : Promise.resolve(context.repo);
 }
 
 /**
@@ -208,18 +226,20 @@ async function namesWorkTree(repo: Repo): Promise<boolean> {
 }
 
 /**
- * Refuses a work tree whose common git directory is outside it, unless it is a linked worktree
- * or a submodule (`namesWorkTree`) whose git directory is outside the work tree too (security
- * N1, S2-1): a `.git` pointed at another repository's git directory would act on that
- * repository's runs, and a back-link inside the work tree, the session's own directory, proves
- * nothing, since whatever wrote the `.git` could write it too.
+ * Refuses a work tree whose git directory is not its own `.git`, unless it is a linked worktree
+ * or a submodule (`namesWorkTree`) whose git directory is outside the work tree (security N1,
+ * S2-1): a `.git` pointed at another repository's git directory, a nested repository's among
+ * them (code review R4), would act on that repository's runs, and a back-link inside the work
+ * tree, the session's own directory, proves nothing, since whatever wrote the `.git` could
+ * write it too.
  */
 async function refuseForeignGitDir(repo: Repo): Promise<void> {
-  if (within(repo.commonDir, repo.root)) return;
+  const own = path.join(repo.root, ".git");
+  if (repo.gitDir === own && repo.commonDir === own) return;
   if (!within(repo.gitDir, repo.root) && (await namesWorkTree(repo))) return;
   throw new TrustError(
     "unsafe_state",
-    `the git directory of ${repo.root} is ${repo.commonDir}, outside it, and ${repo.root} is no linked worktree or submodule of it`,
+    `${repo.root} uses the git directory ${repo.commonDir}, not its own .git, and is no linked worktree or submodule of it`,
   );
 }
 
@@ -267,7 +287,8 @@ export async function bindRepository(options: {
 /**
  * Refuses to go on when the repository at `pinned.root` is no longer the one pinned: its git
  * directory, common directory, or id changed, so `.git` now names another repository's
- * (security N1). `since` names what pinned it, for the message.
+ * (security N1), or another repository was made at the same path (code review R4). `since`
+ * names what pinned it, for the message.
  */
 export async function refuseChangedRepository(pinned: Repo, since: string): Promise<void> {
   const now = await resolveRepo(pinned.root);
@@ -275,7 +296,8 @@ export async function refuseChangedRepository(pinned: Repo, since: string): Prom
     now.root === pinned.root &&
     now.gitDir === pinned.gitDir &&
     now.commonDir === pinned.commonDir &&
-    now.repoId === pinned.repoId
+    now.repoId === pinned.repoId &&
+    now.commonDirId === pinned.commonDirId
   ) {
     return;
   }
@@ -322,7 +344,7 @@ export interface LocatedRun {
  * derived from the trusted home and the repository id, and checked component by component.
  */
 export async function locateRun(context: AppContext, runId?: string): Promise<LocatedRun> {
-  const repo = await resolveRepo(context.cwd);
+  const repo = await repoOf(context);
   const home = await homeFor(context, repo);
   const ids = await listRunIds(home, repo);
   const id = runId ?? ids.at(-1);

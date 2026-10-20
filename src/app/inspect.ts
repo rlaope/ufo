@@ -12,7 +12,7 @@ import type { Objective, TechniqueCard, UfoConfig } from "../domain/index.js";
 import type { Exec } from "../worker/index.js";
 import { approvalSubject, type CardSet, loadCards } from "./cards.js";
 import { type LoadedConfig, loadConfig } from "./config.js";
-import { type AppContext, homeFor, type Repo, resolveRepo } from "./context.js";
+import { type AppContext, homeFor, type Repo, repoOf } from "./context.js";
 import { captureEnv } from "./env.js";
 import { describeFailure } from "./errors.js";
 import { type ApprovedCommand, approvedCommands } from "./review.js";
@@ -84,7 +84,7 @@ export interface TargetInspection {
 
 /** `inspect_target`: the repository, its ufo.yaml, and whether this ufo.yaml is approved. */
 export async function inspectTarget(context: AppContext): Promise<TargetInspection> {
-  const repo = await resolveRepo(context.cwd);
+  const repo = await repoOf(context);
   const home = await homeFor(context, repo);
   const stack: string[] = [];
   for (const marker of STACK_MARKERS) {
@@ -271,7 +271,7 @@ function describe(error: unknown): string {
  * repository command.
  */
 export async function checkCapabilities(context: AppContext): Promise<CapabilityReport> {
-  const repo = await resolveRepo(context.cwd);
+  const repo = await repoOf(context);
   const home = await homeFor(context, repo);
   const gitVersion = await runGit(["--version"], repo.root).then(
     (result) =>
@@ -350,7 +350,7 @@ export async function listTechniques(
   context: AppContext,
   options: { readonly domain?: string } = {},
 ): Promise<TechniqueListing> {
-  const repo = await resolveRepo(context.cwd);
+  const repo = await repoOf(context);
   const read = await readConfig(repo, context);
   const cards = "error" in read ? await loadCards(repo.root, context) : read.cards;
   const enabled = new Set("error" in read ? [] : read.loaded.config.cards);

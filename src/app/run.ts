@@ -64,7 +64,7 @@ import {
   listRunIds,
   locateRun,
   type Repo,
-  resolveRepo,
+  repoOf,
 } from "./context.js";
 import { captureEnv, captureGitEnv } from "./env.js";
 import { AppError } from "./errors.js";
@@ -208,7 +208,7 @@ async function startRunFor(
   options: StartRunOptions,
   purpose: AppState["purpose"],
 ): Promise<StartRunResult & { runDir: string; home: string }> {
-  const repo = await resolveRepo(context.cwd);
+  const repo = await repoOf(context);
   const home = await homeFor(context, repo);
   const loaded = await loadConfig(repo.root);
   // The cards as they are now, checked against the approval and captured for the run's jobs.

@@ -13,7 +13,9 @@ import {
   listTechniques,
   profileTarget,
   readAppState,
+  resolveRepo,
   startRun,
+  status,
 } from "../../src/app/index.js";
 import { ensureWorker } from "../../src/app/launch.js";
 import { enqueueJob, readRun, updateRun } from "../../src/core/jobs/index.js";
@@ -39,6 +41,16 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await toy.cleanup();
+});
+
+// Code review R4: a caller that pinned the repository (ufo mcp) gets its workflows acting on that
+// one resolution, wherever its working directory is.
+describe("a pinned repository", { timeout: TIMEOUT_MS }, () => {
+  it("is the one the workflows act on", async () => {
+    const pinned = { ...toy.context, cwd: os.tmpdir(), repo: await resolveRepo(toy.repo) };
+    expect((await inspectTarget(pinned)).repoRoot).toBe(toy.repo);
+    expect((await status(pinned)).repoRoot).toBe(toy.repo);
+  });
 });
 
 describe("inspecting the target", { timeout: TIMEOUT_MS }, () => {
