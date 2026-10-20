@@ -400,8 +400,7 @@ describe("the server's repository and PATH", { timeout: TIMEOUT_MS }, () => {
   });
 
   // Security N1, S2-1: a work tree that shares a git directory elsewhere is served only as a
-  // linked worktree or a submodule whose own git directory, outside the session's directories,
-  // names it back.
+  // linked worktree or a submodule whose own git directory, outside it, names it back.
   it("refuses at startup a .git that names another repository's git directory", async () => {
     const toy = toyFor();
     const imposter = path.join(toy.root, "imposter");
@@ -413,17 +412,23 @@ describe("the server's repository and PATH", { timeout: TIMEOUT_MS }, () => {
 
     const worktree = path.join(toy.root, "worktree");
     git(toy.repo, "worktree", "add", "--quiet", worktree);
+    // Started in "/", as a desktop app may start it: only the bound directory is the session's.
     const client = await connect(
       toy,
       {},
-      { args: ["--host", "cursor", "--repo", worktree], cwd: worktree },
+      { args: ["--host", "cursor", "--repo", worktree], cwd: "/" },
     );
     expect((await ok(client, "inspect_target")).body).toMatchObject({ repoRoot: worktree });
-    // The worktree's git directory is inside the main checkout, here Claude Code's working
-    // directory: the session could have written its back-link.
-    expect(startup(toy, [], toy.root, { CLAUDE_PROJECT_DIR: worktree }, "claude-code")).toBe(
-      `ufo mcp: unsafe_state: ${foreign(worktree, path.join(toy.repo, ".git"))}`,
+    const claude = await connect(
+      toy,
+      {},
+      {
+        args: ["--host", "claude-code"],
+        cwd: "/",
+        env: { ...serverEnv(toy), CLAUDE_PROJECT_DIR: worktree },
+      },
     );
+    expect((await ok(claude, "inspect_target")).body).toMatchObject({ repoRoot: worktree });
 
     const superproject = path.join(toy.root, "super");
     mkdirSync(superproject);
@@ -492,6 +497,21 @@ describe("the server's repository and PATH", { timeout: TIMEOUT_MS }, () => {
     expect(startup(toy, ["--repo", named], named)).toBe(
       `ufo mcp: unsafe_state: ${foreign(named, common)}`,
     );
+
+    // A work tree inside another repository's git directory, whose git directory is laid out as
+    // a worktree's there and names it back, but is inside the work tree.
+    const other = path.join(toy.root, "other");
+    mkdirSync(other);
+    git(other, "init", "--quiet");
+    const inside = path.join(other, ".git", "worktrees");
+    mkdirSync(path.join(inside, "x"), { recursive: true });
+    writeFileSync(path.join(inside, "x", "HEAD"), "ref: refs/heads/main\n");
+    writeFileSync(path.join(inside, "x", "commondir"), "../..\n");
+    writeFileSync(path.join(inside, "x", "gitdir"), `${path.join(inside, ".git")}\n`);
+    writeFileSync(path.join(inside, ".git"), "gitdir: x\n");
+    expect(startup(toy, ["--repo", inside], inside)).toBe(
+      `ufo mcp: unsafe_state: ${foreign(inside, path.join(other, ".git"))}`,
+    );
   });
 
   // Security S2-2: a project at your home or above it holds every directory under your home, the
@@ -508,35 +528,30 @@ describe("the server's repository and PATH", { timeout: TIMEOUT_MS }, () => {
       HOME: home,
       PATH: [path.join(home, "bin"), process.env.PATH ?? ""].join(path.delimiter),
     };
-    const refused = (dir: string) => ({
+    const refused = (named: string) => ({
       isError: true,
       body: {
         code: "not_a_repo",
-        message: `${dir} is your home directory or above it; UFO works only in a project folder`,
+        message: `${named} is your home directory or above it; UFO works only in a project folder`,
         retryable: false,
         hint: "open a repository folder",
       },
     });
-    for (const [spawned, dir] of [
-      [{ args: ["--host", "cursor", "--repo", home], cwd: home }, "~"],
-      [{ args: ["--host", "cursor", "--repo", toy.root], cwd: toy.root }, toy.root],
-      [{ args: ["--host", "cursor", "--repo", "/"], cwd: home }, "/"],
-      [{ args: ["--host", "codex"], cwd: home }, "~"],
-      // Claude Code's working directory is the session's too.
+    for (const [spawned, named] of [
+      [{ args: ["--host", "cursor", "--repo", home], cwd: home }, "--repo ~"],
+      [{ args: ["--host", "cursor", "--repo", toy.root], cwd: toy.root }, `--repo ${toy.root}`],
+      [{ args: ["--host", "cursor", "--repo", "/"], cwd: home }, "--repo /"],
+      [{ args: ["--host", "codex"], cwd: home }, "the working directory ~"],
+      // Claude Code without CLAUDE_PROJECT_DIR, started in "/".
+      [{ args: ["--host", "claude-code"], cwd: "/" }, "the working directory /"],
       [
-        {
-          args: ["--host", "claude-code"],
-          cwd: home,
-          env: { ...env, CLAUDE_PROJECT_DIR: path.join(home, "project") },
-        },
-        "~",
+        { args: ["--host", "claude-code"], cwd: "/", env: { ...env, CLAUDE_PROJECT_DIR: home } },
+        "CLAUDE_PROJECT_DIR ~",
       ],
     ] as const) {
       const client = await connect(toy, {}, { env, ...spawned, args: [...spawned.args] });
       for (const name of ["inspect_target", "start_run"]) {
-        expect(await call(client, name), `${spawned.args.join(" ")}: ${name}`).toMatchObject(
-          refused(dir),
-        );
+        expect(await call(client, name), `${named}: ${name}`).toMatchObject(refused(named));
       }
     }
     expect(existsSync(marker) ? readFileSync(marker, "utf8") : "").toBe("");

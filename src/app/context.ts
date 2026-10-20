@@ -208,16 +208,14 @@ async function namesWorkTree(repo: Repo): Promise<boolean> {
 
 /**
  * Refuses a work tree whose common git directory is outside it, unless it is a linked worktree
- * or a submodule (`namesWorkTree`) whose git directory is outside the work tree and every one of
- * `outside` too (security N1, S2-1): a `.git` pointed at another repository's git directory would
- * act on that repository's runs, and a back-link inside a directory the session writes proves
+ * or a submodule (`namesWorkTree`) whose git directory is outside the work tree too (security
+ * N1, S2-1): a `.git` pointed at another repository's git directory would act on that
+ * repository's runs, and a back-link inside the work tree, the session's own directory, proves
  * nothing, since whatever wrote the `.git` could write it too.
  */
-async function refuseForeignGitDir(repo: Repo, outside: readonly string[]): Promise<void> {
+async function refuseForeignGitDir(repo: Repo): Promise<void> {
   if (within(repo.commonDir, repo.root)) return;
-  const reals = await Promise.all(outside.map((dir) => realpath(dir).catch(() => dir)));
-  const roots = [repo.root, ...outside.map((dir) => path.resolve(dir)), ...reals];
-  if (!roots.some((root) => within(repo.gitDir, root)) && (await namesWorkTree(repo))) return;
+  if (!within(repo.gitDir, repo.root) && (await namesWorkTree(repo))) return;
   throw new TrustError(
     "unsafe_state",
     `the git directory of ${repo.root} is ${repo.commonDir}, outside it, and ${repo.root} is no linked worktree or submodule of it`,
@@ -225,21 +223,19 @@ async function refuseForeignGitDir(repo: Repo, outside: readonly string[]): Prom
 }
 
 /**
- * Refuses your home directory or a directory above it as one of the session's `dirs` (security
+ * Refuses your home directory or a directory above it as `dir`, which `what` names (security
  * S2-2): a project there holds every directory under your home, the tools on PATH that UFO keeps
  * there among them. Runs no git.
  */
-export async function refuseHomeDirectory(dirs: readonly string[]): Promise<void> {
+export async function refuseHomeDirectory(dir: string, what: string): Promise<void> {
   const home = path.resolve(os.homedir());
   const homes = [home, await realpath(home).catch(() => home)];
-  for (const dir of dirs) {
-    const forms = [path.resolve(dir), await realpath(dir).catch(() => path.resolve(dir))];
-    if (forms.some((form) => homes.some((at) => within(at, form)))) {
-      throw new AppError(
-        "not_a_repo",
-        `${dir} is your home directory or above it; UFO works only in a project folder`,
-      );
-    }
+  const forms = [path.resolve(dir), await realpath(dir).catch(() => path.resolve(dir))];
+  if (forms.some((form) => homes.some((at) => within(at, form)))) {
+    throw new AppError(
+      "not_a_repo",
+      `${what} ${dir} is your home directory or above it; UFO works only in a project folder`,
+    );
   }
 }
 
@@ -248,19 +244,18 @@ export async function refuseHomeDirectory(dirs: readonly string[]): Promise<void
  * for it first (`trustProcessPath`): each time it is looked for, so one found only after startup
  * is filtered for too before git runs in it (security S2-3). A work tree sharing a git directory
  * elsewhere is refused unless it is a linked worktree or submodule of it whose git directory is
- * outside the session's directories, `outside` (security N1, S2-1). Outside a repository `repo`
- * is `undefined`, or `not_a_repo` is thrown when `requireRepo`.
+ * outside the work tree (security N1, S2-1). Outside a repository `repo` is `undefined`, or
+ * `not_a_repo` is thrown when `requireRepo`.
  */
 export async function bindRepository(options: {
   readonly dir: string;
   readonly cwd: string;
-  readonly outside: readonly string[];
   readonly home?: string | undefined;
   readonly requireRepo?: boolean;
   readonly env?: NodeJS.ProcessEnv;
 }): Promise<{ repo: Repo | undefined; dropped: string[] }> {
   const found = await trustProcessPath({ ...options, repoDir: options.dir });
-  if (found.repo !== undefined) await refuseForeignGitDir(found.repo, options.outside);
+  if (found.repo !== undefined) await refuseForeignGitDir(found.repo);
   return found;
 }
 

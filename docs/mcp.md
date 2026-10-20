@@ -26,12 +26,14 @@ writes only protocol messages on stdout; diagnostics go to stderr. It exits when
   resolved against the working directory. Outside any git working tree the server keeps serving,
   since a user-scope server starts in every session, and answers every tool with `not_a_repo`
   (hint: open a repository folder) until the folder is a repository; it binds to it then, after
-  filtering its `PATH` again for that repository (see PATH). Bound to your home directory or a
-  directory above it, or with its session's working directory there (Claude Code and Codex
-  without `--repo`), it runs no git and answers every tool with `not_a_repo`: open a project
-  folder ([safety.md](safety.md) R3b). A work tree that shares a git directory elsewhere is
-  served only as a linked worktree or a submodule whose own git directory is outside the
-  session's directories ([safety.md](safety.md) R7); otherwise `unsafe_state`. Once
+  filtering its `PATH` again for that repository (see PATH). Only the bound directory is the
+  session's: the working directory counts only when it is the one bound (Codex, and Claude Code
+  without `CLAUDE_PROJECT_DIR`), so a host that starts its servers in `/` still works with
+  `--repo` or `CLAUDE_PROJECT_DIR`. Bound to your home directory or a directory above it, the
+  server runs no git and answers every tool with `not_a_repo`, naming the setting it came from:
+  open a project folder ([safety.md](safety.md) R3b). A work tree that shares a git directory
+  elsewhere is served only as a linked worktree or a submodule whose own git directory is
+  outside it ([safety.md](safety.md) R7); otherwise `unsafe_state`. Once
   bound, the repository's top level, git directory, common directory, and id are pinned and
   checked before every call. Approval is per repository: an unapproved one is refused at
   `start_run`.

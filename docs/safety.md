@@ -134,9 +134,8 @@ until it is, `ufo setup` refuses to install from the registry and takes a tarbal
   (`~/.nvm`, `~/.cargo/bin`, `~/.local/bin`) stay even when you start UFO there or your home
   is a repository, and a project's `.bin` there is caught by the `node_modules` rule. A project
   at your home itself (dotfiles) therefore leaves those kept entries in the reach of whatever
-  edits the project, so `ufo mcp` bound there, or above it, or with its session's working
-  directory there, runs no git and answers every tool `not_a_repo`; open a project folder
-  instead. The CLI run from there is you at your own terminal and works as usual. `ufo mcp`
+  edits the project, so `ufo mcp` bound there, or above it, runs no git and answers every tool
+  `not_a_repo`; open a project folder instead. The CLI run from there is you at your own terminal and works as usual. `ufo mcp`
   logs the entries it left out on stderr. Commands and the worker inherit that `PATH`. A program planted in
   any other directory on your `PATH`, one outside the project, still runs; keep your `PATH` to
   directories only you can write.
@@ -178,10 +177,10 @@ until it is, `ufo setup` refuses to install from the registry and takes a tarbal
   otherwise). The MCP server, when it binds (at startup, or on the first call that finds a
   repository), refuses a work tree that shares a git directory outside it unless it is a linked
   worktree or a submodule: its own git directory is `<shared>/worktrees/<name>` or the shared one
-  itself, lies outside the work tree and the session's directories (the bound directory, and
-  the working directory unless `--repo` named the bound one), and names the work tree back
-  (`gitdir`, `core.worktree`). A back-link inside those directories proves nothing, since
-  whatever pointed `.git` elsewhere could write it too. The server then refuses every call once
+  itself, lies outside the work tree (the bound directory is inside it, and the working
+  directory counts only when it is the bound one), and names the work tree back (`gitdir`,
+  `core.worktree`). A back-link inside the work tree proves nothing, since whatever pointed
+  `.git` elsewhere could write it too. The server then refuses every call once
   the repository's git directory, common directory, or id differs from the one it pinned.
 
 - **R8. Drivers from your own git config.** UFO refuses filter, diff, and merge drivers defined
