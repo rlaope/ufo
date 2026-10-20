@@ -92,7 +92,9 @@ every action by commit, and checks out without persisting credentials. The ident
 own workflow: on pull requests it runs as `pull_request_target`, so its workflow file and script
 come from `main` and the pull request is fetched only as data. A collaborator who can push a
 branch with a new workflow can still reach repository secrets; the repository has no other
-collaborators.
+collaborators. The npm name `ufo-agents` is being reserved and nothing is published under it yet;
+until it is, `ufo setup` refuses to install from the registry and takes a tarball you built
+(`--package`).
 
 ## What UFO cannot prevent
 
@@ -169,9 +171,26 @@ collaborators.
   network outside the `targets:` check (git-lfs also reads an endpoint from a committed
   `.lfsconfig`).
 
+- **R9. What setup registers runs at every host start.** `ufo setup` adds a server that each of
+  your agent hosts starts at launch, in every project you open, as you: the copy of UFO in
+  `$UFO_HOME/pkg/<version>`, started with an absolute node, never through `npx`. Setup installs it
+  from the public registry with no install scripts and checks it against the registry's integrity,
+  or from a tarball you name (`--package`, recorded by its sha512). Anyone who can write
+  `$UFO_HOME` can change what your hosts start (R2). `--yes` applies setup's changes without
+  asking (only a downgrade still asks on the terminal), so an agent that can run `ufo setup`,
+  `ufo update`, or `ufo uninstall` can change what every host starts, or take UFO out of them:
+  run these commands yourself, in your own terminal, and do not let an agent run them. The
+  backups in `$UFO_HOME/private/setup/backups` are full copies of your host configs as they were
+  before setup's first write, tokens and keys in them included (files 0600 in 0700 directories),
+  until uninstall removes them. Claude Code prefers a `ufo` server at local or project scope
+  (`claude mcp add` without `--scope user`, or a repository's `.mcp.json` once you approve it)
+  over the user-scope one setup adds, so such a server shadows UFO's; approve a repository's
+  `.mcp.json` servers only when you trust it.
+
 ## Using UFO safely
 
-- Approve in your own terminal, after reading the review.
+- Approve in your own terminal, after reading the review. Run `ufo setup`, `update`, and
+  `uninstall` there too.
 - Keep `$UFO_HOME` outside every repository, and do not give agents write access to it.
 - List only the environment variables your workload needs in `env:`.
 - Run untrusted repositories in a sandbox or VM.
