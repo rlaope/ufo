@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -230,10 +230,16 @@ function ctrlC(ready: () => Promise<boolean> = async () => true): EventEmitter {
   return signals;
 }
 
-/** Whether a baseline of `target` is being measured right now. */
+/**
+ * Whether a baseline of `target` is being measured right now. A run whose start has made its
+ * directory but not yet its jobs/ is not: the poll must not fail while `measure` is starting.
+ */
 const measuring = (target: Toy) => async () => {
   for (const id of await listRunIds(target.home, { repoId: target.repoId })) {
-    const jobs = await listJobs(target.runDir(id));
+    const jobs = await listJobs(target.runDir(id)).catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw error;
+    });
     if (jobs.some((job) => job.kind === "baseline" && job.status === "running")) return true;
   }
   return false;
@@ -242,6 +248,17 @@ const measuring = (target: Toy) => async () => {
 // Code review (round 3) #2: Ctrl-C on `ufo run` or `ufo measure` cancels the run instead of
 // leaving it running behind the command with the machine lock held.
 describe("Ctrl-C", { timeout: TIMEOUT_MS }, () => {
+  it("measuring: a run whose start made its directory but not yet jobs/ is not measuring", async () => {
+    const own = makeToy();
+    try {
+      // createRunState makes the run directory, then jobs/: a poll can land in between.
+      mkdirSync(own.runDir("20261020-000000-abcdef"), { recursive: true });
+      expect(await measuring(own)()).toBe(false);
+    } finally {
+      await own.cleanup();
+    }
+  });
+
   it("cancels the run of ufo measure and ufo run, and releases the machine lock", async () => {
     const own = makeToy({ config: lightWorkload() });
     try {
@@ -285,10 +302,11 @@ describe("Ctrl-C", { timeout: TIMEOUT_MS }, () => {
 
   it("leaves the cleanup of a measure run cancelled from outside to that cancel", async () => {
     const own = makeToy();
+    let measured: Promise<unknown> | undefined;
     try {
       await approveToy(own);
       // Settled into a value at once: measure may fail before the cancel below returns.
-      const measured = measure(own.context).then(
+      measured = measure(own.context).then(
         () => undefined,
         (error: unknown) => error,
       );
@@ -303,6 +321,8 @@ describe("Ctrl-C", { timeout: TIMEOUT_MS }, () => {
       expect((await readRun(own.runDir(runId as string))).status).toBe("cancelled");
       noRunLeftover(own);
     } finally {
+      // A failure above must not remove the toy under a measure still running in this process.
+      await measured;
       await own.cleanup();
     }
   });
