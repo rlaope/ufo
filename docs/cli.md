@@ -57,8 +57,8 @@ Without `--json`, a failure is one line on stderr: `ufo <command>: <code>: <mess
 `policy:budget_exceeded`). `busy` and `run_starting` are the failures that trying the same command
 again later can get past.
 
-Paths in command output and in `--json` results name your home directory as `~`, like the
-evidence bundle does; expand it before you open a path from a script. The arm paths (`arms.a`,
+Paths in command output, in error messages, and in `--json` results name your home directory as
+`~`, like the evidence bundle does, and secrets in error messages are redacted the same way; expand it before you open a path from a script. The arm paths (`arms.a`,
 `arms.b` in a run's view and in start and resume results) are the exception: they are absolute
 local paths, so an agent can read arm A. The text output shows them with `~` too.
 
@@ -104,7 +104,7 @@ Refusals that protect UFO's own state:
 | `run_not_active` (exit 1) | The run has ended, never finished starting, or only measures (`ufo measure`). |
 | `cancel_pending` (exit 1) | `ufo resume` on a run whose cancel was requested but did not complete. Run `ufo cancel` again to end it. |
 | `arms_missing` (exit 1) | `ufo resume` on a run whose arms under `$UFO_HOME/arms` are gone. It cannot continue; `ufo cancel` ends it. |
-| `busy` (exit 1) | Another UFO command (resume, cancel, finish, queueing a change) held the run longer than this one waits (120 s on the command line). Nothing was changed; try again. |
+| `busy` (exit 1) | Another UFO command (resume, cancel, finish, queueing a change) held the run's control lock longer than this one waits (120 s on the command line). Nothing was changed; try again. A process stuck holding the run's state lock (`run.lock`, 10 s) is `internal` instead. |
 
 ## `ufo.yaml` reference
 

@@ -1,3 +1,5 @@
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   AppError,
@@ -14,7 +16,7 @@ import { PolicyError, violation } from "../../../src/core/policy/index.js";
 // message does not.
 
 describe("describeFailure", () => {
-  it("reports a lock timeout as busy (exit 1), to try again", () => {
+  it("reports a control-lock timeout as busy (exit 1), to try again", () => {
     expect(describeFailure(new LockTimeoutError("/state/run-1/control.lock"))).toEqual({
       exitCode: EXIT_REFUSED,
       code: "busy",
@@ -22,6 +24,27 @@ describe("describeFailure", () => {
       retryable: true,
       hint: "another UFO call is working on this run; try again in a few seconds",
     });
+  });
+
+  // Code review (step A) #6: a run-lock holder that stays past 10 s is stuck, and the call may
+  // have changed things before it: not a busy run to retry.
+  it("reports a run-lock timeout as internal, not retryable", () => {
+    expect(describeFailure(new LockTimeoutError("/state/run-1/run.lock"))).toMatchObject({
+      code: "internal",
+      retryable: false,
+    });
+  });
+
+  // Code review (step A) #3: messages name paths and quote command output.
+  it("redacts the message: the home as ~, and secrets", () => {
+    const lock = path.join(os.homedir(), ".ufo", "private", "runs", "r", "run-1", "control.lock");
+    expect(describeFailure(new LockTimeoutError(lock)).message).toBe(
+      "timed out waiting for ~/.ufo/private/runs/r/run-1/control.lock",
+    );
+    const key = `sk-proj-${"Z9y8X7w6".repeat(6)}`;
+    expect(describeFailure(new Error(`setup printed ${key}`)).message).toBe(
+      "setup printed <redacted:api_key>",
+    );
   });
 
   it("marks a run still starting retryable and a finishing one not", () => {

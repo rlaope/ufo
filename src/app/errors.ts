@@ -1,5 +1,7 @@
+import path from "node:path";
+import { redact } from "../core/evidence/index.js";
 import { GitError } from "../core/git/index.js";
-import { LockTimeoutError } from "../core/jobs/index.js";
+import { CONTROL_LOCK_FILE, LockTimeoutError } from "../core/jobs/index.js";
 import { TrustError } from "../core/paths.js";
 import { PolicyError } from "../core/policy/index.js";
 import { CardLoadError } from "../techniques/index.js";
@@ -111,6 +113,9 @@ export function describeFailure(error: unknown): Failure {
   const hint = hintFor(failure.code);
   return {
     ...failure,
+    // Messages name lock files and run state and quote what commands printed; like every view
+    // (security F13), they reach a person or an agent's model provider redacted.
+    message: redact(failure.message),
     retryable: RETRYABLE.has(failure.code),
     ...(hint === undefined ? {} : { hint }),
   };
@@ -127,8 +132,9 @@ function classify(error: unknown): Omit<Failure, "retryable" | "hint"> {
   if (error instanceof AppError) {
     return { exitCode: error.exitCode, code: error.code, message: error.message };
   }
-  // Another call held the run's lock for longer than this call waits: try again later.
-  if (error instanceof LockTimeoutError) {
+  // Another call held the run's control lock for longer than this call waits, before this call
+  // changed anything: try again later. A run-lock timeout is a stuck holder, not a busy run.
+  if (error instanceof LockTimeoutError && path.basename(error.file) === CONTROL_LOCK_FILE) {
     return { exitCode: EXIT_REFUSED, code: "busy", message: error.message };
   }
   if (error instanceof CardLoadError) {
