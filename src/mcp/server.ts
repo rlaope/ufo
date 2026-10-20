@@ -10,6 +10,7 @@ import {
   packageVersion,
   type Repo,
   refuseChangedRepository,
+  refuseHomeDirectory,
 } from "../app/api.js";
 import { registerTools } from "./tools.js";
 
@@ -60,8 +61,9 @@ export interface McpServeOptions {
   /** The directory to bind to (`bindDirectory`); the server acts on the repository there. */
   readonly dir: string;
   /**
-   * Where the host's agent session works (`bindDirectory`): a linked worktree's or submodule's
-   * git directory must be outside each (security S2-1).
+   * Where the host's agent session works (`bindDirectory`): none may be your home or above it,
+   * and a linked worktree's or submodule's git directory must be outside each (security S2-1,
+   * S2-2).
    */
   readonly session: readonly string[];
   readonly host: Host;
@@ -145,15 +147,24 @@ export async function serveMcp(options: McpServeOptions): Promise<void> {
     }
     return repo;
   };
-  const repo = await bind(false);
-  // A user-scope server starts in every session, a repository or not: outside one it answers
-  // every tool with not_a_repo until the folder is one (code review CR-N8).
-  if (repo === undefined) {
-    options.log(
-      `ufo mcp: ${options.dir} is not inside a git working tree; every tool answers not_a_repo until it is`,
-    );
-  }
-  const binding = bindingFor(options.dir, repo, () => bind(true));
+  const binding = await refuseHomeDirectory(options.session).then(
+    async () => {
+      const repo = await bind(false);
+      // A user-scope server starts in every session, a repository or not: outside one it
+      // answers every tool with not_a_repo until the folder is one (code review CR-N8).
+      if (repo === undefined) {
+        options.log(
+          `ufo mcp: ${options.dir} is not inside a git working tree; every tool answers not_a_repo until it is`,
+        );
+      }
+      return bindingFor(options.dir, repo, () => bind(true));
+    },
+    // At your home or above it, no git runs and every tool answers not_a_repo (security S2-2).
+    (error: unknown): Binding => {
+      options.log(`ufo mcp: ${error instanceof Error ? error.message : String(error)}`);
+      return { root: () => options.dir, guard: () => Promise.reject(error) };
+    },
+  );
   const closed = new Promise<void>((resolve) => {
     process.stdin.once("end", resolve);
     process.stdin.once("close", resolve);

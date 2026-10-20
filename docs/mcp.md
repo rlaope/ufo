@@ -26,7 +26,10 @@ writes only protocol messages on stdout; diagnostics go to stderr. It exits when
   resolved against the working directory. Outside any git working tree the server keeps serving,
   since a user-scope server starts in every session, and answers every tool with `not_a_repo`
   (hint: open a repository folder) until the folder is a repository; it binds to it then, after
-  filtering its `PATH` again for that repository (see PATH). A work tree that shares a git directory elsewhere is
+  filtering its `PATH` again for that repository (see PATH). Bound to your home directory or a
+  directory above it, or with its session's working directory there (Claude Code and Codex
+  without `--repo`), it runs no git and answers every tool with `not_a_repo`: open a project
+  folder ([safety.md](safety.md) R3b). A work tree that shares a git directory elsewhere is
   served only as a linked worktree or a submodule whose own git directory is outside the
   session's directories ([safety.md](safety.md) R7); otherwise `unsafe_state`. Once
   bound, the repository's top level, git directory, common directory, and id are pinned and
@@ -120,6 +123,7 @@ message does not.
 | `policy:unapproved_config`, `policy:config_changed` | Ask the user to run `ufo approve` in their own terminal; never run it yourself. |
 | `policy:budget_exceeded` | Ask the user to run `ufo extend-budget` in their own terminal (never run it yourself), or finish the run. |
 | `interrupted` | The client cancelled the call (a `get_job` wait). |
+| `not_a_repo` | The server is not bound to a project: outside a repository, or at your home directory or above it. Ask the user to open a project folder. |
 
 Arguments that do not match a tool's schema are answered with a tool error whose text starts
 with `Input validation error`, so the agent can correct the call (as the 2025-11-25 revision

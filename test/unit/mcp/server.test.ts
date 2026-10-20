@@ -7,7 +7,7 @@ import { bindDirectory, isHost } from "../../../src/mcp/server.js";
 const env = { CLAUDE_PROJECT_DIR: "/projects/claude" };
 
 describe("the directory ufo mcp binds to", () => {
-  // Security S2-1: with the directories the agent's session works in, the working directory
+  // Security S2-1, S2-2: with the directories the agent's session works in, the working directory
   // among them unless --repo named the directory (a host that needs it may start servers anywhere).
   it("is --repo for every host when given", () => {
     for (const host of ["claude-code", "codex", "cursor"] as const) {

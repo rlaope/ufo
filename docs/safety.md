@@ -132,7 +132,11 @@ until it is, `ufo setup` refuses to install from the registry and takes a tarbal
   outside a repository does it again, before git runs there, for the repository it binds to later.
   Your home directory and its parents are never one of those: tools installed under it
   (`~/.nvm`, `~/.cargo/bin`, `~/.local/bin`) stay even when you start UFO there or your home
-  is a repository, and a project's `.bin` there is caught by the `node_modules` rule. `ufo mcp`
+  is a repository, and a project's `.bin` there is caught by the `node_modules` rule. A project
+  at your home itself (dotfiles) therefore leaves those kept entries in the reach of whatever
+  edits the project, so `ufo mcp` bound there, or above it, or with its session's working
+  directory there, runs no git and answers every tool `not_a_repo`; open a project folder
+  instead. The CLI run from there is you at your own terminal and works as usual. `ufo mcp`
   logs the entries it left out on stderr. Commands and the worker inherit that `PATH`. A program planted in
   any other directory on your `PATH`, one outside the project, still runs; keep your `PATH` to
   directories only you can write.

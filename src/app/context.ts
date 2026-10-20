@@ -180,7 +180,7 @@ export async function trustProcessPath(options: {
 }
 
 function within(dir: string, root: string): boolean {
-  return dir === root || dir.startsWith(`${root}${path.sep}`);
+  return dir === root || dir.startsWith(root.endsWith(path.sep) ? root : `${root}${path.sep}`);
 }
 
 /**
@@ -222,6 +222,25 @@ async function refuseForeignGitDir(repo: Repo, outside: readonly string[]): Prom
     "unsafe_state",
     `the git directory of ${repo.root} is ${repo.commonDir}, outside it, and ${repo.root} is no linked worktree or submodule of it`,
   );
+}
+
+/**
+ * Refuses your home directory or a directory above it as one of the session's `dirs` (security
+ * S2-2): a project there holds every directory under your home, the tools on PATH that UFO keeps
+ * there among them. Runs no git.
+ */
+export async function refuseHomeDirectory(dirs: readonly string[]): Promise<void> {
+  const home = path.resolve(os.homedir());
+  const homes = [home, await realpath(home).catch(() => home)];
+  for (const dir of dirs) {
+    const forms = [path.resolve(dir), await realpath(dir).catch(() => path.resolve(dir))];
+    if (forms.some((form) => homes.some((at) => within(at, form)))) {
+      throw new AppError(
+        "not_a_repo",
+        `${dir} is your home directory or above it; UFO works only in a project folder`,
+      );
+    }
+  }
 }
 
 /**

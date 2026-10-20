@@ -133,6 +133,7 @@ describe("the adapter modules", () => {
       "profileTarget",
       "redact",
       "refuseChangedRepository",
+      "refuseHomeDirectory",
       "report",
       "resumeRun",
       "runToEnd",
