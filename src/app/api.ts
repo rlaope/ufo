@@ -7,6 +7,7 @@
 export { redact } from "../core/evidence/index.js";
 export type { JobRecord } from "../core/jobs/index.js";
 export { MAX_WAIT_S } from "../core/jobs/index.js";
+export { RepoPathSchema } from "../domain/index.js";
 export { packageVersion } from "./cards.js";
 export type { QueuedChange, SubmitChangeOptions } from "./changes.js";
 export { profileTarget, submitChange } from "./changes.js";

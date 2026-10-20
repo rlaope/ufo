@@ -35,7 +35,10 @@ export const ChangeSchema = z.strictObject({
   cardId: IdSchema,
   diff: UnifiedDiffSchema,
   hypothesis: HypothesisSchema,
-  /** Profiler artifacts, relative to the run state directory, that motivated the change. */
+  /**
+   * Paths relative to the repository root of the evidence the change rests on: the code or files
+   * the agent read, or what a profile pointed at.
+   */
   evidenceRefs: uniqueArray(RepoPathSchema, MAX_EVIDENCE_REFS, (r) => r, "evidence refs").default(
     [],
   ),

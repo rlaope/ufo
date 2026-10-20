@@ -111,6 +111,7 @@ describe("the adapter modules", () => {
       "EXIT_REFUSED",
       "EXIT_USAGE",
       "MAX_WAIT_S",
+      "RepoPathSchema",
       "cancelRun",
       "checkCapabilities",
       "describeFailure",

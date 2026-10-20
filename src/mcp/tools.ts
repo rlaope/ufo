@@ -15,6 +15,7 @@ import {
   listTechniques,
   MAX_WAIT_S,
   profileTarget,
+  RepoPathSchema,
   resumeRun,
   startRun,
   submitChange,
@@ -164,10 +165,12 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
           .max(2000)
           .describe("Why the change should improve the metric, from the evidence."),
         evidence_refs: z
-          .array(z.string().max(4096))
+          .array(RepoPathSchema)
           .max(32)
           .optional()
-          .describe("Repository paths of the evidence the change rests on."),
+          .describe(
+            "Paths relative to the repository root (not absolute, no `..`) of the evidence the change rests on.",
+          ),
         base_sha: z
           .string()
           .max(64)

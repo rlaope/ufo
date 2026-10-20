@@ -475,6 +475,15 @@ describe("failures", { timeout: TIMEOUT_MS }, () => {
       expect(result.isError, JSON.stringify(args)).toBe(true);
       expect((result.content as { text: string }[])[0]?.text).toContain("Input validation error");
     }
+    // Evidence is named by paths inside the repository, as the change's schema takes them.
+    for (const ref of ["../outside", "/etc/passwd"]) {
+      const result = await client.callTool({
+        name: "submit_change",
+        arguments: { card_id: "toy.fast-path", diff: "d", hypothesis: "h", evidence_refs: [ref] },
+      });
+      expect(result.isError, ref).toBe(true);
+      expect((result.content as { text: string }[])[0]?.text).toContain("Input validation error");
+    }
     const unknown = await client.callTool({ name: "approve", arguments: {} }).then(
       () => undefined,
       (error: unknown) => error,
