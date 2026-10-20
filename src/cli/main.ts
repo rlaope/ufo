@@ -250,6 +250,7 @@ async function mcp(values: Values, io: CliIo): Promise<number> {
       dir: bound.dir,
       host: values.host,
       context: io.context,
+      env: io.env,
       log: (line) => io.stderr(`${line}\n`),
     });
   } catch (error) {

@@ -1,4 +1,5 @@
 import { lstat, readdir, realpath } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { repoId, runGit } from "../core/git/index.js";
 import {
@@ -85,15 +86,31 @@ export async function resolveRepo(cwd: string): Promise<Repo> {
   };
 }
 
+/** The work tree that owns the git directory a `.git` file names (a linked worktree's main
+ * checkout, a submodule's superproject), read without running git. */
+async function gitFileOwner(dotGit: string): Promise<string | undefined> {
+  const text = await readTextNoFollow(dotGit).catch(() => undefined);
+  const named = text?.match(/^gitdir:\s*(.+)$/m)?.[1]?.trim();
+  if (named === undefined) return undefined;
+  const gitDir = path.resolve(path.dirname(dotGit), named);
+  const at = gitDir.indexOf(`${path.sep}.git${path.sep}`);
+  return at === -1 ? undefined : gitDir.slice(0, at);
+}
+
 /**
  * Every directory at or above `dir` with a `.git` entry: the working trees around it, the one git
- * finds first and those that enclose it (a submodule's superproject).
+ * finds first and those that enclose it (a submodule's superproject), with the work tree that
+ * owns a `.git` file's git directory.
  */
 async function enclosingWorkTrees(dir: string): Promise<string[]> {
   const trees: string[] = [];
   for (let current = path.resolve(dir); ; current = path.dirname(current)) {
-    if ((await lstat(path.join(current, ".git")).catch(() => undefined)) !== undefined) {
+    const dotGit = path.join(current, ".git");
+    const entry = await lstat(dotGit).catch(() => undefined);
+    if (entry !== undefined) {
       trees.push(current);
+      const owner = entry.isFile() ? await gitFileOwner(dotGit) : undefined;
+      if (owner !== undefined) trees.push(owner);
     }
     if (path.dirname(current) === current) return trees;
   }
@@ -104,8 +121,11 @@ async function enclosingWorkTrees(dir: string): Promise<string[]> {
  * empty or relative entry, none with a `node_modules` segment, and none inside the working
  * directory, `repoDir`, UFO's home, or the repository there with its git directories. Before git
  * finds that repository, every working tree around each directory is found by its `.git` entry,
- * so no repository's own `git` runs. Returns the repository, or `undefined` when there is
- * none (an error when `requireRepo`).
+ * so no repository's own `git` runs. Your home directory and its ancestors are never one of
+ * those roots, even when one is a repository (dotfiles) or the working directory: tools installed
+ * under it (`~/.nvm`, `~/.cargo/bin`) stay, and a project's `.bin` there is caught by the
+ * `node_modules` rule. Returns the repository, or `undefined` when there is none (an error when
+ * `requireRepo`), and the entries it dropped.
  */
 export async function trustProcessPath(options: {
   readonly cwd: string;
@@ -113,26 +133,35 @@ export async function trustProcessPath(options: {
   readonly home?: string | undefined;
   readonly requireRepo?: boolean;
   readonly env?: NodeJS.ProcessEnv;
-}): Promise<Repo | undefined> {
+}): Promise<{ repo: Repo | undefined; dropped: string[] }> {
   const env = options.env ?? process.env;
+  const before = (env.PATH ?? "").split(path.delimiter);
+  const userHome = path.resolve(os.homedir());
+  const userHomes = [userHome, await realpath(userHome).catch(() => userHome)];
+  const roots = (dirs: readonly string[]) =>
+    dirs.filter((root) => !userHomes.some((home) => within(home, path.resolve(root))));
   const dirs = [options.cwd, ...(options.repoDir === undefined ? [] : [options.repoDir])];
   const reals = await Promise.all(dirs.map((dir) => realpath(dir).catch(() => dir)));
   const trees = await Promise.all([...dirs, ...reals].map(enclosingWorkTrees));
-  const untrusted = [
+  const untrusted = roots([
     ...dirs,
     ...reals,
     ...trees.flat(),
     path.resolve(options.home ?? ufoHome(env)),
-  ];
+  ]);
   env.PATH = processPath(env.PATH ?? "", untrusted);
   const repo = await resolveRepo(options.repoDir ?? options.cwd).catch((error: unknown) => {
     if (options.requireRepo === true) throw error;
     return undefined;
   });
   if (repo !== undefined) {
-    env.PATH = processPath(env.PATH, [...untrusted, repo.root, repo.gitDir, repo.commonDir]);
+    env.PATH = processPath(env.PATH, [
+      ...untrusted,
+      ...roots([repo.root, repo.gitDir, repo.commonDir, path.dirname(repo.commonDir)]),
+    ]);
   }
-  return repo;
+  const kept = new Set(env.PATH.split(path.delimiter));
+  return { repo, dropped: [...new Set(before.filter((entry) => !kept.has(entry)))] };
 }
 
 function within(dir: string, root: string): boolean {

@@ -65,6 +65,8 @@ export interface McpServeOptions {
    * argument sets any of them (safety.md R6).
    */
   readonly context?: Omit<AppContext, "cwd" | "controlLockWaitMs"> | undefined;
+  /** The environment whose PATH is filtered; `process.env` by default. */
+  readonly env?: NodeJS.ProcessEnv | undefined;
   readonly log: (line: string) => void;
 }
 
@@ -95,12 +97,18 @@ export function createServer(options: McpServeOptions & { readonly repo: Repo })
  * `legacy: 'serve'`), whatever version it asks for.
  */
 export async function serveMcp(options: McpServeOptions): Promise<void> {
-  const repo = await trustProcessPath({
+  const { repo, dropped } = await trustProcessPath({
     cwd: process.cwd(),
     repoDir: options.dir,
     home: options.context?.home,
     requireRepo: true,
+    ...(options.env === undefined ? {} : { env: options.env }),
   });
+  // So a host's log says why a program on its PATH is not found.
+  if (dropped.length > 0) {
+    const shown = dropped.map((entry) => (entry === "" ? '""' : entry)).join(path.delimiter);
+    options.log(`ufo mcp: left out of PATH, so nothing there runs: ${shown}`);
+  }
   if (repo === undefined) throw new Error(`${options.dir} is not inside a git working tree`);
   await refuseForeignGitDir(repo);
   const closed = new Promise<void>((resolve) => {

@@ -1,5 +1,6 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { once } from "node:events";
+import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { cancelRun, startRun } from "../../src/app/index.js";
 import {
@@ -27,16 +28,14 @@ interface Message {
 class RawServer {
   readonly child: ChildProcessWithoutNullStreams;
   readonly lines: string[] = [];
+  stderr = "";
   private buffered = "";
 
-  constructor(toy: Toy) {
+  constructor(toy: Toy, env: Record<string, string> = serverEnv(toy)) {
     this.child = spawn(
       process.execPath,
       [BUILT_CLI, "mcp", "--host", "cursor", "--repo", toy.repo],
-      {
-        cwd: toy.root,
-        env: serverEnv(toy),
-      },
+      { cwd: toy.root, env },
     );
     this.child.stdout.setEncoding("utf8");
     this.child.stdout.on("data", (chunk: string) => {
@@ -45,7 +44,10 @@ class RawServer {
       this.buffered = parts.pop() ?? "";
       this.lines.push(...parts);
     });
-    this.child.stderr.resume();
+    this.child.stderr.setEncoding("utf8");
+    this.child.stderr.on("data", (chunk: string) => {
+      this.stderr += chunk;
+    });
   }
 
   send(message: object | string): void {
@@ -174,6 +176,27 @@ describe("a cancelled get_job wait", { timeout: TIMEOUT_MS }, () => {
     } finally {
       await cancelRun(toy.context, { runId: run.runId });
     }
+  });
+});
+
+// Code review CR-N1: a host's log says which PATH entries the server left out, and so why a
+// program there is not found.
+describe("the PATH the server starts with", { timeout: TIMEOUT_MS }, () => {
+  it("is logged on stderr with the entries left out", async () => {
+    const toy = toyFor();
+    const bin = path.join(toy.repo, "node_modules", ".bin");
+    const env = {
+      ...serverEnv(toy),
+      PATH: ["relative/bin", bin, process.env.PATH ?? ""].join(path.delimiter),
+    };
+    const server = new RawServer(toy, env);
+    servers.push(server);
+    await server.initialize();
+    expect(await server.closeStdin()).toMatchObject({ code: 0 });
+    expect(server.stderr).toContain(
+      `ufo mcp: left out of PATH, so nothing there runs: relative/bin${path.delimiter}${bin}`,
+    );
+    expectOnlyProtocol(server);
   });
 });
 

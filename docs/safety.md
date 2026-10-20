@@ -121,8 +121,12 @@ collaborators.
   (the CLI and `ufo mcp`) filters its own `PATH`: it drops empty and relative entries, every
   entry with a `node_modules` segment (`npx` and npm scripts put the project's `.bin`
   directories, and its parents', first), and entries inside the working directory, every
-  working tree around it (found by their `.git` entries before git runs, a superproject's
-  included), the repository's git directories, and UFO's home. Commands and the worker inherit that `PATH`. A program planted in
+  working tree around it (found by their `.git` entries before git runs, a superproject's and a
+  linked worktree's main checkout included), the repository's git directories, and UFO's home.
+  Your home directory and its parents are never one of those: tools installed under it
+  (`~/.nvm`, `~/.cargo/bin`, `~/.local/bin`) stay even when you start UFO there or your home
+  is a repository, and a project's `.bin` there is caught by the `node_modules` rule. `ufo mcp`
+  logs the entries it left out on stderr. Commands and the worker inherit that `PATH`. A program planted in
   any other directory on your `PATH`, one outside the project, still runs; keep your `PATH` to
   directories only you can write.
 - **R4. Redaction is a list of patterns.** The redactor removes known secret formats, your

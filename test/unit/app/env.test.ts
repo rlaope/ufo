@@ -1,7 +1,7 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   captureEnv,
   captureGitEnv,
@@ -115,11 +115,67 @@ describe("trustProcessPath", () => {
           "/usr/bin",
         ].join(path.delimiter),
       };
-      const repo = await trustProcessPath({
+      const { repo, dropped } = await trustProcessPath({
         cwd: path.join(root, "project", "module", "sub"),
         env,
       });
       expect(repo).toBeUndefined();
+      expect(env.PATH).toBe("/usr/bin");
+      expect(dropped).toHaveLength(6);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // Code review CR-N1: started in your home, or under a home that is itself a repository
+  // (dotfiles), UFO keeps the tools installed there; a project's .bin is still dropped.
+  it("never drops your home directory or what is installed under it", async () => {
+    const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), "ufo-path-")));
+    const home = path.join(root, "home");
+    const homedir = vi.spyOn(os, "homedir").mockReturnValue(home);
+    try {
+      mkdirSync(path.join(home, ".git"), { recursive: true });
+      mkdirSync(path.join(home, "project"), { recursive: true });
+      const installed = [path.join(home, ".nvm", "bin"), path.join(home, ".cargo", "bin")];
+      const entries = [
+        ...installed,
+        path.join(home, "project", "tools"),
+        path.join(home, "project", "node_modules", ".bin"),
+        "/usr/bin",
+      ];
+      for (const cwd of [path.join(home, "project"), home]) {
+        const env: NodeJS.ProcessEnv = {
+          UFO_HOME: path.join(root, "ufo-home"),
+          PATH: entries.join(path.delimiter),
+        };
+        await trustProcessPath({ cwd, env });
+        const kept =
+          cwd === home
+            ? [...installed, path.join(home, "project", "tools"), "/usr/bin"]
+            : [...installed, "/usr/bin"];
+        expect(env.PATH, cwd).toBe(kept.join(path.delimiter));
+      }
+    } finally {
+      homedir.mockRestore();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // Code review CR-N1: a linked worktree's main checkout is the repository too.
+  it("drops the main checkout of a linked worktree, read from its .git file", async () => {
+    const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), "ufo-path-")));
+    try {
+      mkdirSync(path.join(root, "main", ".git", "worktrees", "wt"), { recursive: true });
+      mkdirSync(path.join(root, "wt"), { recursive: true });
+      writeFileSync(
+        path.join(root, "wt", ".git"),
+        `gitdir: ${path.join(root, "main", ".git", "worktrees", "wt")}\n`,
+      );
+      const env: NodeJS.ProcessEnv = {
+        UFO_HOME: path.join(root, "ufo-home"),
+        PATH: [path.join(root, "main", "tools"), "/usr/bin"].join(path.delimiter),
+      };
+      await trustProcessPath({ cwd: path.join(root, "wt"), env });
       expect(env.PATH).toBe("/usr/bin");
     } finally {
       rmSync(root, { recursive: true, force: true });

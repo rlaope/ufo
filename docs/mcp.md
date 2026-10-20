@@ -31,7 +31,8 @@ writes only protocol messages on stdout; diagnostics go to stderr. It exits when
 - **PATH.** Before it runs anything, the server drops from its own `PATH` every relative entry,
   every entry with a `node_modules` segment, and entries inside the working directory, the
   repository, its git directories, and UFO's home ([safety.md](safety.md) R3b), so git, ps, and
-  docker are never a project's own. Start it with an absolute node and the absolute path of the
+  docker are never a project's own; your home directory and what is installed under it stay. It
+  logs the entries it left out on stderr, so the host's MCP log says why a program is not found. Start it with an absolute node and the absolute path of the
   installed `dist/cli/index.js`, not `npx`.
 - **Fixed by the process.** The UFO home (`$UFO_HOME`, default `~/.ufo`), the card directories,
   the worker the server launches, the environment runs capture their command environment from,
