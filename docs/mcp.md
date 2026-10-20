@@ -136,7 +136,7 @@ with `Input validation error`, so the agent can correct the call (as the 2025-11
 asks). A call to a tool that does not exist is the JSON-RPC error `-32602`, an unknown method
 `-32601`. A line on stdin that is not JSON is dropped.
 
-A `notifications/cancelled` for a `get_job` call ends its wait within a second; the cancelled
+A `notifications/cancelled` for a `get_job` call ends its wait within about 1.5 s; the cancelled
 call gets no response.
 
 ## Host tool budgets
