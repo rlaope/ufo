@@ -47,7 +47,10 @@ must not run them itself, even where it has a shell; the messages that name them
 
 Every tool has a JSON Schema for its arguments; unknown arguments, `repo` among them, are
 refused. All four
-annotation hints are set on every tool. None reaches outside the machine (`openWorldHint: false`).
+annotation hints are set on every tool. The four that run the approved workload (`profile_target`,
+`start_run`, `submit_change`, `finish_run`) are `openWorldHint: true`: the workload is arbitrary
+code and reaches whatever it reaches. `finish_run`, `resume_run`, and `cancel_run` are
+`destructiveHint: true`.
 
 | Tool | Effect | Arguments | Result |
 |---|---|---|---|
@@ -59,7 +62,7 @@ annotation hints are set on every tool. None reaches outside the machine (`openW
 | `submit_change` | queues a job | `run_id`, `card_id`, `diff`, `hypothesis`, `evidence_refs`, `base_sha` | `{ runId, changeId, jobId }`. The job's result is UFO's decision: keep (committed to the run branch), drop, or inconclusive, with its reason. |
 | `get_job` | read-only | `run_id`, `job_id`, `wait_s` | The job: status, progress, and its result or error once done. It waits up to `wait_s` seconds (0 to 25, default 0; more waits 25) for the job to finish. A change job's `input` carries `diffChars` in place of the diff. |
 | `get_run` | read-only | `run_id` | Status, arm paths, SHAs, jobs, the baseline, decisions, the budget, and `usable`: `false` with `unusableReason` once the baseline was refused for noise, when the run can only be finished. |
-| `finish_run` | queues a job | `run_id`, `model_id` | `{ runId, jobId }`. The job runs the final check, writes the report and the evidence bundle, removes the arms, and releases the machine lock. From then on the run takes no more work. |
+| `finish_run` | queues a job, destructive | `run_id`, `model_id` | `{ runId, jobId }`. The job runs the final check, writes the report and the evidence bundle, removes the arms, and releases the machine lock. From then on the run takes no more work. |
 | `resume_run` | destructive | `run_id` | Stops what the run left running, requeues interrupted jobs, resets both arms, reconciles the ledger with the run branch, and starts a worker. |
 | `cancel_run` | destructive | `run_id` | Stops the worker and everything it started, cancels unfinished jobs, and removes the arms. The run branch and completed observations stay. |
 

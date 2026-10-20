@@ -49,6 +49,9 @@ const QUEUES_WORK: ToolAnnotations = {
   openWorldHint: false,
 };
 
+/** Runs the approved workload, which is arbitrary code and may reach whatever it reaches. */
+const RUNS_WORKLOAD: ToolAnnotations = { ...QUEUES_WORK, openWorldHint: true };
+
 const runId = z
   .string()
   .max(64)
@@ -115,7 +118,7 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
       description:
         "Queues one run of the workload in arm A at its commit, with the run's command environment, timing each step (setup, start, sample, teardown) and reading the workload's JSON line; kept as an artifact in the run state. Decides nothing and is no technique, but runs only within the run's wall-clock budget. Needs a running run. Returns a job id at once: poll get_job for the profile.",
       inputSchema: z.strictObject({ run_id: runId }),
-      annotations: QUEUES_WORK,
+      annotations: RUNS_WORKLOAD,
     },
     (args) => respond(() => profileTarget(deps.context, scoped(args))),
   );
@@ -127,7 +130,7 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
       description:
         "Starts a run from the approved ufo.yaml: creates the branch ufo/run-<id> and two arms (UFO's own clones of the repository; read code in arm A, whose path is returned absolute), and queues the baseline (oracle snapshot, five samples, noise floor). Refuses a ufo.yaml that is not approved or changed since (policy:unapproved_config, policy:config_changed): ask the user to run `ufo approve` in their own terminal, and never run it yourself. Returns at once: poll get_job with baselineJobId.",
       inputSchema: z.strictObject({ model_id: modelId }),
-      annotations: QUEUES_WORK,
+      annotations: RUNS_WORKLOAD,
     },
     (args) =>
       respond(() =>
@@ -168,7 +171,7 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
           .optional()
           .describe("Arm A's commit the diff was written against. Default: A's current HEAD."),
       }),
-      annotations: QUEUES_WORK,
+      annotations: RUNS_WORKLOAD,
     },
     (args) =>
       respond(() =>
@@ -231,7 +234,7 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
       description:
         "Queues the final check (the base commit against the run branch HEAD, five fresh pairs), the report, and the evidence bundle; from now on the run takes no more work. Returns a job id at once: poll get_job, then get_run has the headline. The run branch stays for review.",
       inputSchema: z.strictObject({ run_id: runId, model_id: modelId }),
-      annotations: { ...QUEUES_WORK, idempotentHint: true },
+      annotations: { ...RUNS_WORKLOAD, destructiveHint: true, idempotentHint: true },
     },
     (args) =>
       respond(() =>

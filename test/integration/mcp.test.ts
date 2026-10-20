@@ -161,10 +161,18 @@ describe("the handshake and the catalog", { timeout: TIMEOUT_MS }, () => {
         expect(typeof hints[hint as keyof typeof hints], `${tool.name} ${hint}`).toBe("boolean");
       }
       expect(hints.readOnlyHint, tool.name).toBe(READ_ONLY.includes(tool.name));
-      expect(hints.openWorldHint, tool.name).toBe(false);
     }
-    const destructive = first.filter((tool) => tool.annotations?.destructiveHint === true);
-    expect(destructive.map((tool) => tool.name)).toEqual(["resume_run", "cancel_run"]);
+    // Code review CR-N4: the tools that run the approved workload, arbitrary code, are open
+    // world; finishing removes the arms.
+    const flagged = (hint: "destructiveHint" | "openWorldHint") =>
+      first.filter((tool) => tool.annotations?.[hint] === true).map((tool) => tool.name);
+    expect(flagged("openWorldHint")).toEqual([
+      "profile_target",
+      "start_run",
+      "submit_change",
+      "finish_run",
+    ]);
+    expect(flagged("destructiveHint")).toEqual(["finish_run", "resume_run", "cancel_run"]);
   });
 });
 
