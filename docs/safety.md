@@ -191,7 +191,9 @@ until it is, `ufo setup` refuses to install from the registry and takes a tarbal
   `core.worktree`). A back-link inside the work tree proves nothing, since whatever pointed
   `.git` elsewhere could write it too. The server then refuses every call once
   the repository's git directory, common directory, or id differs from the one it pinned, or
-  its common directory is another one at the same path (a repository made again there), and
+  its common directory is another one at the same path (a repository made again there: told
+  by device, inode, and birth time, or by device and inode alone on a file system that keeps no
+  birth time, which may give the new directory the old inode), and
   every call's workflow acts on the repository it pinned.
 
 - **R8. Drivers from your own git config.** UFO refuses filter, diff, and merge drivers defined

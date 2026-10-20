@@ -1,3 +1,4 @@
+import type { Stats } from "node:fs";
 import { lstat, readdir, realpath, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -76,8 +77,8 @@ export interface Repo {
   readonly commonDir: string;
   readonly repoId: string;
   /**
-   * The common directory itself (device, inode, birth time), which a repository re-created at
-   * the same path does not keep, though its paths and id are the same (code review R4).
+   * The common directory itself (`commonDirIdOf`), which a repository re-created at the same
+   * path does not keep, though its paths and id are the same (code review R4).
    */
   readonly commonDirId: string;
 }
@@ -96,14 +97,29 @@ export async function resolveRepo(cwd: string): Promise<Repo> {
   await refuseHomeDirectory(root, "the repository");
   const gitDir = await runGit(["rev-parse", "--absolute-git-dir"], root);
   const commonDir = await realpath(await resolveGitCommonDir(root));
-  const common = await stat(commonDir);
   return {
     root,
     gitDir: await realpath(gitDir.stdout.trim()),
     commonDir,
     repoId: await repoId(root),
-    commonDirId: `${common.dev}:${common.ino}:${common.birthtimeMs}`,
+    commonDirId: commonDirIdOf(await stat(commonDir)),
   };
+}
+
+/**
+ * Names a common directory itself (code review R4, W1): its device and inode, with its birth
+ * time where the file system keeps one. Where it keeps none, Node reports the change time
+ * (which every write to `.git` moves) or 0 instead, so a birth time equal to the change time
+ * counts only on macOS, whose file systems keep one; elsewhere device and inode stand alone,
+ * and a file system may give a directory made again the same inode. Exported for the tests.
+ */
+export function commonDirIdOf(
+  common: Pick<Stats, "dev" | "ino" | "birthtimeMs" | "ctimeMs">,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  const born =
+    common.birthtimeMs > 0 && (platform === "darwin" || common.birthtimeMs !== common.ctimeMs);
+  return born ? `${common.dev}:${common.ino}:${common.birthtimeMs}` : `${common.dev}:${common.ino}`;
 }
 
 /** The repository of an app call: the one its caller pinned, else the one at `cwd`. */
