@@ -148,6 +148,16 @@ describe("redact", () => {
     );
   });
 
+  // Code review R3: an API key that is a UUID stays redacted in a URL, as anywhere else.
+  it("redacts a UUID API key inside a URL", () => {
+    const key = "4f6d2a1b-9c8e-4b7a-8d3f-2e1c0b9a8d7e";
+    const env = { HEROKU_API_KEY: key };
+    expect(redact(`https://api.heroku.com/apps/${key}/config`, { ...options, env })).toBe(
+      "https://api.heroku.com/apps/<redacted:secret>/config",
+    );
+    expect(redact(`/tmp/${key}/x`, { ...options, env })).toBe("/tmp/<redacted:secret>/x");
+  });
+
   it("is deterministic and idempotent", () => {
     const input = `postgres://u:p@h/db Authorization: x ${fake("ghp_", "A1b2", 9)} /home/alice/x`;
     expect(r(input)).toBe(r(input));
