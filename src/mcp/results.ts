@@ -119,13 +119,14 @@ export function success(value: object): CallToolResult {
 }
 
 /**
- * A failed workflow as a tool result the model can act on: `code`, `message`, whether trying
- * again later can succeed (`retryable`), and what to do next (`hint`).
+ * A failed workflow as a tool result the model can act on: `code`, `message` (redacted by
+ * `describeFailure`), whether trying again later can succeed (`retryable`), and what to do next
+ * (`hint`, static).
  */
 export function failure(error: unknown): CallToolResult {
   const { code, message, retryable, hint } = describeFailure(error);
   return result(
-    withinBudget(redact({ code, message, retryable, ...(hint === undefined ? {} : { hint }) })),
+    withinBudget({ code, message, retryable, ...(hint === undefined ? {} : { hint }) }),
     true,
   );
 }

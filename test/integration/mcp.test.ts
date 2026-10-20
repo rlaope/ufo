@@ -515,6 +515,18 @@ describe("failures", { timeout: TIMEOUT_MS }, () => {
 
   it("answers malformed arguments with a tool error and an unknown tool with -32602", async () => {
     const client = await connect(toyFor());
+    // Verifier V3: no tool takes a repository, whatever else the call gets right.
+    const valid: Record<string, Record<string, unknown>> = {
+      submit_change: { card_id: "toy.fast-path", diff: "d", hypothesis: "h" },
+      get_job: { job_id: "job-000001" },
+    };
+    for (const name of TOOLS) {
+      const result = await client.callTool({ name, arguments: { ...valid[name], repo: "/" } });
+      expect(result.isError, name).toBe(true);
+      const text = (result.content as { text: string }[])[0]?.text ?? "";
+      expect(text, name).toContain("Input validation error");
+      expect(text, name).toContain("repo");
+    }
     for (const args of [
       { job_id: 7 },
       { job_id: "job-000001", extra: true },
