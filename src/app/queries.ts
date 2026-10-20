@@ -20,12 +20,12 @@ import {
   waitForJob,
 } from "../core/jobs/index.js";
 import { isWorkerAlive } from "../worker/index.js";
-import { refuseUnstarted } from "./active.js";
+import { refuseOtherWorkTree, refuseUnstarted } from "./active.js";
 import { type AppContext, homeFor, listRunIds, locateRun, resolveRepo } from "./context.js";
 import { AppError } from "./errors.js";
 import { budgetStatus, latestBaseline } from "./events.js";
 import { type DecisionSummary, type RunReport, summarizeDecisions } from "./jobs/index.js";
-import { openRun, REPORT_FILE, toJson } from "./state.js";
+import { openRun, REPORT_FILE, readAppState, toJson } from "./state.js";
 
 /** How often a wait checks that a worker is still there to finish the job. */
 const WORKER_CHECK_S = 1;
@@ -108,6 +108,7 @@ export async function getJob(context: AppContext, options: GetJobOptions): Promi
 
 async function pollJob(context: AppContext, options: GetJobOptions): Promise<JobRecord> {
   const located = await locateRun(context, options.runId);
+  refuseOtherWorkTree(located.runId, await readAppState(located.runDir), located.repo);
   const deadline = Date.now() + clampWaitS(options.waitS ?? 0) * 1000;
   let checks = 0;
   try {
@@ -199,6 +200,7 @@ export async function getRun(
     readLedger(runDir),
     listJobs(runDir),
   ]);
+  refuseOtherWorkTree(located.runId, open.state, located.repo);
   const budget = budgetStatus(events, open.config.objective.budget, run.createdAt);
   const baseline = latestBaseline(events);
   const refusal = baseline?.refusal;
@@ -311,6 +313,9 @@ export async function report(
   const text = await readTextNoFollow(path.join(located.runDir, REPORT_FILE)).catch(
     () => undefined,
   );
-  if (text !== undefined) return { ...redactView(JSON.parse(text) as RunReport), finished: true };
+  if (text !== undefined) {
+    refuseOtherWorkTree(located.runId, await readAppState(located.runDir), located.repo);
+    return { ...redactView(JSON.parse(text) as RunReport), finished: true };
+  }
   return { ...(await getRun(context, options)), finished: false };
 }

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { approvalSubject, loadCards } from "../../src/app/cards.js";
@@ -6,11 +6,17 @@ import {
   APP_STATE_FILE,
   cancelRun,
   describeFailure,
+  finishRun,
+  getJob,
   getRun,
   loadConfig,
+  profileTarget,
+  report,
+  resumeRun,
   startRun,
   submitChange,
 } from "../../src/app/index.js";
+import { readRun } from "../../src/core/jobs/index.js";
 import { recordApproval } from "../../src/core/policy/index.js";
 import {
   approveToy,
@@ -53,6 +59,46 @@ async function refusal(promise: Promise<unknown>) {
 }
 
 describe("trusted run state", { timeout: TIMEOUT_MS }, () => {
+  // Security N1: runs are found by the repository id, which comes from the git directory `.git`
+  // names. Another work tree whose `.git` names this repository's git directory gets the same id,
+  // and an agent that can edit `.git` could point its own work tree there.
+  it("acts on a run only from the work tree that started it (N1)", async () => {
+    await approveToy(toy, { allowLossy: true });
+    const run = await startRun(toy.context);
+    expect((await waitDone(toy, run.runId, run.baselineJobId)).status).toBe("succeeded");
+    const imposter = path.join(toy.root, "imposter");
+    mkdirSync(imposter);
+    writeFileSync(path.join(imposter, ".git"), `gitdir: ${path.join(toy.repo, ".git")}\n`);
+    const context = { ...toy.context, cwd: imposter };
+    const scoped = { runId: run.runId };
+    const change = {
+      ...scoped,
+      cardId: "toy.fast-path",
+      diff: diffOf(toy, "server.mjs", (s) => s.replace("      await sleep(20);\n", "")),
+      hypothesis: "Removing the sleep cuts latency.",
+    };
+    for (const [name, call] of [
+      ["getRun", () => getRun(context, scoped)],
+      ["getJob", () => getJob(context, { ...scoped, jobId: run.baselineJobId })],
+      ["report", () => report(context, scoped)],
+      ["submitChange", () => submitChange(context, change)],
+      ["profileTarget", () => profileTarget(context, scoped)],
+      ["finishRun", () => finishRun(context, scoped)],
+      ["resumeRun", () => resumeRun(context, scoped)],
+      ["cancelRun", () => cancelRun(context, scoped)],
+    ] as const) {
+      const failure = await refusal(call());
+      expect(failure, name).toMatchObject({ exitCode: 1, code: "unsafe_state" });
+      expect(failure.message, name).toContain("only from the work tree that started it");
+    }
+    expect((await readRun(toy.runDir(run.runId))).status).toBe("running");
+    // A finished run's report too.
+    const finish = await finishRun(toy.context, scoped);
+    expect((await waitDone(toy, run.runId, finish.jobId)).status).toBe("succeeded");
+    expect(await refusal(report(context, scoped))).toMatchObject({ code: "unsafe_state" });
+    expect((await report(toy.context, scoped)).finished).toBe(true);
+  });
+
   it("refuses a UFO home inside the repository or its git directory (F15)", async () => {
     for (const home of [path.join(toy.repo, ".ufo"), path.join(toy.repo, ".git", "ufo")]) {
       const failure = await refusal(startRun({ ...toy.context, home }));

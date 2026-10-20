@@ -7,10 +7,11 @@ import {
   readRun,
   TERMINAL_JOB_STATUSES,
 } from "../core/jobs/index.js";
-import { type AppContext, locateRun } from "./context.js";
+import { TrustError } from "../core/paths.js";
+import { type AppContext, locateRun, type Repo } from "./context.js";
 import { AppError } from "./errors.js";
 import { JOB_KINDS } from "./jobs/index.js";
-import { type OpenRun, openRun } from "./state.js";
+import { type AppState, type OpenRun, openRun } from "./state.js";
 
 export function rethrowAsUsage(error: unknown): never {
   if (error instanceof ZodError) {
@@ -53,6 +54,23 @@ export async function refuseUnstarted(runId: string, run: RunRecord): Promise<vo
   throw new AppError("run_starting", `run ${runId} is still starting`);
 }
 
+/**
+ * Refuses a run that another work tree started (security N1). Runs are found by the repository
+ * id, which comes from the git directory that `.git` names; a work tree whose `.git` was pointed
+ * at another repository's would otherwise reach that repository's runs.
+ */
+export function refuseOtherWorkTree(
+  runId: string,
+  state: Pick<AppState, "repoRoot">,
+  repo: Pick<Repo, "root">,
+): void {
+  if (state.repoRoot === repo.root) return;
+  throw new TrustError(
+    "unsafe_state",
+    `run ${runId} was started in the work tree at ${state.repoRoot}, not ${repo.root}; UFO acts on a run only from the work tree that started it`,
+  );
+}
+
 /** The run, which must still be `running`, opened from trusted inputs. */
 export async function activeRun(context: AppContext, runId?: string): Promise<ActiveRun> {
   const located = await locateRun(context, runId);
@@ -62,6 +80,7 @@ export async function activeRun(context: AppContext, runId?: string): Promise<Ac
   }
   await refuseUnstarted(located.runId, run);
   const open = await openRun(located.home, located.runDir);
+  refuseOtherWorkTree(located.runId, open.state, located.repo);
   return { runId: located.runId, runDir: located.runDir, home: located.home, open };
 }
 
