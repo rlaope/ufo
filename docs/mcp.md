@@ -133,6 +133,16 @@ Each host gives a tool call a limited time. No UFO tool waits for a job: `get_jo
 `start_run` returns once the arms are cloned and the worker is launched, which takes seconds,
 longer for a very large repository.
 
+`cancel_run` and `resume_run` usually take a few seconds, but their worst case is longer than
+Codex's and Cursor's 60 s: up to 20 s for the control lock, up to 10 s to stop the worker and
+the process groups it started (3 s after SIGTERM and 2 s after SIGKILL, for each), each Docker
+command up to 30 s when Docker hangs (`docker version`, one `docker ps` per label, `docker rm`),
+and for `cancel_run` the removal of the arms, which takes as long as their build outputs. When
+a host gives up on such a call, the work goes on in the server and completes as long as the
+server keeps running; call `get_run` to see the outcome (a cancelled run is `cancelled`, a
+resumed one `running` with a worker). A cancel cut short by the server's own exit leaves
+`cancel_pending`; `cancel_run` again ends it.
+
 | Host | Budget for one tool call | How to raise it |
 |---|---|---|
 | Claude Code | About 28 hours (`MCP_TOOL_TIMEOUT`, in milliseconds); calls over 2 minutes move to the background. Results up to 25 000 tokens (`MAX_MCP_OUTPUT_TOKENS`). | Set `MCP_TOOL_TIMEOUT` or `MAX_MCP_OUTPUT_TOKENS` in the environment Claude Code starts in; `MCP_TIMEOUT` bounds the server's startup. |
