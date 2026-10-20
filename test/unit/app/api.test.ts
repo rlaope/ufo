@@ -12,10 +12,13 @@ const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const API = "src/app/api.ts";
 const ADAPTERS = ["src/cli", "src/mcp"];
 /**
- * What an adapter may import besides api.ts and its own directory. `ufo setup`, `uninstall`, and
- * `update` write host config files and run no app workflow; the MCP server never calls them.
+ * What an adapter may import besides api.ts and its own directory: the CLI starts the MCP server
+ * (`ufo mcp`), and `ufo setup`, `uninstall`, and `update` write host config files and run no app
+ * workflow. The MCP server imports neither.
  */
-const ALSO_ALLOWED: Readonly<Record<string, readonly string[]>> = { "src/cli": ["src/setup/"] };
+const ALSO_ALLOWED: Readonly<Record<string, readonly string[]>> = {
+  "src/cli": ["src/mcp/", "src/setup/"],
+};
 
 function sourcesUnder(dir: string): string[] {
   if (!existsSync(path.join(ROOT, dir))) return [];

@@ -19,6 +19,7 @@ import {
   status,
   WORKER_COMMAND,
 } from "../app/api.js";
+import { defaultRepository, serveMcp } from "../mcp/index.js";
 import {
   formatApprove,
   formatCancel,
@@ -86,6 +87,9 @@ Commands:
   extend-budget       Raise a run's technique cap or wall-clock budget; needs a terminal
                         --techniques <n>  techniques to add (default: the configured cap)
                         --minutes <n>     minutes to add (default: 0)
+  mcp                 Serve UFO's tools to an agent over MCP on stdin and stdout
+                        --repo <path>     the default repository (default: $CLAUDE_PROJECT_DIR,
+                                          else the working directory)
 
 Options:
   --run <id>     The run for status, resume, cancel, report, extend-budget (default: latest)
@@ -122,6 +126,7 @@ const COMMANDS = {
     techniques: { type: "string" },
     minutes: { type: "string" },
   },
+  mcp: { repo: { type: "string" } },
 } as const;
 type Command = keyof typeof COMMANDS;
 
@@ -140,7 +145,7 @@ function integerFlag(value: string | undefined, name: string): number | undefine
 type Values = Record<string, string | boolean | undefined>;
 
 async function execute(
-  command: Command,
+  command: Exclude<Command, "mcp">,
   values: Values,
   context: AppContext,
   io: CliIo,
@@ -248,6 +253,19 @@ export async function main(argv: readonly string[], io: CliIo): Promise<number> 
   }
   if (values.help === true) {
     io.stdout(USAGE);
+    return EXIT_OK;
+  }
+  if (first === "mcp") {
+    // Until stdin closes. stdout is the protocol's; nothing else may print there.
+    await serveMcp({
+      repo: defaultRepository({
+        repo: typeof values.repo === "string" ? values.repo : undefined,
+        env: process.env,
+        cwd: io.cwd ?? process.cwd(),
+      }),
+      context: io.context,
+      log: (line) => io.stderr(`${line}\n`),
+    });
     return EXIT_OK;
   }
   const json = values.json === true;

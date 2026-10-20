@@ -1,4 +1,4 @@
-import { execFileSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -34,13 +34,8 @@ const pkg = JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8"));
 
 let toy: Toy;
 
+// dist/ is built by test/global-setup.ts, so the test runs what the package ships.
 beforeAll(() => {
-  // `npm run build`, so the test runs what the package ships.
-  execFileSync(
-    process.execPath,
-    [path.join(ROOT, "node_modules", "typescript", "bin", "tsc"), "-p", "tsconfig.build.json"],
-    { cwd: ROOT, stdio: "pipe" },
-  );
   toy = makeToy();
 }, TIMEOUT_MS);
 

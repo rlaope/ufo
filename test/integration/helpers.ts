@@ -26,6 +26,8 @@ export const FIXTURE_REPO = fileURLToPath(new URL("../fixtures/toy-http/repo", i
 export const FIXTURE_CARDS = fileURLToPath(new URL("../fixtures/toy-http/cards", import.meta.url));
 export const WORKER_ENTRY = fileURLToPath(new URL("./support/worker-entry.mjs", import.meta.url));
 export const CLI_ENTRY = fileURLToPath(new URL("./support/cli-entry.mjs", import.meta.url));
+/** The built CLI, as the package ships it; test/global-setup.ts builds it once per test run. */
+export const BUILT_CLI = fileURLToPath(new URL("../../dist/cli/index.js", import.meta.url));
 
 /** Integration tests spawn real workers and run real workloads. */
 export const TIMEOUT_MS = 90_000;
@@ -164,6 +166,32 @@ export function lightWorkload(setup = "node --check server.mjs") {
     ].join("\n");
     return `${yaml.slice(0, start)}${workload}${yaml.slice(end)}`;
   };
+}
+
+/**
+ * A toy for the built `ufo mcp`, which loads cards only as ufo.yaml declares them: the toy's
+ * cards are committed in the repository (`cardDirs: [ufo-cards]`), and its context names no
+ * other card directory, so an approval made with it is the one the server checks. The machine
+ * checks are loosened, since the server's worker measures on this real machine.
+ */
+export function mcpToy(options: { readonly setup?: string } = {}): Toy {
+  const toy = makeToy({
+    config: (yaml) =>
+      `${lightWorkload(options.setup)(yaml)}cardDirs:\n  - ufo-cards\nhygiene:\n  requireAcPower: false\n  maxLoadFactor: 64\n`,
+  });
+  cpSync(FIXTURE_CARDS, path.join(toy.repo, "ufo-cards"), { recursive: true });
+  git(toy.repo, "add", "--all");
+  git(toy.repo, "commit", "--quiet", "--message", "toy cards");
+  return { ...toy, context: { ...toy.context, cardDirs: [] } };
+}
+
+/** The environment `ufo mcp` runs in for `toy`: this process's, with the toy's UFO home. */
+export function serverEnv(toy: Toy): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [name, value] of Object.entries({ ...process.env, UFO_HOME: toy.home })) {
+    if (value !== undefined && name !== "CLAUDE_PROJECT_DIR") env[name] = value;
+  }
+  return env;
 }
 
 /**

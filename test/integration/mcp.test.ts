@@ -1,0 +1,306 @@
+import { rmSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { Client, type ClientOptions, ProtocolError } from "@modelcontextprotocol/client";
+import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { afterEach, describe, expect, it } from "vitest";
+import { CONTROL_LOCK_FILE } from "../../src/core/jobs/index.js";
+import {
+  approveToy,
+  BUILT_CLI,
+  diffOf,
+  mcpToy,
+  serverEnv,
+  TIMEOUT_MS,
+  type Toy,
+} from "./helpers.js";
+
+// M2 B5: the built `ufo mcp` driven over real stdio by the MCP SDK's client, the way hosts drive
+// it: the handshake, the tool catalog, every tool on the toy fixture, a job longer than one call
+// polled under a short client timeout (AC 8, shortened), and failures the model can act on.
+
+const TOOLS = [
+  "inspect_target",
+  "check_capabilities",
+  "list_techniques",
+  "profile_target",
+  "start_run",
+  "submit_change",
+  "get_job",
+  "get_run",
+  "finish_run",
+  "resume_run",
+  "cancel_run",
+];
+const READ_ONLY = ["inspect_target", "check_capabilities", "list_techniques", "get_job", "get_run"];
+
+/** Every call of the run test must come back within this: far below a host's tool budget. */
+const SHORT_TIMEOUT_MS = 4000;
+
+const toys: Toy[] = [];
+const clients: Client[] = [];
+
+afterEach(async () => {
+  for (const client of clients.splice(0)) await client.close().catch(() => undefined);
+  for (const toy of toys.splice(0)) await toy.cleanup();
+});
+
+function toyFor(options: { readonly setup?: string } = {}): Toy {
+  const toy = mcpToy(options);
+  toys.push(toy);
+  return toy;
+}
+
+async function connect(toy: Toy, options: ClientOptions = {}): Promise<Client> {
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [BUILT_CLI, "mcp", "--repo", toy.repo],
+    env: serverEnv(toy),
+    cwd: toy.root,
+    stderr: "ignore",
+  });
+  const client = new Client({ name: "ufo-conformance", version: "1.0.0" }, options);
+  clients.push(client);
+  await client.connect(transport);
+  return client;
+}
+
+interface Called {
+  isError: boolean;
+  /** structuredContent, checked to be the same JSON as the one text block. */
+  body: Record<string, unknown>;
+  ms: number;
+}
+
+async function call(
+  client: Client,
+  name: string,
+  args: Record<string, unknown> = {},
+  timeout = 60_000,
+): Promise<Called> {
+  const started = Date.now();
+  const result = await client.callTool({ name, arguments: args }, { timeout });
+  const ms = Date.now() - started;
+  const [text, ...more] = result.content as { type: string; text: string }[];
+  expect(more).toEqual([]);
+  expect(text?.type).toBe("text");
+  expect(JSON.parse(text?.text ?? "")).toEqual(result.structuredContent);
+  return {
+    isError: result.isError === true,
+    body: (result.structuredContent ?? {}) as Record<string, unknown>,
+    ms,
+  };
+}
+
+async function ok(
+  client: Client,
+  name: string,
+  args: Record<string, unknown> = {},
+  timeout?: number,
+) {
+  const result = await call(client, name, args, timeout);
+  expect(result.isError, JSON.stringify(result.body)).toBe(false);
+  return result;
+}
+
+/** get_job until the job is terminal, each call under the short timeout; counts the calls. */
+async function poll(client: Client, runId: string, jobId: string) {
+  for (let calls = 1; ; calls++) {
+    const { body, ms } = await ok(
+      client,
+      "get_job",
+      { run_id: runId, job_id: jobId, wait_s: 1 },
+      SHORT_TIMEOUT_MS,
+    );
+    expect(ms).toBeLessThan(SHORT_TIMEOUT_MS);
+    if (["succeeded", "failed", "cancelled"].includes(body.status as string)) {
+      expect(body.status, JSON.stringify(body.error)).toBe("succeeded");
+      return { job: body, calls };
+    }
+    if (calls > 200) throw new Error(`job ${jobId} is still ${String(body.status)}`);
+  }
+}
+
+describe("the handshake and the catalog", { timeout: TIMEOUT_MS }, () => {
+  it("serves a 2025-era client and one that negotiates its version", async () => {
+    const toy = toyFor();
+    const legacy = await connect(toy);
+    expect(legacy.getNegotiatedProtocolVersion()).toBe("2025-11-25");
+    expect(legacy.getServerVersion()).toMatchObject({ name: "ufo" });
+    const negotiating = await connect(toy, { versionNegotiation: { mode: "auto" } });
+    expect(negotiating.getNegotiatedProtocolVersion()).toBe("2026-07-28");
+    expect((await negotiating.listTools()).tools.map((tool) => tool.name)).toEqual(TOOLS);
+    const { body } = await ok(negotiating, "inspect_target");
+    expect(body).toMatchObject({ config: { present: true, valid: true } });
+  });
+
+  it("lists the same tools every time, each with all four annotation hints", async () => {
+    const client = await connect(toyFor());
+    const first = (await client.listTools()).tools;
+    expect((await client.listTools()).tools).toEqual(first);
+    expect(first.map((tool) => tool.name)).toEqual(TOOLS);
+    for (const tool of first) {
+      expect(tool.name).toMatch(/^[A-Za-z0-9_]+$/);
+      expect(tool.description?.length ?? 0, tool.name).toBeGreaterThan(40);
+      expect(tool.inputSchema).toMatchObject({ type: "object", additionalProperties: false });
+      const hints = tool.annotations ?? {};
+      for (const hint of ["readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint"]) {
+        expect(typeof hints[hint as keyof typeof hints], `${tool.name} ${hint}`).toBe("boolean");
+      }
+      expect(hints.readOnlyHint, tool.name).toBe(READ_ONLY.includes(tool.name));
+      expect(hints.openWorldHint, tool.name).toBe(false);
+    }
+    const destructive = first.filter((tool) => tool.annotations?.destructiveHint === true);
+    expect(destructive.map((tool) => tool.name)).toEqual(["resume_run", "cancel_run"]);
+  });
+});
+
+describe("a run through the tools", { timeout: TIMEOUT_MS }, () => {
+  it("drives a whole run, a job longer than one call polled under a short client timeout", async () => {
+    // The setup sleeps, so the baseline outlasts several get_job calls.
+    const toy = toyFor({ setup: "sleep 2" });
+    await approveToy(toy);
+    const client = await connect(toy);
+
+    const inspected = (await ok(client, "inspect_target", {}, SHORT_TIMEOUT_MS)).body;
+    expect(inspected).toMatchObject({
+      stack: ["package.json"],
+      approval: { approved: true },
+      cards: expect.arrayContaining([{ id: "toy.fast-path", known: true }]),
+    });
+    const capabilities = (await ok(client, "check_capabilities", {}, SHORT_TIMEOUT_MS)).body;
+    expect(capabilities).toMatchObject({
+      git: { found: true },
+      node: { version: process.version },
+    });
+    expect(capabilities.programs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ program: "sleep", found: true }),
+        expect.objectContaining({ program: "node", found: true }),
+      ]),
+    );
+    const techniques = (await ok(client, "list_techniques", { domain: "toy" }, SHORT_TIMEOUT_MS))
+      .body.cards as { id: string; enabled: boolean }[];
+    expect(techniques).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "toy.fast-path", enabled: true })]),
+    );
+
+    const started = (await ok(client, "start_run", { model_id: "test-model" }, SHORT_TIMEOUT_MS))
+      .body as { runId: string; baselineJobId: string; arms: { a: string; b: string } };
+    expect(started.arms.a).toBe(path.join(toy.home, "arms", toy.repoId, started.runId, "a"));
+    const baseline = await poll(client, started.runId, started.baselineJobId);
+    expect(baseline.calls).toBeGreaterThan(1);
+
+    const profiled = (await ok(client, "profile_target", { run_id: started.runId })).body;
+    const profile = (await poll(client, started.runId, profiled.jobId as string)).job.result as {
+      phases: { phase: string; ms: number }[];
+      sample: unknown;
+    };
+    expect(profile.phases.map((p) => p.phase)).toEqual(["setup", "sample", "teardown"]);
+    expect(profile.phases[0]?.ms).toBeGreaterThanOrEqual(1500);
+    expect(profile.sample).toEqual({ valid: true, line: { latency_ms: 1, error_rate: 0 } });
+
+    const diff = diffOf(toy, "server.mjs", (s) => s.replace("      await sleep(20);\n", ""));
+    const submitted = (
+      await ok(client, "submit_change", {
+        run_id: started.runId,
+        card_id: "toy.fast-path",
+        diff,
+        hypothesis: "The handler sleeps 20 ms per request; removing it cuts latency.",
+      })
+    ).body;
+    const decided = await poll(client, started.runId, submitted.jobId as string);
+    expect(decided.job.input).toMatchObject({ cardId: "toy.fast-path", diffChars: diff.length });
+    expect(decided.job.input).not.toHaveProperty("diff");
+    expect(decided.job.result).toMatchObject({ decision: { outcome: expect.any(String) } });
+
+    const view = (await ok(client, "get_run", { run_id: started.runId })).body;
+    expect(view).toMatchObject({ status: "running", usable: true, arms: started.arms });
+    expect(view.decisions).toHaveLength(1);
+
+    const finishing = (await ok(client, "finish_run", { run_id: started.runId })).body;
+    await poll(client, started.runId, finishing.jobId as string);
+    expect((await ok(client, "get_run", { run_id: started.runId })).body).toMatchObject({
+      status: "finished",
+    });
+  });
+
+  it("resumes a run and cancels it", async () => {
+    const toy = toyFor();
+    await approveToy(toy);
+    const client = await connect(toy);
+    const started = (await ok(client, "start_run")).body as {
+      runId: string;
+      baselineJobId: string;
+      arms: unknown;
+    };
+    await poll(client, started.runId, started.baselineJobId);
+    const resumed = (await ok(client, "resume_run", { run_id: started.runId })).body;
+    expect(resumed).toMatchObject({ runId: started.runId, requeued: [], arms: started.arms });
+    const cancelled = (await ok(client, "cancel_run", { run_id: started.runId })).body;
+    expect(cancelled).toMatchObject({ runId: started.runId, cancelledJobs: [] });
+    const again = await call(client, "cancel_run", { run_id: started.runId });
+    expect(again).toMatchObject({ isError: true, body: { code: "run_not_active" } });
+  });
+});
+
+describe("failures", { timeout: TIMEOUT_MS }, () => {
+  it("are isError results with code, message, retryable, and hint", async () => {
+    const toy = toyFor();
+    const client = await connect(toy);
+    // Not approved: the server never approves, and says who can.
+    const refused = await call(client, "start_run");
+    expect(refused).toMatchObject({
+      isError: true,
+      body: {
+        code: "policy:unapproved_config",
+        message: "ufo.yaml has not been approved; run `ufo approve` in a terminal",
+        retryable: false,
+      },
+    });
+
+    await approveToy(toy);
+    const started = (await ok(client, "start_run")).body as {
+      runId: string;
+      baselineJobId: string;
+    };
+    await poll(client, started.runId, started.baselineJobId);
+    // Another call holds the run's control lock for longer than a tool call waits.
+    const lock = path.join(toy.runDir(started.runId), CONTROL_LOCK_FILE);
+    writeFileSync(lock, String(process.pid));
+    try {
+      const busy = await call(client, "cancel_run", { run_id: started.runId });
+      expect(busy).toMatchObject({
+        isError: true,
+        body: {
+          code: "busy",
+          retryable: true,
+          hint: "another UFO call is working on this run; try again in a few seconds",
+        },
+      });
+      expect(busy.ms).toBeGreaterThanOrEqual(19_000);
+      expect(busy.ms).toBeLessThan(30_000);
+    } finally {
+      rmSync(lock, { force: true });
+    }
+    await ok(client, "cancel_run", { run_id: started.runId });
+  });
+
+  it("answers malformed arguments with a tool error and an unknown tool with -32602", async () => {
+    const client = await connect(toyFor());
+    for (const args of [
+      { job_id: 7 },
+      { job_id: "job-000001", extra: true },
+      { job_id: "job-000001", repo: "relative" },
+    ]) {
+      const result = await client.callTool({ name: "get_job", arguments: args });
+      expect(result.isError, JSON.stringify(args)).toBe(true);
+      expect((result.content as { text: string }[])[0]?.text).toContain("Input validation error");
+    }
+    const unknown = await client.callTool({ name: "approve", arguments: {} }).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(unknown).toBeInstanceOf(ProtocolError);
+    expect(unknown).toMatchObject({ code: -32602 });
+  });
+});
