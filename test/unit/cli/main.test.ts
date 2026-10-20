@@ -1,8 +1,9 @@
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { EXIT_OK, EXIT_USAGE, main } from "../../../src/cli/main.js";
 
 const pkg = JSON.parse(readFileSync(new URL("../../../package.json", import.meta.url), "utf8"));
@@ -89,6 +90,39 @@ describe("ufo CLI", () => {
       });
     } finally {
       await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// Code review M1: with your home a git repository (dotfiles), a command from your home or a folder
+// under it keeps what is installed there on PATH, and one that needs a project refuses it.
+describe("ufo at a home that is a repository", () => {
+  it("keeps ~/.local/bin on PATH and refuses to work on the home", async () => {
+    const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "ufo-cli-home-")));
+    const home = path.join(root, "home");
+    await mkdir(path.join(home, "notes"), { recursive: true });
+    execFileSync("git", ["init", "--quiet"], { cwd: home });
+    const homedir = vi.spyOn(os, "homedir").mockReturnValue(home);
+    const installed = path.join(home, ".local", "bin");
+    try {
+      for (const cwd of [home, path.join(home, "notes")]) {
+        for (const command of ["status", "run"]) {
+          const env = {
+            ...process.env,
+            UFO_HOME: path.join(home, ".ufo"),
+            PATH: [installed, process.env.PATH ?? ""].join(path.delimiter),
+          };
+          const result = await run([command], cwd, env);
+          expect(result.code, `${command} in ${cwd}`).toBe(EXIT_USAGE);
+          expect(result.stderr).toBe(
+            `ufo ${command}: not_a_repo: the repository ~ is your home directory or above it; UFO works only in a project folder; open a repository folder\n`,
+          );
+          expect(env.PATH.split(path.delimiter)).toContain(installed);
+        }
+      }
+    } finally {
+      homedir.mockRestore();
+      await rm(root, { recursive: true, force: true });
     }
   });
 });

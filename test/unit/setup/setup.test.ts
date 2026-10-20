@@ -1,7 +1,9 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { chmod, lstat, mkdir, readdir, readFile, stat, symlink, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PolicyError, violation } from "../../../src/core/policy/index.js";
 import { SetupError, type SetupOptions, setup, terminalConfirm } from "../../../src/setup/index.js";
 import {
@@ -191,6 +193,25 @@ describe("ufo setup", () => {
     const error = await refusal(setup(options({ hosts: ["codex"], package: other })));
     expect(error).toMatchObject({ code: "usage" });
     expect(error.message).toContain("is not a ufo-agents tarball");
+  });
+
+  // Code review M1: your home a git repository (dotfiles), setup from it or a folder under it
+  // takes a UFO home there and finds what is installed under it.
+  it("works from a home that is a git repository", async () => {
+    execFileSync("git", ["init", "--quiet"], { cwd: box.home });
+    await mkdir(path.join(box.home, "notes"));
+    await mkdir(path.join(box.home, ".codex"));
+    const ufoHome = path.join(box.home, ".ufo");
+    const homedir = vi.spyOn(os, "homedir").mockReturnValue(box.home);
+    try {
+      for (const cwd of [box.home, path.join(box.home, "notes")]) {
+        const report = await setup(options({ hosts: ["codex"], cwd, ufoHome }));
+        expect(report.hosts, cwd).toEqual(["codex"]);
+      }
+      expect(readFileSync(codexFile(), "utf8")).toContain(path.join(ufoHome, "pkg", VERSION));
+    } finally {
+      homedir.mockRestore();
+    }
   });
 
   it("probes only the hosts in scope", async () => {

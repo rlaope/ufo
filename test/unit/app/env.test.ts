@@ -162,22 +162,41 @@ describe("trustProcessPath", () => {
     }
   });
 
-  // Code review R5: the home exemption is for the directories UFO starts from, never for the
-  // repository git finds: one at your home leaves nothing under it on PATH.
-  it("drops everything under your home when the repository is your home", async () => {
+  // Code review M1 (with R5): a repository at your home (dotfiles) is no project: neither it nor
+  // what is installed under your home is dropped, from your home or a folder under it, and it is
+  // none of the project roots setup checks its UFO home against. A worktree of it keeps them too.
+  it("keeps what is under your home when your home is a repository", async () => {
     const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), "ufo-path-")));
     const home = path.join(root, "home");
     const homedir = vi.spyOn(os, "homedir").mockReturnValue(home);
     try {
       mkdirSync(path.join(home, "notes"), { recursive: true });
-      execFileSync("git", ["init", "--quiet"], { cwd: home });
-      const env: NodeJS.ProcessEnv = {
-        UFO_HOME: path.join(root, "ufo-home"),
-        PATH: [path.join(home, ".nvm", "bin"), "/usr/bin"].join(path.delimiter),
-      };
-      const { repo } = await trustProcessPath({ cwd: path.join(home, "notes"), env });
-      expect(repo?.root).toBe(home);
-      expect(env.PATH).toBe("/usr/bin");
+      const git = (...args: string[]) => execFileSync("git", args, { cwd: home, stdio: "ignore" });
+      git("init", "--quiet");
+      git(
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t.invalid",
+        "commit",
+        "--quiet",
+        "--allow-empty",
+        "-m",
+        "x",
+      );
+      git("worktree", "add", "--quiet", "--detach", path.join(home, "wt"));
+      const installed = path.join(home, ".local", "bin");
+      for (const cwd of [home, path.join(home, "notes"), path.join(home, "wt")]) {
+        const env: NodeJS.ProcessEnv = {
+          UFO_HOME: path.join(home, ".ufo"),
+          PATH: [installed, "/usr/bin"].join(path.delimiter),
+        };
+        const { repo, projectRoots } = await trustProcessPath({ cwd, env });
+        expect(env.PATH, cwd).toBe([installed, "/usr/bin"].join(path.delimiter));
+        expect(projectRoots, cwd).not.toContain(home);
+        if (cwd === path.join(home, "wt")) expect(repo?.root).toBe(cwd);
+        else expect(repo, cwd).toBeUndefined();
+      }
     } finally {
       homedir.mockRestore();
       rmSync(root, { recursive: true, force: true });
