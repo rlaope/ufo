@@ -43,7 +43,8 @@
     "format": "biome format --write .",
     "test": "vitest run",
     "test:unit": "vitest run test/unit",
-    "test:integration": "vitest run test/integration"
+    "test:integration": "vitest run test/integration",
+    "audit:deps": "npm audit --omit=dev && node scripts/audit-bundled.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "2.3.1",

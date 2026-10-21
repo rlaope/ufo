@@ -39,5 +39,6 @@ These commitments apply to every release:
 - The only official sources are the `ufo-agents` package on npm and the `rlaope/ufo` repository on GitHub. The npm package named `ufo` is unrelated, so `npx ufo` runs someone else's code.
 - The package has no `preinstall`, `install`, or `postinstall` scripts.
 - Runtime dependencies are kept minimal, and the lockfile is committed.
+- Before a release, the runtime dependencies are audited, including the copies of other packages that a dependency bundles in its own files (`npm run audit:deps`; see [CONTRIBUTING.md](CONTRIBUTING.md#scripts)).
 - Releases are published with npm trusted publishing and provenance, from accounts with two-factor authentication. Release tags are signed.
 - UFO collects no telemetry.
