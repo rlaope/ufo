@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import {
   cpSync,
   mkdirSync,
@@ -517,6 +518,16 @@ describe("reading a profile directory", () => {
     expect(read.files.map((f) => f.file)).toEqual(["p04", "p05", "p06", "p07"]);
     expect(read.omitted).toBe(count - MAX_FILES_SUMMARIZED);
   });
+
+  it("reports a FIFO without opening it, which would wait for a writer forever", async () => {
+    execFileSync("mkfifo", [path.join(dir, "pipe")]);
+    writeFileSync(path.join(dir, "p.collapsed"), "main;f 1\n");
+    const read = await readProfileDir(dir, "collapsed");
+    expect(read.files.map((f) => [f.file, f.valid ? f.weight : f.reason])).toEqual([
+      ["p.collapsed", 1],
+      ["pipe", "not a regular file"],
+    ]);
+  }, 5000);
 
   it("holds no files when the workload removed the directory, and refuses a symlink for it", async () => {
     expect(await readProfileDir(path.join(dir, "gone"), "collapsed")).toEqual({

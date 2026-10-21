@@ -43,6 +43,8 @@ export interface ProfileResult {
     dir: string;
     files: FileHotspots[];
     omitted: number;
+    /** Why no file was read: the workload made the directory unreadable or replaced it. */
+    reason?: string;
   };
 }
 
@@ -136,8 +138,21 @@ export async function handleProfile(
     result.hotspots = {
       format: settings.format,
       dir: profileDir,
-      // Paths in arm A are named relative to the repository.
-      ...(await readProfileDir(dir, settings.format, [`file://${arm.dir}/`, `${arm.dir}/`])),
+      // Paths in arm A are named relative to the repository. A directory the workload made
+      // unreadable or replaced (never followed) costs the hot spots, not the phases and sample.
+      ...(await readProfileDir(dir, settings.format, [`file://${arm.dir}/`, `${arm.dir}/`]).catch(
+        (error: unknown) => {
+          const code = (error as { code?: unknown }).code;
+          return {
+            files: [],
+            omitted: 0,
+            reason:
+              code === "unsafe_state"
+                ? "the workload replaced the profile directory; UFO does not follow it"
+                : `the profile directory cannot be read (${typeof code === "string" ? code : "error"})`,
+          };
+        },
+      )),
     };
   }
   const json = toJson(result);

@@ -175,6 +175,10 @@ describe("profileSettings", () => {
         "/p",
       ),
     ).toEqual({ env: { OUT: "/p/a-/p", N: "1" }, format: "collapsed" });
+    // The directory as it is, never a replacement pattern.
+    expect(
+      profileSettings({ env: { OUT: "{{profile_dir}}/x" }, format: "collapsed" }, "/r$&$$/p").env,
+    ).toEqual({ OUT: "/r$&$$/p/x" });
     expect(profileSettings({ format: "speedscope" }, "/p")).toEqual({
       env: {},
       format: "speedscope",

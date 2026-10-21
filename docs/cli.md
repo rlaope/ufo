@@ -301,7 +301,9 @@ weight spent in `(idle)`. Several files (one per process, as when `NODE_OPTIONS`
 processes) come back busiest first (weight less `idle`, so a wrapper that only waits on the app
 comes after it), then those with a reason; the first 4 are summarized and the others counted in
 `omitted`. Without `workload.profile`, the result
-has no `hotspots` and the job creates no directory.
+has no `hotspots` and the job creates no directory. A FIFO or other non-regular entry is reported,
+never opened. If the workload replaced the directory (never followed) or made it unreadable,
+`hotspots` has no files and a `reason`; the phases and the sample stay.
 
 The approval covers `workload.profile` like the rest of `ufo.yaml`; `ufo approve` shows the
 profiled steps, the format, the preset, and each variable JSON-quoted, a preset's as it expands.

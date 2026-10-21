@@ -33,7 +33,12 @@ export function summarizeProfile(
 async function readCapped(file: string): Promise<string | Parsed> {
   let handle: Awaited<ReturnType<typeof open>>;
   try {
-    handle = await open(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    // Non-blocking, so a FIFO that took the file's place since its lstat never blocks the open;
+    // the stat below refuses it.
+    handle = await open(
+      file,
+      constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0),
+    );
   } catch (error) {
     if (isErrno(error, "ELOOP")) return invalid("a symbolic link; UFO does not follow it");
     return invalid(`cannot be read: ${(error as NodeJS.ErrnoException).code ?? "error"}`);
@@ -73,13 +78,21 @@ export async function readProfileDir(
   const entries = await Promise.all(
     names.map(async (name) => {
       const info = await lstat(path.join(dir, name)).catch(() => undefined);
-      return { name, size: info?.isFile() === true ? info.size : -1 };
+      return { name, info, size: info?.isFile() === true ? info.size : -1 };
     }),
   );
   entries.sort((a, b) => b.size - a.size || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   const files: FileHotspots[] = [];
-  for (const { name } of entries.slice(0, MAX_PROFILE_FILES_READ)) {
-    const read = await readCapped(path.join(dir, name));
+  for (const { name, info } of entries.slice(0, MAX_PROFILE_FILES_READ)) {
+    // Only a regular file is opened: opening a FIFO with no writer would wait forever.
+    const read =
+      info === undefined
+        ? invalid("gone before it was read")
+        : info.isSymbolicLink()
+          ? invalid("a symbolic link; UFO does not follow it")
+          : !info.isFile()
+            ? invalid("not a regular file")
+            : await readCapped(path.join(dir, name));
     files.push(
       typeof read === "string"
         ? summarizeProfile(name, read, format, prefixes)

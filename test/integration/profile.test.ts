@@ -21,7 +21,7 @@ import { approveToy, git, makeToy, TIMEOUT_MS, type Toy, waitDone } from "./help
  * Every workload step: records the variables it got, and when it is profiled writes what a
  * profiler would, five folded files of different weights and one broken one.
  */
-const STEP = `import { appendFileSync, existsSync, writeFileSync } from "node:fs";
+const STEP = `import { appendFileSync, existsSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 const step = process.argv[2];
@@ -45,6 +45,11 @@ if (env.TOY_PROFILED !== undefined) {
     );
   }
   writeFileSync(path.join(dir, "toy-broken.collapsed"), "main;handle\\n");
+  // A workload that swaps its profile directory for a link to somewhere else.
+  if (env.TOY_REPLACE_DIR !== undefined) {
+    rmSync(env.UFO_PROFILE_DIR, { recursive: true });
+    symlinkSync(env.TOY_LOG_DIR, env.UFO_PROFILE_DIR);
+  }
 }
 const ready = path.join(env.TOY_LOG_DIR, \`ready-\${env.UFO_PHASE}-\${env.UFO_ARM}-\${env.UFO_PORT}\`);
 if (step === "start") {
@@ -238,6 +243,29 @@ describe("profiling a command under workload.profile", { timeout: TIMEOUT_MS }, 
         "toy-30.collapsed",
         "toy-20.collapsed",
       ]);
+      await cancelRun(toy.context, { runId: run.runId });
+    } finally {
+      await toy.cleanup();
+      rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the phases and sample when the workload replaced its profile directory", async () => {
+    const { toy, logDir } = profileToy([
+      "command: node step.mjs command",
+      ...PROFILE_ENV.slice(0, 2),
+      '    TOY_REPLACE_DIR: "yes"',
+      ...PROFILE_ENV.slice(2),
+    ]);
+    try {
+      await approveToy(toy);
+      const { run, profile } = await profileOnce(toy);
+      expect(profile.sample).toMatchObject({ valid: true });
+      expect(profile.phases.map((p) => p.phase)).toEqual(["sample", "teardown"]);
+      expect(profile.hotspots).toMatchObject({ format: "collapsed", files: [], omitted: 0 });
+      expect(profile.hotspots?.reason).toBe(
+        "the workload replaced the profile directory; UFO does not follow it",
+      );
       await cancelRun(toy.context, { runId: run.runId });
     } finally {
       await toy.cleanup();

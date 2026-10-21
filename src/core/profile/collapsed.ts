@@ -11,11 +11,17 @@ const COUNT = /^\d+(?:\.\d+)?$/;
  * spaces; the count is what follows the last space or tab.
  */
 export function parseCollapsed(text: string): Parsed {
-  const lines = text.split("\n");
-  const stacks = lines.reduce((count, line) => (line.trim() === "" ? count : count + 1), 0);
-  if (stacks > MAX_COLLAPSED_LINES) return invalid(`more than ${MAX_COLLAPSED_LINES} stacks`);
+  // Counted before anything is kept, without an array of every line.
+  let stacks = 0;
+  for (const _ of text.matchAll(/\S[^\n]*/g)) {
+    if (++stacks > MAX_COLLAPSED_LINES) return invalid(`more than ${MAX_COLLAPSED_LINES} stacks`);
+  }
   const tally = new Tally();
-  for (const [index, raw] of lines.entries()) {
+  let index = 0;
+  for (let from = 0; from <= text.length; index++) {
+    const end = text.indexOf("\n", from);
+    const raw = text.slice(from, end === -1 ? text.length : end);
+    from = end === -1 ? text.length + 1 : end + 1;
     const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
     if (line.trim() === "") continue;
     const at = Math.max(line.lastIndexOf(" "), line.lastIndexOf("\t"));

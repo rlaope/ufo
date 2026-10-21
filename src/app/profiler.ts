@@ -47,7 +47,8 @@ export function profileSettings(
     env: Object.fromEntries(
       Object.entries(profile.env ?? {}).map(([name, value]) => [
         name,
-        value.replaceAll(PROFILE_DIR_PLACEHOLDER, dir),
+        // A function, so `$&` or `$$` in the path is not a replacement pattern.
+        value.replaceAll(PROFILE_DIR_PLACEHOLDER, () => dir),
       ]),
     ),
     format: profile.format,
