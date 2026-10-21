@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { MAX_NOTE_LENGTH, TechniqueCardSchema } from "../../../src/domain/index.js";
+import {
+  DEFAULT_MIN_SHARE,
+  MAX_FRAME_HINT_LENGTH,
+  MAX_FRAME_HINTS,
+  MAX_NOTE_LENGTH,
+  TechniqueCardSchema,
+} from "../../../src/domain/index.js";
 import { expectAccepts, expectRejects, techniqueCard } from "./fixtures.js";
 
 describe("TechniqueCardSchema", () => {
@@ -214,5 +220,49 @@ describe("TechniqueCardSchema", () => {
       ...card,
       commandTemplates: [card.commandTemplates?.[0], card.commandTemplates?.[0]],
     });
+  });
+
+  // M5 V1: frames whose presence in a profile points at the card.
+  it("accepts frame hints as strings and as objects, a string at the default share", () => {
+    expect(expectAccepts(TechniqueCardSchema, techniqueCard()).frameHints).toEqual([]);
+    const parsed = expectAccepts(TechniqueCardSchema, {
+      ...techniqueCard(),
+      frameHints: [
+        "ObjectMapper.<init>",
+        { match: "ClassLoader.defineClass1", minShare: 0.15 },
+        { match: "json/encoder.py" },
+        { match: "x".repeat(MAX_FRAME_HINT_LENGTH), minShare: 1 },
+        "abcd",
+      ],
+    });
+    expect(parsed.frameHints).toEqual([
+      { match: "ObjectMapper.<init>", minShare: DEFAULT_MIN_SHARE },
+      { match: "ClassLoader.defineClass1", minShare: 0.15 },
+      { match: "json/encoder.py", minShare: DEFAULT_MIN_SHARE },
+      { match: "x".repeat(MAX_FRAME_HINT_LENGTH), minShare: 1 },
+      { match: "abcd", minShare: DEFAULT_MIN_SHARE },
+    ]);
+    expectAccepts(TechniqueCardSchema, {
+      ...techniqueCard(),
+      frameHints: Array.from({ length: MAX_FRAME_HINTS }, (_, i) => `frame${i}`),
+    });
+  });
+
+  it.each([
+    ["a hint too short", ["abc"]],
+    ["a hint too long", ["x".repeat(MAX_FRAME_HINT_LENGTH + 1)]],
+    ["a hint on two lines", ["readFile\nSync"]],
+    ["a hint with a control character", ["read\u0007FileSync"]],
+    ["a hint with outer spaces", [" readFileSync"]],
+    ["a blank hint", ["      "]],
+    ["a share of 0", [{ match: "readFileSync", minShare: 0 }]],
+    ["a share above 1", [{ match: "readFileSync", minShare: 1.01 }]],
+    ["an unknown key", [{ match: "readFileSync", regex: true }]],
+    ["no match", [{ minShare: 0.1 }]],
+    ["a number", [42]],
+    ["duplicate hints", ["readFileSync", { match: "readFileSync", minShare: 0.2 }]],
+    ["too many hints", Array.from({ length: MAX_FRAME_HINTS + 1 }, (_, i) => `frame${i}`)],
+  ])("rejects frame hints with %s", (_label, frameHints) => {
+    expectRejects(TechniqueCardSchema, { ...techniqueCard(), frameHints });
   });
 });

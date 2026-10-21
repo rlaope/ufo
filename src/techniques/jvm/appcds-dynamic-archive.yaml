@@ -9,6 +9,8 @@ signals:
   - "JFR or -Xlog:class+load shows thousands of application and library classes loaded from jar files (source: file:/...jar) rather than from shared objects file."
   - "JDK in use is below 25 and the AOT cache is therefore not the supported path (java -version)."
   - "Time-to-ready is the primary metric and the application is restarted frequently."
+frameHints:
+  - { match: "ClassLoader.defineClass1", minShare: 0.15 }
 preconditions:
   - "JDK 13 or newer for -XX:ArchiveClassesAtExit dynamic archives."
   - "The archive is used with the same JDK build and the same class path as the training run."
@@ -30,4 +32,5 @@ expectedEffect: "Reduces class parse and load time at startup; varies by class c
 sources:
   - https://docs.spring.io/spring-boot/reference/packaging/aot-cache.html
   - https://openjdk.org/jeps/483
+  - https://github.com/openjdk/jdk/blob/master/src/java.base/share/classes/java/lang/ClassLoader.java
 verifiedIn: unverified

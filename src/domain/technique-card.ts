@@ -145,6 +145,36 @@ export const RecipeEditSchema = z.discriminatedUnion("op", [
 ]);
 export type RecipeEdit = z.infer<typeof RecipeEditSchema>;
 
+export const MAX_FRAME_HINTS = 8;
+export const MIN_FRAME_HINT_LENGTH = 4;
+export const MAX_FRAME_HINT_LENGTH = 120;
+/** The share of a profile a hinted frame needs before it points at the card, by default. */
+export const DEFAULT_MIN_SHARE = 0.05;
+
+const FrameHintMatchSchema = z
+  .string()
+  .min(MIN_FRAME_HINT_LENGTH)
+  .max(MAX_FRAME_HINT_LENGTH)
+  .regex(/^\S(?:[^\p{Cc}]*\S)?$/u, "must be one line without control characters or outer spaces");
+
+/**
+ * A plain, case-sensitive substring of a profiler frame name (never a pattern), as a string or
+ * with the share of the profile the frame needs, e.g. `{ match: "ClassLoader.defineClass1",
+ * minShare: 0.15 }` for a frame every startup shows a little of.
+ */
+export const FrameHintSchema = z
+  .union([
+    FrameHintMatchSchema,
+    z.strictObject({
+      match: FrameHintMatchSchema,
+      minShare: z.number().gt(0).max(1).default(DEFAULT_MIN_SHARE),
+    }),
+  ])
+  .transform((hint) =>
+    typeof hint === "string" ? { match: hint, minShare: DEFAULT_MIN_SHARE } : hint,
+  );
+export type FrameHint = z.output<typeof FrameHintSchema>;
+
 /** Overrides the memory guardrail for this card; takes effect only once approved with `ufo.yaml`. */
 export const MemoryBudgetSchema = z.strictObject({
   maxRatio: z.number().min(1).max(100),
@@ -182,6 +212,16 @@ export const TechniqueCardSchema = z
     preconditions: NoteListSchema.default([]),
     /** Profiler evidence that points at this card. A card nothing points at is never chosen. */
     signals: NoteListSchema.min(1),
+    /**
+     * Frames whose presence in a profile's hot spots points at this card. JVM hints are
+     * `Class.method` without the package, since a frame is also compared with every `/` as `.`.
+     */
+    frameHints: uniqueArray(
+      FrameHintSchema,
+      MAX_FRAME_HINTS,
+      (h) => h.match,
+      "frame hints",
+    ).default([]),
     /** Guided cards: the ordered how-to the agent follows. */
     steps: NoteListSchema.default([]),
     verification: NoteListSchema.default([]),

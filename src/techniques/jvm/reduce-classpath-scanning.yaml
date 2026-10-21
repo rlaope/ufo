@@ -9,6 +9,11 @@ signals:
   - "Spring Boot startup actuator endpoint or BufferingApplicationStartup shows large cumulative time in spring.context.component-scan, spring.context.config-classes.parse and condition evaluation steps."
   - "Startup shows many auto-configurations evaluated for libraries the application does not use (debug report or --debug lists large negative-match set)."
   - "@ComponentScan or @SpringBootApplication scans a broad root package, or the class path contains many unused starters."
+frameHints:
+  - "findCandidateComponents"
+  - "ClassPathBeanDefinitionScanner.doScan"
+  - "ComponentScanAnnotationParser.parse"
+  - "getAutoConfigurationEntry"
 preconditions:
   - "Spring Boot. The change must leave the needed bean set unchanged, verified against the bean list before and after; if a bean has to go, this is not the card."
 steps:
@@ -28,4 +33,8 @@ expectedEffect: "Shorter configuration parsing time where scanning dominates; va
 sources:
   - https://docs.spring.io/spring-boot/reference/features/spring-application.html
   - https://docs.spring.io/spring-framework/reference/core/aot.html
+  - https://github.com/spring-projects/spring-framework/blob/main/spring-context/src/main/java/org/springframework/context/annotation/ClassPathScanningCandidateComponentProvider.java
+  - https://github.com/spring-projects/spring-framework/blob/main/spring-context/src/main/java/org/springframework/context/annotation/ClassPathBeanDefinitionScanner.java
+  - https://github.com/spring-projects/spring-framework/blob/main/spring-context/src/main/java/org/springframework/context/annotation/ComponentScanAnnotationParser.java
+  - https://github.com/spring-projects/spring-boot/blob/main/core/spring-boot-autoconfigure/src/main/java/org/springframework/boot/autoconfigure/AutoConfigurationImportSelector.java
 verifiedIn: unverified

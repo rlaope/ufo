@@ -102,7 +102,7 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
     "list_techniques",
     {
       title: "List technique cards",
-      description: `An index of the technique cards UFO knows for this repository: id, title, domain, kind (recipe or guided), risk class, the stacks and bottlenecks each applies to, its expected effect, and whether ufo.yaml enables it. Filter by the stack inspect_target detected and by the bottleneck the profile found; without a filter, cards for the detected stacks come first. Pick candidates here, then open each with get_technique for its signals, preconditions, steps, verification, and traps. ${DATA}`,
+      description: `An index of the technique cards UFO knows for this repository: id, title, domain, kind (recipe or guided), risk class, the stacks and bottlenecks each applies to, its expected effect, and whether ufo.yaml enables it. Filter by the stack inspect_target detected and by the bottleneck the profile found; without a filter, cards for the detected stacks come first. With profile_job_id (a succeeded profile_target job of the active run), the cards whose frame hints its hot frames show come first, each with evidence: the matched hint, frame, share, and list (self or total); cards it does not point at leave out the expected effect. Evidence is a lead to confirm with get_technique's signals, not proof. Pick candidates here, then open each with get_technique for its signals, preconditions, steps, verification, and traps. ${DATA}`,
       inputSchema: z.strictObject({
         domain: z.string().max(64).optional().describe("Only cards of this domain."),
         stack: StackIdSchema.optional().describe(
@@ -111,6 +111,11 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
         bottleneck: BottleneckSchema.optional().describe(
           "Only cards for this bottleneck category.",
         ),
+        profile_job_id: z
+          .string()
+          .max(32)
+          .optional()
+          .describe("A profile_target job id of the active run, e.g. job-000002, to rank by."),
       }),
       annotations: READ_ONLY,
     },
@@ -120,6 +125,7 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
           ...(args.domain === undefined ? {} : { domain: args.domain }),
           ...(args.stack === undefined ? {} : { stack: args.stack }),
           ...(args.bottleneck === undefined ? {} : { bottleneck: args.bottleneck }),
+          ...(args.profile_job_id === undefined ? {} : { profileJobId: args.profile_job_id }),
         }),
       ),
   );

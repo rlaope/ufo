@@ -9,6 +9,12 @@ signals:
   - "async-profiler cpu or wall mode, or JFR, shows request threads in Logback appender frames (OutputStreamAppender.subAppend, ConsoleAppender, layout/encoder) or blocked on the appender lock."
   - "Thread dumps show threads BLOCKED on the logging appender monitor (appender doAppend is synchronized) under load."
   - "Debug-level log statements build strings with concatenation or expensive arguments even when the level is off (alloc profile shows string building near logger calls)."
+frameHints:
+  - "OutputStreamAppender.subAppend"
+  - "OutputStreamAppender.writeOut"
+  - "RollingFileAppender.subAppend"
+  - "AppenderBase.doAppend"
+  - "LoggingEvent.getCallerData"
 preconditions:
   - "Logback as the logging backend (Spring Boot default)."
   - "The user accepts that log events can be dropped or lost on abnormal shutdown."
@@ -30,4 +36,8 @@ expectedEffect: "Less logging time on request threads when appender time or lock
 sources:
   - https://logback.qos.ch/manual/appenders-async-sift.html
   - https://logback.qos.ch/manual/appenders.html
+  - https://github.com/qos-ch/logback/blob/master/logback-core/src/main/java/ch/qos/logback/core/OutputStreamAppender.java
+  - https://github.com/qos-ch/logback/blob/master/logback-core/src/main/java/ch/qos/logback/core/rolling/RollingFileAppender.java
+  - https://github.com/qos-ch/logback/blob/master/logback-core/src/main/java/ch/qos/logback/core/AppenderBase.java
+  - https://github.com/qos-ch/logback/blob/master/logback-classic/src/main/java/ch/qos/logback/classic/spi/LoggingEvent.java
 verifiedIn: unverified

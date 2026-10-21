@@ -395,6 +395,9 @@ commandTemplates:
     run: node --check server.mjs
 signals:
   - toy.properties sets a non-zero items.extra_delay_ms
+frameHints:              # optional: profile frames that point at the card
+  - "readFileSync"
+  - { match: "ClassLoader.defineClass1", minShare: 0.15 }
 steps:                   # guided cards: the ordered how-to
   - Set items.extra_delay_ms to 0 in toy.properties
 expectedEffect: latency drops by the configured delay; measure   # one line, with its condition
@@ -411,12 +414,13 @@ Besides the fields above a card has `preconditions`, `verification`, and `traps`
 | `stacks` | Any of `jvm`, `spring-boot`, `gradle`, `maven`, `node`, `npm`, `pnpm`, `yarn`, `typescript`, `nextjs`, `vite`, `webpack`, `python`, `django`, `fastapi`, `flask`, `sqlalchemy`, `go`, `rust`, `cargo`, `docker`, `postgres`, `mysql`, `hibernate`, `llama-cpp`, `vllm`, `pytorch`, `openai-client`. Empty means any stack. Each at most once. |
 | `bottlenecks` | One or more of `startup`, `cpu`, `allocation` (GC and memory), `io`, `network`, `contention` (locks, pools, concurrency), `query` (database), `serialization`, `build`, `bundle` (payload size), `rendering`, `inference`, `data_loading`, `caching` (repeated work that could be reused). Required. |
 | `signals` | Observable evidence that points at the card; at least one. |
+| `frameHints` | At most 8 profiler frames whose presence points at the card, each a plain case-sensitive substring (never a pattern) of 4 to 120 characters on one line, as a string or `{ match, minShare }`. `minShare` in (0, 1], default 0.05, is the share of the profile the frame needs (the larger of its `self` and `total` share); give a frame every profile shows a little of a higher one. A frame matches as written and with every `/` as `.`, so a JVM hint `Class.method` without its package finds async-profiler's `com/foo/Class.method` and JFR's `com.foo.Class.method`. A shown frame longer than 80 bytes keeps only its start and end, so a hint is the end of a frame: the method, or the file before its line number. `list_techniques` with a `profile_job_id` ranks by them. |
 | `steps` | The ordered how-to a guided card gives the agent. |
 | `expectedEffect` | One line saying what to expect and under which condition. |
 | `sources` | At most 16 `https` URLs of the primary sources the card was written from. A card outside the `generic` domain needs at least one. |
 
-`list_techniques` filters by `stack` and `bottleneck` and returns these fields (see
-[mcp.md](mcp.md)).
+`list_techniques` filters by `stack` and `bottleneck`, ranks by a profile's frames with
+`profile_job_id`, and returns these fields (see [mcp.md](mcp.md)).
 
 | Edit | Effect |
 |---|---|

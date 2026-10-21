@@ -12,6 +12,8 @@ signals:
   - Profiler or tracing shows repeated TCP and TLS handshake time per request to the same host
   - Code constructs a new HTTP client, session or SDK client inside a function called per request
   - Top-level helpers (httpx.get, requests.get) are used in a request loop
+frameHints:
+  - { match: "urllib3/connection.py", minShare: 0.1 }
 preconditions:
   - Client library with connection pooling (for example httpx.Client or AsyncClient, requests.Session, or an SDK client object)
 steps:
@@ -30,4 +32,5 @@ traps:
 expectedEffect: Removes per-request handshake latency; most visible for many short requests; varies, measure.
 sources:
   - https://www.python-httpx.org/advanced/clients/
+  - https://github.com/urllib3/urllib3/blob/main/src/urllib3/connection.py
 verifiedIn: unverified

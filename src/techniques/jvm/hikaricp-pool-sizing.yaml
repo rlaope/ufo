@@ -9,6 +9,10 @@ signals:
   - "HikariCP metrics (hikaricp.connections.pending, hikaricp.connections.acquire) or thread dumps show many request threads waiting in HikariPool.getConnection while the database is not saturated."
   - "Alternatively the database shows many active sessions with high CPU or lock contention and latency worsens as the pool is enlarged (pool far above a few dozen)."
   - "Pool is at the default maximum-pool-size and connection acquire time dominates a request trace."
+frameHints:
+  - "HikariPool.getConnection"
+  - "HikariDataSource.getConnection"
+  - "ConcurrentBag.borrow"
 preconditions:
   - "Spring Boot with HikariCP (`spring.datasource.hikari.*`) and a measurable load test."
   - "Know the database core count and whether transactions hold connections during remote calls."
@@ -28,4 +32,7 @@ traps:
 expectedEffect: "Lower latency and higher throughput where the pool was oversized or transactions held connections too long; measure."
 sources:
   - https://github.com/brettwooldridge/HikariCP/wiki/About-Pool-Sizing
+  - https://github.com/brettwooldridge/HikariCP/blob/dev/src/main/java/com/zaxxer/hikari/pool/HikariPool.java
+  - https://github.com/brettwooldridge/HikariCP/blob/dev/src/main/java/com/zaxxer/hikari/HikariDataSource.java
+  - https://github.com/brettwooldridge/HikariCP/blob/dev/src/main/java/com/zaxxer/hikari/util/ConcurrentBag.java
 verifiedIn: unverified

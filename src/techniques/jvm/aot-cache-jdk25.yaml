@@ -9,6 +9,8 @@ signals:
   - "JFR or startup logs show most startup time spent in class loading, linking and static initialization before the application is ready (Spring Boot startup actuator endpoint or BufferingApplicationStartup show many framework steps dominated by class load)."
   - "Process is short-lived or restarted often (CLI, serverless, autoscaled pod), so time-to-ready is the primary metric."
   - "The run already uses JDK 25 or newer (java -version), with no -XX:AOTCache flag present."
+frameHints:
+  - { match: "ClassLoader.defineClass1", minShare: 0.15 }
 preconditions:
   - "JDK 24 or newer for -XX:AOTMode record/create (JEP 483); JDK 25 or newer for the one-step -XX:AOTCacheOutput workflow (JEP 514). If the project runs an older JDK, moving to one is a separate upgrade change, not part of this card."
   - "Training run and production run use the same JDK release, CPU architecture and OS, and a matching class path (directories on the class path are not supported; extra trailing JARs are allowed in the production run)."
@@ -37,4 +39,5 @@ sources:
   - https://openjdk.org/jeps/514
   - https://docs.spring.io/spring-boot/reference/packaging/aot-cache.html
   - https://docs.oracle.com/en/java/javase/25/docs/specs/man/java.html
+  - https://github.com/openjdk/jdk/blob/master/src/java.base/share/classes/java/lang/ClassLoader.java
 verifiedIn: unverified

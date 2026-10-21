@@ -44,6 +44,11 @@ Any profiler that writes folded stacks, a V8 `.cpuprofile`, or a speedscope file
   contention); `(garbage collector)` is allocation; `(program)` is native code V8 does not name.
 - Shares of a CPU profile miss time spent blocked off the CPU. When the metric is slow and the
   profile is mostly idle, look for the wait (query, network, contention) rather than a hot frame.
+- `list_techniques` with `profile_job_id` ranks the cards whose frame hints (library frames
+  such as `ObjectMapper.<init>` or `readFileSync`) are among the top frames at the share each
+  hint needs, and gives each its `evidence`. Pass the stack and the bottleneck too. A match says
+  where to look, not that the card applies: confirm it with the card's `signals` from
+  `get_technique`, and a card without frame hints (most of them) can still be the right one.
 
 ## startup
 - Symptom: the time from launch to the first useful response dominates the metric.

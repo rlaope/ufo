@@ -9,6 +9,14 @@ signals:
   - "perf_hooks monitorEventLoopDelay histogram shows high p99 or max (values are nanoseconds) while CPU of the process is near one core"
   - "A .cpuprofile written by node --cpu-prof shows a single JS function, JSON.parse/stringify, a regexp, or an fs/crypto/zlib *Sync call with large self time on the main thread"
   - "Request latency grows for all endpoints together when one endpoint is hit, which points at the shared event loop"
+frameHints:
+  - "readFileSync"
+  - "writeFileSync"
+  - "pbkdf2Sync"
+  - "scryptSync"
+  - "randomFillSync"
+  - "zlibBufferSync"
+  - "spawnSync"
 preconditions:
   - "Node.js 12.2+ for --cpu-prof-interval; --cpu-prof flags are stable from v20.16 and v22.4"
   - "The slow section runs on the main thread, not inside a worker or child process"
@@ -34,4 +42,7 @@ sources:
   - https://nodejs.org/en/learn/asynchronous-work/dont-block-the-event-loop
   - https://nodejs.org/api/cli.html
   - https://nodejs.org/api/perf_hooks.html
+  - https://nodejs.org/api/fs.html
+  - https://nodejs.org/api/crypto.html
+  - https://nodejs.org/api/zlib.html
 verifiedIn: unverified

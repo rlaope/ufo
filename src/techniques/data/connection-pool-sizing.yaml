@@ -14,6 +14,10 @@ signals:
   - "Pool metrics (HikariCP via Micrometer or JMX: active, pending, timeouts, usage and acquire time) show many threads waiting for a connection, or the opposite: a pool of 50-100+ connections with most idle."
   - pg_stat_activity on PostgreSQL shows hundreds of connections with many active at once and the database CPU saturated, yet throughput does not rise with pool size.
   - Thread dumps (jstack, async-profiler wall mode) show request threads parked in the pool's getConnection.
+frameHints:
+  - "HikariPool.getConnection"
+  - "HikariDataSource.getConnection"
+  - "ConcurrentBag.borrow"
 preconditions:
   - The pool is HikariCP or a pool with equivalent knobs. Know the database server core count and whether data is mostly cached.
   - "Load-test ability: the final value must come from measurement."
@@ -37,4 +41,7 @@ sources:
   - https://github.com/brettwooldridge/HikariCP/wiki/About-Pool-Sizing
   - https://github.com/brettwooldridge/HikariCP
   - https://docs.spring.io/spring-boot/reference/data/sql.html
+  - https://github.com/brettwooldridge/HikariCP/blob/dev/src/main/java/com/zaxxer/hikari/pool/HikariPool.java
+  - https://github.com/brettwooldridge/HikariCP/blob/dev/src/main/java/com/zaxxer/hikari/HikariDataSource.java
+  - https://github.com/brettwooldridge/HikariCP/blob/dev/src/main/java/com/zaxxer/hikari/util/ConcurrentBag.java
 verifiedIn: unverified

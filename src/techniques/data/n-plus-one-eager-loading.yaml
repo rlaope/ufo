@@ -9,6 +9,11 @@ signals:
   - "ORM SQL logging (Hibernate org.hibernate.SQL debug or hibernate.show_sql, Django connection.queries or django.db.backends logger, SQLAlchemy echo=True) shows the same SELECT shape repeated once per parent row with only the bound id changing."
   - "Query count per request grows linearly with the size of a result list (Hibernate hibernate.generate_statistics prepared statement count, Django assertNumQueries or django-debug-toolbar, SQLAlchemy before_cursor_execute event counter)."
   - "pg_stat_statements shows a cheap single-row or IN-list lookup with very high calls and a small mean_exec_time, dominating total_exec_time."
+frameHints:
+  - "AbstractPersistentCollection.initialize"
+  - "AbstractLazyInitializer.initialize"
+  - "_load_for_state"
+  - "models/fields/related_descriptors.py"
 preconditions:
   - "The loop that triggers the extra queries reads a relationship attribute that is lazy by default."
   - "Hibernate 6.x, Django (any supported release), or SQLAlchemy 1.4/2.x."
@@ -35,4 +40,8 @@ sources:
   - https://docs.hibernate.org/orm/6.6/introduction/html_single/Hibernate_Introduction.html
   - https://docs.djangoproject.com/en/stable/ref/models/querysets/
   - https://docs.sqlalchemy.org/en/20/orm/queryguide/relationships.html
+  - https://github.com/hibernate/hibernate-orm/blob/main/hibernate-core/src/main/java/org/hibernate/collection/spi/AbstractPersistentCollection.java
+  - https://github.com/hibernate/hibernate-orm/blob/main/hibernate-core/src/main/java/org/hibernate/proxy/AbstractLazyInitializer.java
+  - https://github.com/sqlalchemy/sqlalchemy/blob/main/lib/sqlalchemy/orm/strategies.py
+  - https://github.com/django/django/blob/main/django/db/models/fields/related_descriptors.py
 verifiedIn: unverified

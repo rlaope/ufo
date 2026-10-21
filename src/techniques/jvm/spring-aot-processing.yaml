@@ -14,6 +14,9 @@ signals:
   - Spring Boot startup actuator endpoint or a BufferingApplicationStartup dump shows large time in configuration class parsing, component scanning, condition evaluation and bean definition registration steps.
   - JFR shows reflection and annotation introspection (ConfigurationClassPostProcessor, ClassPathScanningCandidateComponentProvider) near the top of startup stacks.
   - The deployed artifact has a fixed class path and a fixed set of active profiles.
+frameHints:
+  - { match: "processConfigBeanDefinitions", minShare: 0.1 }
+  - { match: "findCandidateComponents", minShare: 0.1 }
 preconditions:
   - Spring Boot 3 or newer; Maven build using the spring-boot-starter-parent native profile (or an equivalent process-aot execution), or Gradle with the org.springframework.boot.aot plugin.
   - Profiles and condition-relevant properties are known at build time; the class path at runtime equals the build class path. Under these conditions the bean set and behavior are the same as without AOT; if they cannot be fixed, do not apply this card.
@@ -39,4 +42,6 @@ sources:
   - https://docs.spring.io/spring-boot/reference/packaging/aot.html
   - https://docs.spring.io/spring-boot/how-to/aot.html
   - https://docs.spring.io/spring-boot/gradle-plugin/aot.html
+  - https://github.com/spring-projects/spring-framework/blob/main/spring-context/src/main/java/org/springframework/context/annotation/ConfigurationClassPostProcessor.java
+  - https://github.com/spring-projects/spring-framework/blob/main/spring-context/src/main/java/org/springframework/context/annotation/ClassPathScanningCandidateComponentProvider.java
 verifiedIn: unverified

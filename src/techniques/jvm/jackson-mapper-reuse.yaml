@@ -9,6 +9,12 @@ signals:
   - "async-profiler cpu or alloc mode, or JFR, shows time or allocation in ObjectMapper construction, module discovery (findAndRegisterModules) or serializer cache building in per-request paths."
   - "Code creates `new ObjectMapper()` inside methods or per request, and the heap histogram shows many ObjectMapper or serializer cache instances."
   - "Profile shows Jackson reflection-based property access (BeanSerializer, SettableBeanProperty) in the top frames of a serialization-heavy endpoint."
+frameHints:
+  - "ObjectMapper.<init>"
+  - "ObjectMapper.findAndRegisterModules"
+  - "ObjectMapper.findModules"
+  - "_createAndCacheUntypedSerializer"
+  - "constructBeanOrAddOnSerializer"
 preconditions:
   - "Jackson 2.x; the mapper configuration is not mutated after first use."
   - "Blackbird needs Java 11 or newer (jackson-module-blackbird); Afterburner is its predecessor."
@@ -29,4 +35,6 @@ expectedEffect: "Removes repeated mapper construction cost; Blackbird gives a mo
 sources:
   - https://github.com/FasterXML/jackson-modules-base/blob/2.x/blackbird/README.md
   - https://github.com/FasterXML/jackson-databind/blob/2.x/src/main/java/com/fasterxml/jackson/databind/ObjectMapper.java
+  - https://github.com/FasterXML/jackson-databind/blob/2.x/src/main/java/com/fasterxml/jackson/databind/SerializerProvider.java
+  - https://github.com/FasterXML/jackson-databind/blob/2.x/src/main/java/com/fasterxml/jackson/databind/ser/BeanSerializerFactory.java
 verifiedIn: unverified

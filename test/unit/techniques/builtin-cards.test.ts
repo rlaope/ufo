@@ -1,6 +1,7 @@
 import { readdirSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { displayName } from "../../../src/core/profile/index.js";
 import { BUILTIN_CARDS_DIR, loadCatalog } from "../../../src/techniques/index.js";
 
 // M3 P4: every card the package ships loads through the card schema, sits in the directory of its
@@ -35,5 +36,25 @@ describe("the built-in technique cards", () => {
         for (const source of card.sources) expect(source, id).toMatch(/^https:\/\//);
       }
     }
+  });
+
+  // M5 V1: a summary shows a long frame name by its start and end, so a hint is the end of a
+  // frame (its method, or its file before the line number), which survives the cut.
+  it("give frame hints that a shown frame keeps, however long the package before them", async () => {
+    const catalog = await loadCatalog();
+    let hinted = 0;
+    for (const [id, card] of catalog.cards) {
+      if (card.frameHints.length > 0) hinted++;
+      for (const { match, minShare } of card.frameHints) {
+        expect(minShare, id).toBeGreaterThan(0);
+        for (const frame of [
+          `${"org/example/".repeat(10)}${match}`,
+          `f (${"lib/".repeat(25)}${match}:12345)`,
+        ]) {
+          expect(displayName(frame), `${id}: ${match}`).toContain(match);
+        }
+      }
+    }
+    expect(hinted).toBeGreaterThan(10);
   });
 });

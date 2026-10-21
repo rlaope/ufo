@@ -8,6 +8,8 @@ bottlenecks: [startup]
 signals:
   - "Spring Boot startup actuator endpoint or BufferingApplicationStartup shows many beans.instantiate steps, many of them not needed for the first request or for the measured workload."
   - "Measured metric is time to context refreshed, and expensive singletons (clients, caches, schedulers) are created eagerly."
+frameHints:
+  - { match: "preInstantiateSingletons", minShare: 0.3 }
 preconditions:
   - "Spring Boot (any recent version). The user opted in to errors surfacing later than startup."
   - "A test or oracle exists that exercises all code paths that depend on lazily created beans."
@@ -27,4 +29,5 @@ traps:
 expectedEffect: "Shorter time to context refreshed when many beans are unused at startup; moves work to first use; varies; measure."
 sources:
   - https://docs.spring.io/spring-boot/reference/features/spring-application.html
+  - https://github.com/spring-projects/spring-framework/blob/main/spring-beans/src/main/java/org/springframework/beans/factory/support/DefaultListableBeanFactory.java
 verifiedIn: unverified

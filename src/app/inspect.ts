@@ -5,17 +5,30 @@ import { execFile } from "node:child_process";
 import { access, constants, lstat } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
+import { z } from "zod";
 import { redact } from "../core/evidence/index.js";
 import { runGit } from "../core/git/index.js";
+import { ARTIFACTS_DIR, readJob, readJsonIfExists } from "../core/jobs/index.js";
 import { checkApproval } from "../core/policy/index.js";
+import {
+  type HintEvidence,
+  type HotFrame,
+  hotFrames,
+  MAX_FILES_SUMMARIZED,
+  MAX_NAME_BYTES,
+  matchHints,
+  TOP_FRAMES,
+} from "../core/profile/index.js";
 import type { Bottleneck, Objective, StackId, TechniqueCard, UfoConfig } from "../domain/index.js";
 import type { Exec } from "../worker/index.js";
+import { activeRun } from "./active.js";
 import { approvalSubject, type CardSet, loadCards } from "./cards.js";
 import { draftConfigFor, type LoadedConfig, loadConfig } from "./config.js";
 import { type AppContext, homeFor, type Repo, repoOf } from "./context.js";
 import { type DetectedStack, detectStacks } from "./detect.js";
 import { captureEnv } from "./env.js";
 import { AppError, describeFailure } from "./errors.js";
+import { JOB_KINDS } from "./jobs/index.js";
 import { type ApprovedCommand, approvedCommands } from "./review.js";
 
 const execFileAsync = promisify(execFile);
@@ -343,21 +356,39 @@ export async function checkCapabilities(context: AppContext): Promise<Capability
   return redact(report);
 }
 
+/** Cards of a listing ranked by a profile that carry their evidence; further matches rank first without it. */
+export const MAX_EVIDENCE_CARDS = 12;
+
+export interface TechniqueListEntry {
+  id: string;
+  domain: string;
+  title: string;
+  kind: string;
+  riskClass: string;
+  /** Stacks the card applies to; empty means any. */
+  stacks: StackId[];
+  bottlenecks: Bottleneck[];
+  /** With a profile, only on the cards that carry evidence, so the ranked index stays small. */
+  expectedEffect?: string | undefined;
+  /** ufo.yaml enables it; only enabled cards can be submitted. */
+  enabled: boolean;
+  /**
+   * With a profile: the hot frames holding one of the card's frame hints, the largest share
+   * first. A lead to check against the card's signals, not proof.
+   */
+  evidence?: HintEvidence[] | undefined;
+}
+
 export interface TechniqueListing {
   /** One compact entry per card; `getTechnique` opens the full card. */
-  cards: {
-    id: string;
-    domain: string;
-    title: string;
-    kind: string;
-    riskClass: string;
-    /** Stacks the card applies to; empty means any. */
-    stacks: StackId[];
-    bottlenecks: Bottleneck[];
-    expectedEffect?: string | undefined;
-    /** ufo.yaml enables it; only enabled cards can be submitted. */
-    enabled: boolean;
-  }[];
+  cards: TechniqueListEntry[];
+  /**
+   * With a profile: the cards it points at beyond `MAX_EVIDENCE_CARDS`, listed next without
+   * evidence or expected effect.
+   */
+  evidenceOmitted?: number | undefined;
+  /** Why a profile did not rank the listing, or that no card's frame hints matched it. */
+  note?: string | undefined;
   /** Why only the built-in cards are listed: ufo.yaml or its card directories cannot be read. */
   configError?: string | undefined;
 }
@@ -369,10 +400,132 @@ function rank(card: TechniqueCard, wanted: ReadonlySet<StackId>): number {
 }
 
 /**
+ * The index entries of `cards`, already filtered: for the `wanted` stacks first, then by id.
+ * With a profile's `frames`, the cards whose frame hints they show come first, the largest
+ * share first, the first `MAX_EVIDENCE_CARDS` of them with their evidence.
+ */
+export function indexEntries(
+  cards: readonly TechniqueCard[],
+  enabled: ReadonlySet<string>,
+  wanted: ReadonlySet<StackId>,
+  frames?: readonly HotFrame[],
+): Pick<TechniqueListing, "cards" | "evidenceOmitted"> {
+  const ranked = cards
+    .map((card) => ({
+      card,
+      evidence: frames === undefined ? [] : matchHints(card.frameHints, frames),
+    }))
+    .sort(
+      (a, b) =>
+        (b.evidence[0]?.share ?? -1) - (a.evidence[0]?.share ?? -1) ||
+        rank(a.card, wanted) - rank(b.card, wanted) ||
+        a.card.id.localeCompare(b.card.id),
+    );
+  let carried = 0;
+  let omitted = 0;
+  const entries = ranked.map(({ card, evidence }): TechniqueListEntry => {
+    const matched = evidence.length > 0;
+    const shown = matched && carried < MAX_EVIDENCE_CARDS;
+    if (shown) carried++;
+    else if (matched) omitted++;
+    return {
+      id: card.id,
+      domain: card.domain,
+      title: card.title,
+      kind: card.kind,
+      riskClass: card.riskClass,
+      stacks: [...card.stacks],
+      bottlenecks: [...card.bottlenecks],
+      expectedEffect: frames === undefined || shown ? card.expectedEffect : undefined,
+      enabled: enabled.has(card.id),
+      ...(shown ? { evidence } : {}),
+    };
+  });
+  return { cards: entries, ...(omitted > 0 ? { evidenceOmitted: omitted } : {}) };
+}
+
+/** A listed frame as a summary writes it: at most `MAX_NAME_BYTES` of JSON. */
+const ArtifactFrameSchema = z.object({
+  frame: z
+    .string()
+    .refine((frame) => Buffer.byteLength(JSON.stringify(frame)) - 2 <= MAX_NAME_BYTES),
+  pct: z.number().min(0).max(100),
+});
+
+/** The part of a `profile_target` artifact the index reads, bounded as a summary writes it. */
+const ProfileArtifactSchema = z.object({
+  hotspots: z
+    .object({
+      files: z
+        .array(
+          z.union([
+            z.object({
+              valid: z.literal(true),
+              self: z.array(ArtifactFrameSchema).max(TOP_FRAMES),
+              total: z.array(ArtifactFrameSchema).max(TOP_FRAMES),
+            }),
+            z.object({ valid: z.literal(false) }),
+          ]),
+        )
+        .max(MAX_FILES_SUMMARIZED),
+    })
+    .optional(),
+});
+
+/**
+ * The hot frames of the active run's profile job `jobId`, or why there are none. `usage` for an
+ * id that is no job of the run, a job that is no profile, or a profile that has not succeeded.
+ */
+async function profileFrames(
+  context: AppContext,
+  jobId: string,
+): Promise<{ readonly frames: HotFrame[] } | { readonly note: string }> {
+  const active = await activeRun(context);
+  const job = await readJob(active.runDir, jobId).catch((error: unknown) => {
+    if (error instanceof Error && /unknown job|must be a job id/.test(error.message)) {
+      throw new AppError("usage", `no job ${jobId} in run ${active.runId}`);
+    }
+    throw error;
+  });
+  if (job.kind !== JOB_KINDS.profile) {
+    throw new AppError(
+      "usage",
+      `${jobId} is a ${job.kind} job; pass the job id profile_target returned`,
+    );
+  }
+  if (job.status !== "succeeded") {
+    throw new AppError(
+      "usage",
+      `profile ${jobId} is ${job.status}; wait for it with get_job, or profile again`,
+    );
+  }
+  const artifact = ProfileArtifactSchema.safeParse(
+    await readJsonIfExists(path.join(active.runDir, ARTIFACTS_DIR, `profile-${jobId}.json`)),
+  );
+  if (!artifact.success) {
+    return { note: `the artifact of profile ${jobId} cannot be read; the listing is not ranked` };
+  }
+  const { hotspots } = artifact.data;
+  if (hotspots === undefined) {
+    return {
+      note: `profile ${jobId} has no hot spots (ufo.yaml has no workload.profile); the listing is not ranked`,
+    };
+  }
+  const frames = hotFrames(hotspots.files);
+  if (frames.length === 0) {
+    return {
+      note: `profile ${jobId} has no profile file that could be read; the listing is not ranked`,
+    };
+  }
+  return { frames };
+}
+
+/**
  * `list_techniques`: an index of the cards UFO knows for this repository, optionally of one domain, one
  * stack (cards for that stack and cards for any stack), or one bottleneck. Without a stack
  * filter the cards for the repository's detected stacks come first, then the stack-independent
- * ones.
+ * ones. With a profile job of the active run, the cards whose frame hints its hot frames show
+ * come before all of them.
  */
 export async function listTechniques(
   context: AppContext,
@@ -380,9 +533,14 @@ export async function listTechniques(
     readonly domain?: string;
     readonly stack?: StackId;
     readonly bottleneck?: Bottleneck;
+    readonly profileJobId?: string;
   } = {},
 ): Promise<TechniqueListing> {
   const repo = await repoOf(context);
+  const profile =
+    options.profileJobId === undefined
+      ? undefined
+      : await profileFrames(context, options.profileJobId);
   const read = await readConfig(repo, context);
   const cards = "error" in read ? await loadCards(repo.root, context) : read.cards;
   const enabled = new Set("error" in read ? [] : read.loaded.config.cards);
@@ -391,7 +549,7 @@ export async function listTechniques(
       ? (await detectStacks(repo.root)).map((stack) => stack.id)
       : [options.stack],
   );
-  const listed = [...cards.values()]
+  const filtered = [...cards.values()]
     .map(({ card }) => card)
     .filter((card) => options.domain === undefined || card.domain === options.domain)
     .filter(
@@ -402,21 +560,18 @@ export async function listTechniques(
     )
     .filter(
       (card) => options.bottleneck === undefined || card.bottlenecks.includes(options.bottleneck),
-    )
-    .sort((a, b) => rank(a, wanted) - rank(b, wanted) || a.id.localeCompare(b.id))
-    .map((card) => ({
-      id: card.id,
-      domain: card.domain,
-      title: card.title,
-      kind: card.kind,
-      riskClass: card.riskClass,
-      stacks: [...card.stacks],
-      bottlenecks: [...card.bottlenecks],
-      expectedEffect: card.expectedEffect,
-      enabled: enabled.has(card.id),
-    }));
+    );
+  const frames = profile !== undefined && "frames" in profile ? profile.frames : undefined;
+  const listed = indexEntries(filtered, enabled, wanted, frames);
+  const note =
+    profile !== undefined && "note" in profile
+      ? profile.note
+      : frames !== undefined && listed.cards[0]?.evidence === undefined
+        ? `no listed card's frame hints are among the hot frames of profile ${options.profileJobId ?? ""}`
+        : undefined;
   return redact({
-    cards: listed,
+    ...listed,
+    ...(note === undefined ? {} : { note }),
     ...("error" in read ? { configError: read.error } : {}),
   });
 }

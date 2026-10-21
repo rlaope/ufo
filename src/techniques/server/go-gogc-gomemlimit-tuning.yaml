@@ -9,6 +9,9 @@ signals:
   - "CPU profile shows runtime.gcBgMarkWorker with a large cumulative share, or GODEBUG=gctrace=1 shows frequent cycles with a small live heap"
   - "Container memory limit is much larger than the process RSS, so GC runs often while memory sits unused"
   - "Alternatively the process is OOM-killed by the container at a heap peak while GOGC is at the default 100"
+frameHints:
+  - { match: "runtime.gcBgMarkWorker", minShare: 0.1 }
+  - { match: "runtime.gcDrain", minShare: 0.1 }
 preconditions:
   - "Go 1.19+ for GOMEMLIMIT"
   - "The process owns its memory budget (a service in a fixed-memory container)"
@@ -30,4 +33,6 @@ traps:
 expectedEffect: "Less GC CPU at the cost of memory, and OOM protection near the limit; varies, measure."
 sources:
   - https://go.dev/doc/gc-guide
+  - https://github.com/golang/go/blob/master/src/runtime/mgc.go
+  - https://github.com/golang/go/blob/master/src/runtime/mgcmark.go
 verifiedIn: unverified

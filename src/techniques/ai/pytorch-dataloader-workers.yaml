@@ -12,6 +12,8 @@ signals:
   - torch.profiler or step timing shows the GPU idle while the main process loads or preprocesses a batch (gaps between kernels, long DataLoader next time)
   - DataLoader is built with the default num_workers=0 (synchronous loading)
   - GPU utilization sampled during training drops periodically
+frameHints:
+  - "torch/utils/data/dataloader.py"
 preconditions:
   - PyTorch with torch.utils.data.DataLoader
   - Dataset is safe to read from several processes
@@ -36,4 +38,5 @@ sources:
   - https://docs.pytorch.org/docs/2.14/notes/cuda.html
   - https://docs.pytorch.org/tutorials/recipes/recipes/tuning_guide.html
   - https://docs.pytorch.org/tutorials/recipes/recipes/profiler_recipe.html
+  - https://github.com/pytorch/pytorch/blob/main/torch/utils/data/dataloader.py
 verifiedIn: unverified

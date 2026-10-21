@@ -9,6 +9,13 @@ signals:
   - "CPU profile (go tool pprof top -cum) shows runtime.mallocgc or runtime.gcAssistAlloc with a large cumulative share"
   - "Heap profile with alloc_space (go tool pprof -sample_index=alloc_space) names a few functions allocating most bytes or objects"
   - "go test -bench -benchmem shows high allocs/op; go build -gcflags=-m shows values escaping to heap"
+frameHints:
+  - "runtime.mallocgc"
+  - "runtime.gcAssistAlloc"
+  - "runtime.growslice"
+  - "runtime.makeslice"
+  - "runtime.newobject"
+  - "runtime.concatstrings"
 preconditions:
   - "Allocation is confirmed by profile before changing code"
   - "Pooled objects can be fully reset before reuse"
@@ -32,4 +39,8 @@ expectedEffect: "Lower GC CPU and allocation latency in proportion to the alloca
 sources:
   - https://pkg.go.dev/sync#Pool
   - https://go.dev/doc/gc-guide
+  - https://github.com/golang/go/blob/master/src/runtime/malloc.go
+  - https://github.com/golang/go/blob/master/src/runtime/mgcmark.go
+  - https://github.com/golang/go/blob/master/src/runtime/slice.go
+  - https://github.com/golang/go/blob/master/src/runtime/string.go
 verifiedIn: unverified

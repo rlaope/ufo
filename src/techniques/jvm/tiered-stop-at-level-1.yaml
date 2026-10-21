@@ -8,6 +8,10 @@ bottlenecks: [startup, cpu]
 signals:
   - "The process lives for seconds to a few minutes (CLI, batch step, test run, build tool) and JFR or async-profiler cpu mode shows C2 compiler threads (C2 CompilerThread) consuming significant CPU during the run."
   - "On a CPU-limited container the JIT compiler threads compete with application threads during startup (high CPU at startup, low steady-state load)."
+frameHints:
+  - { match: "C2Compiler::compile_method", minShare: 0.1 }
+  - { match: "Compile::Optimize", minShare: 0.1 }
+  - { match: "C2 CompilerThread", minShare: 0.1 }
 preconditions:
   - "Workload is short-lived or startup-bound; it will not run long enough to benefit from C2 optimizations."
 steps:
@@ -26,4 +30,7 @@ sources:
   - https://docs.oracle.com/en/java/javase/21/vm/java-hotspot-virtual-machine-performance-enhancements.html
   - https://github.com/openjdk/jdk/blob/master/src/hotspot/share/compiler/compiler_globals.hpp
   - https://github.com/openjdk/jdk/blob/master/src/hotspot/share/compiler/compilerDefinitions.hpp
+  - https://github.com/openjdk/jdk/blob/master/src/hotspot/share/opto/c2compiler.cpp
+  - https://github.com/openjdk/jdk/blob/master/src/hotspot/share/opto/compile.cpp
+  - https://github.com/openjdk/jdk/blob/master/src/hotspot/share/compiler/compileBroker.cpp
 verifiedIn: unverified

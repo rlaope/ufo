@@ -58,8 +58,11 @@ The tools are `inspect_target`, `check_capabilities`, `list_techniques`, `get_te
 
    Name the bottleneck with [bottlenecks.md](bottlenecks.md): its category, and the evidence that
    shows it (the frames and their shares). Then call `list_techniques` with the stack
-   `inspect_target` detected and that `bottleneck`, and open each candidate with `get_technique`
-   to check its `signals` and `preconditions` against the evidence. Done when you have the
+   `inspect_target` detected, that `bottleneck`, and `profile_job_id` (the profile's job id). The
+   cards whose frame hints the hot frames show come first, each with `evidence` (the hint, the
+   frame, its share, and `self` or `total`). Evidence is a lead, not proof: open each candidate
+   with `get_technique` and check its `signals` and `preconditions` against the evidence, and
+   read the cards without evidence too when the bottleneck points at them. Done when you have the
    bottleneck, its evidence, and the cards whose signals the evidence matches, in the order
    bottlenecks.md gives.
 

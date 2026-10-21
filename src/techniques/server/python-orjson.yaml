@@ -8,6 +8,10 @@ bottlenecks: [serialization, cpu]
 signals:
   - "py-spy flame graph shows json.dumps, json.loads, or the framework JSON response encoder (jsonable_encoder, JSONResponse.render) with high self time"
   - "Endpoints return large lists of dicts, dataclasses, datetimes, or UUIDs"
+frameHints:
+  - "json/encoder.py"
+  - "json/decoder.py"
+  - "jsonable_encoder"
 preconditions:
   - "CPython 3.10 or newer (orjson does not support PyPy)"
   - "Callers can accept bytes from dumps, and the owner accepts the documented output differences (NaN and Infinity become null, integers beyond 64 bits raise, strict UTF-8); orjson also adds a dependency"
@@ -30,4 +34,7 @@ traps:
 expectedEffect: "Faster JSON encode and decode on serialization-heavy endpoints; varies, measure."
 sources:
   - https://github.com/ijl/orjson
+  - https://github.com/python/cpython/blob/main/Lib/json/encoder.py
+  - https://github.com/python/cpython/blob/main/Lib/json/decoder.py
+  - https://github.com/fastapi/fastapi/blob/master/fastapi/encoders.py
 verifiedIn: unverified
