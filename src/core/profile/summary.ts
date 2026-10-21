@@ -14,6 +14,21 @@ export const STACK_FRAMES = 5;
 /** A frame or file name at most this many bytes of JSON; a longer one keeps its start and end. */
 export const MAX_NAME_BYTES = 80;
 const MAX_REASON_LENGTH = 200;
+/**
+ * A frame name as a parser keeps it. Names are counted per sample, and a speedscope frame costs
+ * one byte per reference however long its name, so a longer name is cut where it is read.
+ */
+export const MAX_RAW_NAME = 1024;
+
+/**
+ * `name` at most `MAX_RAW_NAME` characters, its start and end kept. A shown name keeps less than
+ * 50 bytes from either end, so this cut, half the cap from each, is never part of what is shown.
+ */
+export function rawName(name: string): string {
+  if (name.length <= MAX_RAW_NAME) return name;
+  const half = MAX_RAW_NAME / 2;
+  return `${name.slice(0, half - 1)}…${name.slice(-half)}`;
+}
 
 export interface FrameShare {
   frame: string;
@@ -57,6 +72,8 @@ export class Tally {
   readonly self = new Map<string, number>();
   readonly total = new Map<string, number>();
   readonly stacks = new Map<string, { frames: readonly string[]; weight: number }>();
+  /** A number per frame name, so a stack's key is short whatever its names. */
+  private readonly ids = new Map<string, number>();
 
   addSelf(frame: string, weight: number): void {
     this.self.set(frame, (this.self.get(frame) ?? 0) + weight);
@@ -71,7 +88,16 @@ export class Tally {
    * calling itself once.
    */
   addStack(frames: readonly string[], weight: number): void {
-    const key = JSON.stringify(frames);
+    const key = frames
+      .map((frame) => {
+        let id = this.ids.get(frame);
+        if (id === undefined) {
+          id = this.ids.size;
+          this.ids.set(frame, id);
+        }
+        return id;
+      })
+      .join(",");
     const entry = this.stacks.get(key);
     if (entry === undefined) this.stacks.set(key, { frames, weight });
     else entry.weight += weight;

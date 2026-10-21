@@ -1,4 +1,4 @@
-import { invalid, type Parsed, Tally } from "./summary.js";
+import { invalid, type Parsed, rawName, Tally } from "./summary.js";
 
 /** Lines (distinct stacks) of a folded file; a larger one is refused rather than cut. */
 export const MAX_COLLAPSED_LINES = 1_000_000;
@@ -29,7 +29,7 @@ export function parseCollapsed(text: string): Parsed {
     if (at <= 0 || !COUNT.test(count)) {
       return invalid(`line ${index + 1} is not \`frame;frame;... count\``);
     }
-    tally.addSample(line.slice(0, at).trimEnd().split(";"), Number(count));
+    tally.addSample(line.slice(0, at).trimEnd().split(";").map(rawName), Number(count));
   }
   return { valid: true, tally, unit: "samples" };
 }

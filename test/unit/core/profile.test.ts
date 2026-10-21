@@ -23,6 +23,10 @@ import {
   MAX_NAME_BYTES,
   MAX_PROFILE_BYTES,
   MAX_PROFILE_FILES_READ,
+  MAX_RAW_NAME,
+  parseCollapsed,
+  parseCpuprofile,
+  parseSpeedscope,
   readProfileDir,
   STACK_FRAMES,
   summarizeProfile,
@@ -298,8 +302,8 @@ describe("a speedscope file", () => {
         { frame: "d", pct: 28.6 },
       ],
       stacks: [
-        { frames: ["a", "b (app/b.py:12)", "c"], pct: 35.7 },
         { frames: ["a", "b (app/b.py:12)"], pct: 35.7 },
+        { frames: ["a", "b (app/b.py:12)", "c"], pct: 35.7 },
         { frames: ["a", "b (app/b.py:12)", "d"], pct: 28.6 },
       ],
     });
@@ -324,8 +328,8 @@ describe("a speedscope file", () => {
       ],
       stacks: [
         { frames: ["a", "b"], pct: 42.9 },
-        { frames: ["a", "b", "c"], pct: 28.6 },
         { frames: ["a"], pct: 28.6 },
+        { frames: ["a", "b", "c"], pct: 28.6 },
       ],
     });
   });
@@ -431,6 +435,62 @@ describe("a frame name", () => {
 
 // Security review: a secret is replaced whole before a long name is cut, since a cut one (the
 // tail of a credential URL or a key) no longer matches what finds it.
+// Security review: a speedscope frame is referenced by index, one byte a reference however long
+// its name, so names are cut where they are read and stacks are keyed by number.
+describe("long frame names", () => {
+  it("cost no more per sample than short ones", () => {
+    const frames = Array.from({ length: 20 }, (_, i) => ({
+      name: `f${i}${"n".repeat(1_000_000)}`,
+    }));
+    const samples = Array.from({ length: 1000 }, (_, i) =>
+      Array.from({ length: 5 }, (_, d) => (i + d) % 20),
+    );
+    const text = JSON.stringify({
+      shared: { frames },
+      profiles: [{ type: "sampled", unit: "none", samples, weights: samples.map(() => 1) }],
+    });
+    const started = Date.now();
+    const parsed = parseSpeedscope(text);
+    expect(Date.now() - started).toBeLessThan(5000);
+    if (!parsed.valid) throw new Error(parsed.reason);
+    expect(Math.max(...[...parsed.tally.self.keys()].map((k) => k.length))).toBeLessThanOrEqual(
+      MAX_RAW_NAME,
+    );
+    expect(Math.max(...[...parsed.tally.stacks.keys()].map((k) => k.length))).toBeLessThan(64);
+  });
+
+  it("are cut where they are read in every format, keeping both ends", () => {
+    const long = `start${"m".repeat(5000)}end`;
+    const collapsed = parseCollapsed(`main;${long} 1`);
+    const cpuprofile = parseCpuprofile(
+      JSON.stringify({
+        nodes: [
+          { id: 1, callFrame: { functionName: "(root)" }, children: [2] },
+          { id: 2, callFrame: { functionName: long, url: `file:///${long}.js`, lineNumber: 0 } },
+        ],
+        samples: [2],
+        timeDeltas: [0],
+        startTime: 0,
+        endTime: 1,
+      }),
+    );
+    const speedscope = parseSpeedscope(
+      JSON.stringify({
+        shared: { frames: [{ name: long, file: long }] },
+        profiles: [{ type: "sampled", unit: "none", samples: [[0]], weights: [1] }],
+      }),
+    );
+    for (const parsed of [collapsed, cpuprofile, speedscope]) {
+      if (!parsed.valid) throw new Error(parsed.reason);
+      for (const frame of parsed.tally.self.keys()) {
+        expect(frame.length).toBeLessThanOrEqual(2 * MAX_RAW_NAME + 20);
+        expect(frame.startsWith("start")).toBe(true);
+        expect(frame).toMatch(/end(?: \(.*end(?:\.js:1)?\))?$/);
+      }
+    }
+  });
+});
+
 describe("a name with a secret in it", () => {
   const PASSWORD = "Sup3rS3cretPassw0rd1234";
   const KEY = `sk-ant-${"A1b2C3d4".repeat(8)}`;

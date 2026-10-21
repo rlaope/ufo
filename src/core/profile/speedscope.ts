@@ -1,4 +1,4 @@
-import { invalid, type Parsed, STACK_FRAMES, Tally } from "./summary.js";
+import { invalid, type Parsed, rawName, STACK_FRAMES, Tally } from "./summary.js";
 
 const UNITS: ReadonlySet<string> = new Set([
   "none",
@@ -22,9 +22,10 @@ function isWeight(value: unknown): value is number {
 /** `name (file:line)`, as speedscope shows a frame. */
 function frameOf(frame: Json): string | undefined {
   if (typeof frame.name !== "string") return undefined;
-  if (typeof frame.file !== "string" || frame.file === "") return frame.name;
+  const name = rawName(frame.name);
+  if (typeof frame.file !== "string" || frame.file === "") return name;
   const line = typeof frame.line === "number" ? `:${frame.line}` : "";
-  return `${frame.name} (${frame.file}${line})`;
+  return `${name} (${rawName(frame.file)}${line})`;
 }
 
 /** A sampled profile: each stack, root first, with its weight. */

@@ -1,4 +1,4 @@
-import { invalid, type Parsed, STACK_FRAMES, Tally } from "./summary.js";
+import { invalid, type Parsed, rawName, STACK_FRAMES, Tally } from "./summary.js";
 
 /**
  * Call tree nodes of one `.cpuprofile`, about twice as many as `MAX_PROFILE_BYTES` holds of the
@@ -16,9 +16,9 @@ function isObject(value: unknown): value is Json {
 function frameOf(callFrame: Json): string {
   const name =
     typeof callFrame.functionName === "string" && callFrame.functionName !== ""
-      ? callFrame.functionName
+      ? rawName(callFrame.functionName)
       : "(anonymous)";
-  const url = typeof callFrame.url === "string" ? callFrame.url : "";
+  const url = typeof callFrame.url === "string" ? rawName(callFrame.url) : "";
   if (url === "") return name;
   const line = callFrame.lineNumber;
   return typeof line === "number" && Number.isInteger(line) && line >= 0
