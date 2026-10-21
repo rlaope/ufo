@@ -226,8 +226,14 @@ the profiler this block sets up and reads what the profiler writes:
   JavaScript listener exits instead; UFO's preload (`src/presets/node-exit-on-signal.cjs`, shipped
   with UFO) is that listener on the main thread, for a process with no listener of its own (it
   exits with 128 + the signal's number). A process with its own listener keeps it, and its
-  profile is written when that listener exits. `NODE_OPTIONS` reaches every Node process the
-  step starts, and each writes its own file.
+  profile is written when that listener exits. signal-exit's listeners (under execa,
+  write-file-atomic, and others) do not count as the process's own: it waits for every other
+  listener to be gone, so the preload exits, and signal-exit's exit callbacks run. A listener added
+  with `process.prependOnceListener` is gone when the preload's runs, so the preload exits right
+  after it: a shutdown it starts asynchronously is cut short. The preload's path is that of the
+  UFO install that runs the job, so `ufo update` changes it without a new approval; it is UFO's own
+  code, like the rest of the install. `NODE_OPTIONS` reaches every Node process the step starts,
+  and each writes its own file.
 - `env`: at most 16 variables added to the profiled steps of a profile job, and to nothing else.
   Names are uppercase (`[A-Z_][A-Z0-9_]*`); `PATH`, `HOME`, `UFO_*`, and names that look like
   secrets (`TOKEN`, `SECRET`, `PASSWORD`, `API_KEY`, `AWS_*`, and the like) are refused

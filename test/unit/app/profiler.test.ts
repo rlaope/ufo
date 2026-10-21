@@ -35,7 +35,7 @@ interface Exit {
 
 /**
  * Runs `script` with `env`, sends `signal` once it prints `ready`, and returns how it ended.
- * The child is killed if it outlives the test's budget.
+ * The child is killed if it is still running 4 s later.
  */
 function signalled(script: string, signal: NodeJS.Signals, env: NodeJS.ProcessEnv): Promise<Exit> {
   const file = path.join(dir, "app.mjs");
@@ -43,7 +43,8 @@ function signalled(script: string, signal: NodeJS.Signals, env: NodeJS.ProcessEn
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [file], { env, stdio: ["ignore", "pipe", "inherit"] });
     let stdout = "";
-    const guard = setTimeout(() => child.kill("SIGKILL"), 10_000);
+    // Within the test's own 5 s, so a child that ignores the signal never outlives the test.
+    const guard = setTimeout(() => child.kill("SIGKILL"), 4000);
     child.stdout.on("data", (chunk: Buffer) => {
       stdout += chunk.toString();
       if (stdout.includes("ready\n") && !stdout.includes("sent\n")) {
@@ -82,6 +83,49 @@ describe("the exit-on-signal preload", () => {
     expect(exit).toMatchObject({ code, signal: null });
     expect(exit.stdout).toContain(`exit ${code}`);
   });
+
+  // signal-exit's rule (v3 counts its listeners on process.__signal_exit_emitter__, v4 on
+  // Symbol.for("signal-exit emitter")): it acts only when its listeners are all there are.
+  it.each([
+    ["v3", "process.__signal_exit_emitter__ = emitter;"],
+    [
+      "v4",
+      'Object.defineProperty(globalThis, Symbol.for("signal-exit emitter"), { value: emitter });',
+    ],
+  ])(
+    "does not wait for signal-exit %s, which waits for it, and its exit callback runs",
+    async (_v, publish) => {
+      const out = path.join(dir, "prof");
+      const { env } = profileSettings({ preset: "node-cpu" }, out);
+      const script = `const emitter = { count: 0 };
+${publish}
+const emit = process.emit;
+process.emit = function (event, code, ...rest) {
+  if (event === "exit") console.log(\`cleanup \${code}\`);
+  return emit.call(this, event, code, ...rest);
+};
+for (const sig of ["SIGTERM", "SIGINT"]) {
+  process.on(sig, function listener() {
+    if (process.listeners(sig).length === emitter.count) {
+      process.removeListener(sig, listener);
+      console.log("signal-exit acted");
+      process.kill(process.pid, sig);
+    }
+  });
+}
+emitter.count += 1;
+${WAITS}`;
+      const bare = await signalled(script, "SIGTERM", process.env);
+      expect(bare).toMatchObject({ code: null, signal: "SIGTERM" });
+      expect(bare.stdout).toContain("signal-exit acted");
+      const started = Date.now();
+      const exit = await signalled(script, "SIGTERM", { ...process.env, ...env });
+      expect(Date.now() - started).toBeLessThan(5000);
+      expect(exit).toMatchObject({ code: 143, signal: null });
+      expect(exit.stdout).toContain("cleanup 143");
+      expect(readdirSync(out)).toHaveLength(1);
+    },
+  );
 
   it("leaves a process with its own listener to it", async () => {
     const exit = await signalled(
