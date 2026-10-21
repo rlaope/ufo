@@ -73,7 +73,7 @@ export function parseCpuprofile(text: string): Parsed {
   const children: number[][] = Array.from({ length: count }, () => []);
   const link = (child: unknown, of: number): string | undefined => {
     const at = typeof child === "number" ? position.get(child) : undefined;
-    if (at === undefined) return `node ${String(child)} is not in nodes`;
+    if (at === undefined) return `a child of node ${String(nodes[of]?.id)} is not in nodes`;
     if (parent[at] !== -1 || at === of) return "the nodes do not form a tree";
     parent[at] = of;
     children[of]?.push(at);
@@ -93,7 +93,7 @@ export function parseCpuprofile(text: string): Parsed {
     for (const node of nodes as Json[]) {
       if (node.parent === undefined) continue;
       const of = typeof node.parent === "number" ? position.get(node.parent) : undefined;
-      if (of === undefined) return invalid(`node ${String(node.parent)} is not in nodes`);
+      if (of === undefined) return invalid(`the parent of node ${String(node.id)} is not in nodes`);
       const problem = link(node.id, of);
       if (problem !== undefined) return invalid(problem);
     }

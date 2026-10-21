@@ -2,11 +2,19 @@ import { constants } from "node:fs";
 import { lstat, open, readdir } from "node:fs/promises";
 import path from "node:path";
 import type { ProfileFormat } from "../../domain/index.js";
+import { createTextRedactor } from "../evidence/index.js";
 import { assertRealDir, isErrno } from "../jobs/index.js";
 import { parseCollapsed } from "./collapsed.js";
 import { parseCpuprofile } from "./cpuprofile.js";
 import { parseSpeedscope } from "./speedscope.js";
-import { type FileHotspots, heaviestFiles, invalid, type Parsed, summarize } from "./summary.js";
+import {
+  type FileHotspots,
+  heaviestFiles,
+  invalid,
+  type NameRedactor,
+  type Parsed,
+  summarize,
+} from "./summary.js";
 
 /** Bytes read of one profile file; a larger file is refused unread. */
 export const MAX_PROFILE_BYTES = 32 * 1024 * 1024;
@@ -25,9 +33,11 @@ export function summarizeProfile(
   text: string,
   format: ProfileFormat,
   prefixes: readonly string[] = [],
+  redact?: NameRedactor,
 ): FileHotspots {
-  const body = text.startsWith("﻿") ? text.slice(1) : text;
-  return summarize(file, PARSERS[format](body), prefixes);
+  // Without a byte order mark.
+  const body = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+  return summarize(file, PARSERS[format](body), prefixes, redact);
 }
 
 async function readCapped(file: string): Promise<string | Parsed> {
@@ -66,6 +76,7 @@ export async function readProfileDir(
   dir: string,
   format: ProfileFormat,
   prefixes: readonly string[] = [],
+  redact: NameRedactor = createTextRedactor({}),
 ): Promise<{ files: FileHotspots[]; omitted: number }> {
   let names: string[];
   try {
@@ -95,8 +106,8 @@ export async function readProfileDir(
             : await readCapped(path.join(dir, name));
     files.push(
       typeof read === "string"
-        ? summarizeProfile(name, read, format, prefixes)
-        : summarize(name, read, prefixes),
+        ? summarizeProfile(name, read, format, prefixes, redact)
+        : summarize(name, read, prefixes, redact),
     );
   }
   return heaviestFiles(files, Math.max(0, entries.length - MAX_PROFILE_FILES_READ));

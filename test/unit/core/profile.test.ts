@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createTextRedactor } from "../../../src/core/evidence/index.js";
 import {
   type FileHotspots,
   heaviestFiles,
@@ -425,6 +426,56 @@ describe("a frame name", () => {
     expect(summarizeProfile("short", "main;f 1", "collapsed")).toMatchObject({
       self: [{ frame: "f" }],
     });
+  });
+});
+
+// Security review: a secret is replaced whole before a long name is cut, since a cut one (the
+// tail of a credential URL or a key) no longer matches what finds it.
+describe("a name with a secret in it", () => {
+  const PASSWORD = "Sup3rS3cretPassw0rd1234";
+  const KEY = `sk-ant-${"A1b2C3d4".repeat(8)}`;
+  const ENV_SECRET = "hunter2-but-longer-9f8e7d";
+  const leaks = (text: string) =>
+    [PASSWORD, KEY, ENV_SECRET].some((secret) =>
+      // Any 8 characters of a secret in a row.
+      Array.from({ length: secret.length - 7 }, (_, i) => secret.slice(i, i + 8)).some((part) =>
+        text.includes(part),
+      ),
+    );
+
+  it("is redacted before it is cut, in frames and in the file name", () => {
+    const pad = "x".repeat(120);
+    const text = [
+      `process 42:"python app.py --dsn postgres://app:${PASSWORD}@db.internal:5432/app ${pad}";handle 3`,
+      `main;run --api-key=${KEY} ${pad} 2`,
+      `main;connect (${pad} ${ENV_SECRET} ${pad}) 1`,
+    ].join("\n");
+    const redact = createTextRedactor({ env: { DB_PASSWORD: ENV_SECRET } });
+    const summary = summarizeProfile(
+      `prof-postgres://app:${PASSWORD}@db.internal-${pad}.collapsed`,
+      text,
+      "collapsed",
+      [],
+      redact,
+    );
+    const shown = JSON.stringify(summary);
+    expect(leaks(shown)).toBe(false);
+    expect(shown).toContain("<redacted:");
+    // Unredacted, the cut names do show part of each.
+    expect(leaks(JSON.stringify(summarizeProfile("f", text, "collapsed")))).toBe(true);
+  });
+
+  it("is redacted when read from a profile directory, by default", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "ufo-profile-"));
+    try {
+      writeFileSync(
+        path.join(dir, "p.collapsed"),
+        `main;run --api-key=${KEY} ${"y".repeat(120)} 2\n`,
+      );
+      expect(leaks(JSON.stringify(await readProfileDir(dir, "collapsed")))).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

@@ -124,7 +124,8 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return proto === Object.prototype || proto === null;
 }
 
-function createTextRedactor(options: RedactOptions): (text: string) => string {
+/** `redact` for one string at a time, its patterns built once for many strings. */
+export function createTextRedactor(options: RedactOptions): (text: string) => string {
   const env = options.env ?? process.env;
   const sensitive = Object.entries(env).filter(
     (entry): entry is [string, string] =>

@@ -136,16 +136,24 @@ function fitBytes(text: string, max: number): string {
   return `${head}…${tail}`;
 }
 
+/** Replaces secrets in a name; identity by default. */
+export type NameRedactor = (text: string) => string;
+
 /**
  * A name as a result shows it: the `prefixes` (arm A's directory) left out, so a path is the
- * repository's own; one line, well-formed, at most `MAX_NAME_BYTES`.
+ * repository's own; `redact`ed whole, before anything is cut, since a cut secret no longer
+ * matches what finds it; one line, well-formed, at most `MAX_NAME_BYTES`.
  */
-export function displayName(raw: string, prefixes: readonly string[] = []): string {
+export function displayName(
+  raw: string,
+  prefixes: readonly string[] = [],
+  redact: NameRedactor = (text) => text,
+): string {
   let name = raw;
   for (const prefix of prefixes) if (prefix !== "") name = name.replaceAll(prefix, "");
-  name = name
+  name = redact(name)
     .replace(/\p{Cc}+/gu, " ")
-    .replace(/\p{Cs}/gu, "�")
+    .replace(/\p{Cs}/gu, String.fromCharCode(0xfffd))
     .trim();
   return fitBytes(name === "" ? "(unnamed)" : name, MAX_NAME_BYTES);
 }
@@ -166,8 +174,9 @@ export function summarize(
   file: string,
   parsed: Parsed,
   prefixes: readonly string[] = [],
+  redact?: NameRedactor,
 ): FileHotspots {
-  const name = displayName(file);
+  const name = displayName(file, [], redact);
   if (!parsed.valid) return { file: name, valid: false, reason: parsed.reason };
   const { tally } = parsed;
   if (!(tally.weight > 0) || !Number.isFinite(tally.weight)) {
@@ -177,7 +186,7 @@ export function summarize(
   const frameName = (raw: string) => {
     let shown = names.get(raw);
     if (shown === undefined) {
-      shown = displayName(raw, prefixes);
+      shown = displayName(raw, prefixes, redact);
       names.set(raw, shown);
     }
     return shown;

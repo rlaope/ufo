@@ -1,5 +1,6 @@
 import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
+import { createTextRedactor } from "../../core/evidence/index.js";
 import { resetArms } from "../../core/git/index.js";
 import {
   ARTIFACTS_DIR,
@@ -140,19 +141,23 @@ export async function handleProfile(
       dir: profileDir,
       // Paths in arm A are named relative to the repository. A directory the workload made
       // unreadable or replaced (never followed) costs the hot spots, not the phases and sample.
-      ...(await readProfileDir(dir, settings.format, [`file://${arm.dir}/`, `${arm.dir}/`]).catch(
-        (error: unknown) => {
-          const code = (error as { code?: unknown }).code;
-          return {
-            files: [],
-            omitted: 0,
-            reason:
-              code === "unsafe_state"
-                ? "the workload replaced the profile directory; UFO does not follow it"
-                : `the profile directory cannot be read (${typeof code === "string" ? code : "error"})`,
-          };
-        },
-      )),
+      // Names are redacted whole before they are cut, with the run's command environment too.
+      ...(await readProfileDir(
+        dir,
+        settings.format,
+        [`file://${arm.dir}/`, `${arm.dir}/`],
+        createTextRedactor({ env: { ...process.env, ...open.state.env } }),
+      ).catch((error: unknown) => {
+        const code = (error as { code?: unknown }).code;
+        return {
+          files: [],
+          omitted: 0,
+          reason:
+            code === "unsafe_state"
+              ? "the workload replaced the profile directory; UFO does not follow it"
+              : `the profile directory cannot be read (${typeof code === "string" ? code : "error"})`,
+        };
+      })),
     };
   }
   const json = toJson(result);
