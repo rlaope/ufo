@@ -255,12 +255,11 @@ outside both arms, so nothing the profiler writes reaches a diff. Every step of 
 `UFO_PROFILE_DIR`, so a command can also start a profiler itself. Baselines, samples, oracles,
 and the final check never get `env` or `UFO_PROFILE_DIR`: measurement stays unprofiled.
 
-UFO stops `start` after `teardown` with SIGTERM to its process group, then SIGKILL to the group
-once the process `start` launched has exited, or 2 s after SIGTERM. A profiler that writes when
-its process exits has that long. A wrapper that exits on SIGTERM without waiting for the app,
-such as a shell running `cd app && node server.js` (a single command is run in place of the
-shell, a list is not), ends the group before the app writes its profile; npm forwards the signal
-and waits, so `npm start` is fine.
+UFO stops `start` after `teardown` with SIGTERM to its process group, then SIGKILL to what is left
+of the group 2 s later, or at once when the whole group has exited. A profiler that writes when
+its process exits has those 2 s, even when the process `start` launched ends first: a shell that
+stays as the parent (dash, which is `/bin/sh` on Debian and Ubuntu, or any shell running a list
+such as `cd app && node server.js`) ends at SIGTERM while the app is still writing.
 
 Since `UFO_PROFILE_DIR` is set only in a profile job, a command can start a profiler itself with
 `/bin/sh` parameter expansion, which leaves the bare command in every measured run:

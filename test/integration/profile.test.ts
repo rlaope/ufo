@@ -422,9 +422,14 @@ describe("the node-cpu preset", { timeout: TIMEOUT_MS }, () => {
   });
 
   it("leaves a server's own SIGTERM handler to run, and adds to the NODE_OPTIONS env: passes", async () => {
-    const { toy, logDir } = profileToy(nodeWorkload("node srv.mjs --own-handler"), NODE_FILES, {
-      NODE_OPTIONS: "--no-deprecation",
-    });
+    const { toy, logDir } = profileToy(
+      // A list keeps the shell as start's process, as dash (/bin/sh on Ubuntu) kept it in CI.
+      nodeWorkload("cd . && node srv.mjs --own-handler"),
+      NODE_FILES,
+      {
+        NODE_OPTIONS: "--no-deprecation",
+      },
+    );
     try {
       const printed: string[] = [];
       await approveToy(toy, { print: (text) => printed.push(text) });

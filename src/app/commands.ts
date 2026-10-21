@@ -77,6 +77,16 @@ export function killGroup(pid: number | undefined, signal: NodeJS.Signals): void
   }
 }
 
+/** Whether any process is still in group `pgid`. */
+function groupAlive(pgid: number): boolean {
+  try {
+    process.kill(-pgid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
 /**
  * Signals the group of a leader UFO already reaped. Members keep the group id from being reused
  * while they live; a live process with the leader's PID is another process that reused it
@@ -252,7 +262,12 @@ export async function startBackground(
     running: () => !exited,
     stop: async () => {
       await killChildGroup(child, group, "SIGTERM");
+      const deadline = Date.now() + KILL_GRACE_MS;
       const done = await Promise.race([closed.then(() => true), delay(KILL_GRACE_MS, false)]);
+      // The rest of the group gets the rest of the grace too. A shell that ends at SIGTERM
+      // (dash, and any shell running a list, does not exec the command) leaves the program it
+      // started still finishing, such as a profiler writing its file at exit.
+      while (done && groupAlive(pid) && Date.now() < deadline) await delay(50);
       await killChildGroup(child, group, "SIGKILL");
       if (!done) await closed;
       await untrackChildGroup(options.runDir, pid).catch(() => undefined);

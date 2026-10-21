@@ -18,9 +18,8 @@ profiler, and only those (`start` by default, else `command`): baselines and sam
 unprofiled. The draft `ufo.yaml` from `inspect_target` carries the block for the detected stack:
 
 - Node: `profile: { preset: node-cpu }`, active in the draft. It runs `node --cpu-prof` through
-  `NODE_OPTIONS`, with UFO's preload so a server stopped by SIGTERM still writes its profile. A
-  wrapper that exits without waiting for the server (`cd app && node server.js`) loses it; run
-  the server as the single command, or through npm.
+  `NODE_OPTIONS`, with UFO's preload so a server stopped by SIGTERM still writes its profile
+  (within 2 s of SIGTERM, then UFO kills what is left).
 - JVM: the async-profiler agent through `JAVA_TOOL_OPTIONS`, commented in the draft. The user
   installs async-profiler and sets the library's path; whether it writes on SIGTERM is unverified.
 - Python: py-spy as a wrapper on `start` that only a profile job expands
