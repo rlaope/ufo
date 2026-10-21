@@ -20,6 +20,7 @@ import {
   abandonedStart,
   acquireMachineLock,
   appendLedger,
+  brokenRunDir,
   CONTROL_LOCK_FILE,
   cancelJob,
   createRunState,
@@ -195,8 +196,11 @@ async function cleanUpRuns(home: string, repo: Repo, waitMs: number): Promise<st
     try {
       const runDir = runDirFor(home, repo.repoId, id);
       const run = await readRunIfExists(runDir);
-      // Another start is creating it: nothing to clean up yet.
-      if (run === undefined) continue;
+      if (run === undefined) {
+        // Another start is creating it, or one died before writing run.json and left it.
+        if (await brokenRunDir(runDir)) await rm(runDir, { recursive: true, force: true });
+        continue;
+      }
       if (await abandonedStart(run)) {
         await endAbandonedStart(home, repo, id, Math.max(0, deadline - Date.now()));
         continue;

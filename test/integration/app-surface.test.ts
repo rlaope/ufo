@@ -1,5 +1,5 @@
 import { rmSync, writeFileSync } from "node:fs";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, rm, stat, utimes } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -16,7 +16,12 @@ import {
   submitChange,
 } from "../../src/app/index.js";
 import { main } from "../../src/cli/main.js";
-import { CONTROL_LOCK_FILE, JOBS_DIR, newRunId } from "../../src/core/jobs/index.js";
+import {
+  BROKEN_RUN_DIR_MS,
+  CONTROL_LOCK_FILE,
+  JOBS_DIR,
+  newRunId,
+} from "../../src/core/jobs/index.js";
 import {
   approveToy,
   diffOf,
@@ -141,6 +146,41 @@ describe("a run directory without run.json", { timeout: TIMEOUT_MS }, () => {
       await cancelRun(toy.context, { runId: next.runId });
     } finally {
       await rm(toy.runDir(creating), { recursive: true, force: true });
+    }
+  });
+});
+
+// M5 V4 review: a start that died before writing run.json leaves its directory for good. Once
+// it is old enough, naming it is not retried, and the next start removes it.
+describe("a run directory a start left without run.json", { timeout: TIMEOUT_MS }, () => {
+  it("is run_not_active by name, not retryable, and the next start removes it", async () => {
+    const run = await startedRun();
+    await cancelRun(toy.context, { runId: run.runId });
+    const left = newRunId();
+    const dir = toy.runDir(left);
+    await mkdir(path.join(dir, JOBS_DIR), { recursive: true, mode: 0o700 });
+    const old = new Date(Date.now() - BROKEN_RUN_DIR_MS - 1000);
+    await utimes(dir, old, old);
+    try {
+      for (const call of [
+        () => getRun(toy.context, { runId: left }),
+        () => cancelRun(toy.context, { runId: left }),
+      ]) {
+        const refused = await call().then(
+          () => undefined,
+          (error: unknown) => error,
+        );
+        expect(refused).toMatchObject({
+          code: "run_not_active",
+          message: `run ${left} has no run.json: its start failed before writing it, and the next start removes it`,
+        });
+        expect(describeFailure(refused).retryable).toBe(false);
+      }
+      const next = await startRun(toy.context);
+      await expect(stat(dir)).rejects.toMatchObject({ code: "ENOENT" });
+      await cancelRun(toy.context, { runId: next.runId });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
     }
   });
 });

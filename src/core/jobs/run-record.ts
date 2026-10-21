@@ -1,4 +1,4 @@
-import { mkdir } from "node:fs/promises";
+import { lstat, mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { GitShaSchema } from "../../domain/index.js";
@@ -124,10 +124,17 @@ export async function createRunState(
   await ensureTrustedDir(home, runsRoot(home, run.repoId));
   // Not recursive, so an existing run directory is refused rather than reused.
   await mkdir(runDir, { mode: 0o700 });
-  for (const dir of [JOBS_DIR, SAMPLES_DIR, ARTIFACTS_DIR, LOGS_DIR]) {
-    await mkdir(path.join(runDir, dir), { mode: 0o700 });
+  try {
+    for (const dir of [JOBS_DIR, SAMPLES_DIR, ARTIFACTS_DIR, LOGS_DIR]) {
+      await mkdir(path.join(runDir, dir), { mode: 0o700 });
+    }
+    await writeJsonAtomic(path.join(runDir, RUN_FILE), run);
+  } catch (error) {
+    // A directory without run.json would read as a start in progress. This call just made it,
+    // and `rm` follows no link inside it.
+    await rm(runDir, { recursive: true, force: true });
+    throw error;
   }
-  await writeJsonAtomic(path.join(runDir, RUN_FILE), run);
   return { runDir, run };
 }
 
@@ -177,6 +184,20 @@ export async function readRun(runDir: string): Promise<RunRecord> {
 export async function readRunIfExists(runDir: string): Promise<RunRecord | undefined> {
   const value = await readJsonIfExists(path.join(runDir, RUN_FILE));
   return value === undefined ? undefined : RunRecordSchema.parse(value);
+}
+
+/** A run directory without `run.json`, unchanged this long, is not a start in progress. */
+export const BROKEN_RUN_DIR_MS = 60_000;
+
+/**
+ * Whether `runDir` is a run directory without `run.json` that has not changed for
+ * `BROKEN_RUN_DIR_MS`: a start that died between making it and writing `run.json` (a start in
+ * progress takes milliseconds there).
+ */
+export async function brokenRunDir(runDir: string, now: number = Date.now()): Promise<boolean> {
+  if ((await readRunIfExists(runDir)) !== undefined) return false;
+  const info = await lstat(runDir).catch(() => undefined);
+  return info?.isDirectory() === true && now - info.mtimeMs > BROKEN_RUN_DIR_MS;
 }
 
 /** Writes `run` as-is. The caller must hold the run lock (see `withRunLock`). */

@@ -5,6 +5,7 @@ import path from "node:path";
 import { repoId, runGit } from "../core/git/index.js";
 import {
   assertRealDir,
+  brokenRunDir,
   isErrno,
   RunIdSchema,
   readRunIfExists,
@@ -404,7 +405,8 @@ export async function startedIn(
  * from the trusted home and the repository id, and checked component by component; a work tree
  * whose git directory is another repository's is refused first (security N1), and a run another
  * work tree started is `run_other_work_tree` (code review R1). A run whose `run.json` another
- * process has not written yet is never the latest run, and is `run_starting` by name.
+ * process has not written yet is never the latest run, and is `run_starting` by name; one left
+ * without it by a start that failed (`brokenRunDir`) is `run_not_active`.
  */
 export async function locateRun(context: AppContext, runId?: string): Promise<LocatedRun> {
   const repo = await repoOf(context);
@@ -433,7 +435,15 @@ export async function locateRun(context: AppContext, runId?: string): Promise<Lo
     throw new AppError("no_run", `no run ${id} in this repository`);
   }
   const started = await startedIn(home, repo, id);
-  if (started === undefined) throw new AppError("run_starting", `run ${id} is still starting`);
+  if (started === undefined) {
+    if (await brokenRunDir(runDirFor(home, repo.repoId, id))) {
+      throw new AppError(
+        "run_not_active",
+        `run ${id} has no run.json: its start failed before writing it, and the next start removes it`,
+      );
+    }
+    throw new AppError("run_starting", `run ${id} is still starting`);
+  }
   refuseOtherWorkTree(id, started.root, repo);
   return { repo, home, runId: id, runDir: runDirFor(home, repo.repoId, id) };
 }

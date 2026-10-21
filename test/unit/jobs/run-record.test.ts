@@ -10,6 +10,7 @@ import {
   rm,
   stat,
   symlink,
+  utimes,
   writeFile,
 } from "node:fs/promises";
 import os from "node:os";
@@ -18,6 +19,8 @@ import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   appendLedger,
+  BROKEN_RUN_DIR_MS,
+  brokenRunDir,
   CONTROL_LOCK_FILE,
   createRunState,
   endRun,
@@ -32,8 +35,10 @@ import {
   RUN_LOCK_FILE,
   readJsonIfExists,
   readRun,
+  readRunIfExists,
   resolveGitCommonDir,
   runDirFor,
+  SAMPLES_DIR,
   ufoHome,
   updateRun,
   withControlLock,
@@ -47,6 +52,23 @@ import {
   trustedHome,
 } from "../../../src/core/paths.js";
 
+const fault = vi.hoisted(() => ({
+  /** Fails the `mkdir` of a path it returns an error for. */
+  mkdir: undefined as ((target: string) => Error | undefined) | undefined,
+}));
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    mkdir: async (...args: Parameters<typeof actual.mkdir>) => {
+      const error = fault.mkdir?.(String(args[0]));
+      if (error !== undefined) throw error;
+      return actual.mkdir(...args);
+    },
+  };
+});
+
 const execFileAsync = promisify(execFile);
 const SHA = "0123456789abcdef0123456789abcdef01234567";
 
@@ -57,6 +79,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  fault.mkdir = undefined;
   await rm(root, { recursive: true, force: true });
 });
 
@@ -222,6 +245,35 @@ describe("run record", () => {
       createRunState(root, { runId: "run-1", repoId: "repo" }, new Date(), async () => undefined),
     ).rejects.toThrow("could not read this process's start time");
     await expect(stat(runDirFor(root, "repo", "run-1"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  // M5 V4 review: a run directory without run.json reads as a start in progress, forever.
+  it("removes the run directory when it cannot be completed", async () => {
+    fault.mkdir = (target) =>
+      target.endsWith(`${path.sep}${SAMPLES_DIR}`)
+        ? Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC" })
+        : undefined;
+    await expect(createRunState(root, { runId: "run-1", repoId: "repo" })).rejects.toMatchObject({
+      code: "ENOSPC",
+    });
+    await expect(stat(runDirFor(root, "repo", "run-1"))).rejects.toMatchObject({ code: "ENOENT" });
+    fault.mkdir = undefined;
+    const { runDir } = await createRunState(root, { runId: "run-1", repoId: "repo" });
+    expect(await readRunIfExists(runDir)).toBeDefined();
+  });
+
+  it("tells a run directory a start left without run.json from one in progress", async () => {
+    const { runDir } = await createRunState(root, { runId: "run-1", repoId: "repo" });
+    const later = Date.now() + BROKEN_RUN_DIR_MS + 1000;
+    expect(await brokenRunDir(runDir, later)).toBe(false);
+    const bare = runDirFor(root, "repo", "run-2");
+    await mkdir(path.join(bare, JOBS_DIR), { recursive: true });
+    expect(await brokenRunDir(bare)).toBe(false);
+    expect(await brokenRunDir(bare, later)).toBe(true);
+    const old = new Date(Date.now() - BROKEN_RUN_DIR_MS - 1000);
+    await utimes(bare, old, old);
+    expect(await brokenRunDir(bare)).toBe(true);
+    expect(await brokenRunDir(runDirFor(root, "repo", "run-3"), later)).toBe(false);
   });
 
   it("ends a run only out of running, so a cancel and a finish never overwrite each other", async () => {
