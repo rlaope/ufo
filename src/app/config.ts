@@ -4,6 +4,7 @@ import { parse as parseYaml } from "yaml";
 import { hashConfig, personMustRun } from "../core/policy/index.js";
 import { type UfoConfig, UfoConfigSchema } from "../domain/index.js";
 import type { DetectedStack } from "./detect.js";
+import { secretLikeNames } from "./env.js";
 import { AppError } from "./errors.js";
 
 export const CONFIG_FILE = "ufo.yaml";
@@ -76,6 +77,14 @@ export function parseConfigText(text: string, source = CONFIG_FILE): UfoConfig {
     throw new AppError(
       "config_invalid",
       `${source}: guardrail test_pass_set needs an oracle of kind test_pass_set`,
+    );
+  }
+  // Its values are plain text in ufo.yaml, shown at approval and read by the profiled code.
+  const secretLike = secretLikeNames(Object.keys(config.workload.profile?.env ?? {}));
+  if (secretLike.length > 0) {
+    throw new AppError(
+      "config_invalid",
+      `${source}: workload.profile.env: ${secretLike.join(", ")} looks like a secret, and ufo.yaml would hold its value in plain text`,
     );
   }
   const reserved = [ERROR_RATE_KEY, RSS_KEY];

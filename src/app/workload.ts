@@ -20,6 +20,7 @@ import {
   type HygieneConfig,
   labelSchema,
   type Objective,
+  type ProfileStep,
   type Sample,
   type SamplePhase,
   type Workload,
@@ -118,6 +119,15 @@ export interface ArmSpec {
   readonly sha: string;
 }
 
+/** What a profile job adds to the environment of its commands (`workload.profile`). */
+export interface ProfileEnv {
+  /** `UFO_PROFILE_DIR`, for every step of the job. */
+  readonly dir: string;
+  /** For the profiled steps only, `{{profile_dir}}` already replaced. */
+  readonly env: Readonly<Record<string, string>>;
+  readonly steps: readonly ProfileStep[];
+}
+
 export interface SessionOptions {
   readonly runDir: string;
   readonly runId: string;
@@ -127,6 +137,8 @@ export interface SessionOptions {
   readonly machine: Machine;
   readonly signal: AbortSignal;
   readonly env: NodeJS.ProcessEnv;
+  /** Only a profile job's session has it. */
+  readonly profile?: ProfileEnv;
 }
 
 async function freePort(): Promise<number> {
@@ -140,6 +152,9 @@ async function freePort(): Promise<number> {
   if (address === null || typeof address === "string") throw new Error("no free port");
   return address.port;
 }
+
+/** A workload lifecycle step, as `ufo.yaml` names it. */
+type WorkloadStep = Exclude<keyof Workload, "profile">;
 
 export class WorkloadError extends Error {
   override name = "WorkloadError";
@@ -156,7 +171,9 @@ export class WorkloadError extends Error {
  * `healthcheck` → `warmup` per arm, samples (`reset` before each `command`), and `teardown`.
  * Every command runs in the arm's directory with exactly the run's captured environment plus
  * `UFO_ARM`, `UFO_PORT`, `UFO_RUN_ID`, and `UFO_PHASE`; samples also get `UFO_SAMPLE_INDEX`.
- * Every sample is recorded, valid or not.
+ * A profile job's session adds `UFO_PROFILE_DIR` to every step and the profile's variables to
+ * the profiled steps; oracles and hooks (`runInArm`) never get those. Every sample is recorded,
+ * valid or not.
  */
 export class WorkloadSession {
   readonly samples: Sample[] = [];
@@ -171,19 +188,27 @@ export class WorkloadSession {
     this.options = options;
   }
 
-  private async env(arm: Arm, phase: SamplePhase, extra: Record<string, string> = {}) {
+  private async env(
+    arm: Arm,
+    phase: SamplePhase,
+    step: WorkloadStep | undefined,
+    extra: Record<string, string> = {},
+  ) {
     let port = this.ports.get(arm);
     if (port === undefined) {
       port = await freePort();
       this.ports.set(arm, port);
       await trackPort(this.options.runDir, port).catch(() => undefined);
     }
+    const { profile } = this.options;
     return {
       ...this.options.env,
+      ...(profile?.steps.some((s) => s === step) ? profile.env : {}),
       UFO_ARM: arm,
       UFO_PORT: String(port),
       UFO_RUN_ID: this.options.runId,
       UFO_PHASE: phase,
+      ...(profile === undefined ? {} : { UFO_PROFILE_DIR: profile.dir }),
       ...extra,
     };
   }
@@ -192,6 +217,7 @@ export class WorkloadSession {
     command: string,
     spec: ArmSpec,
     phase: SamplePhase,
+    step: WorkloadStep | undefined,
     label: string,
     extra?: Record<string, string>,
   ): Promise<CommandResult> {
@@ -200,7 +226,7 @@ export class WorkloadSession {
     const result = await runCommand(command, {
       runDir: this.options.runDir,
       cwd: spec.dir,
-      env: await this.env(spec.arm, phase, extra),
+      env: await this.env(spec.arm, phase, step, extra),
       label: `${spec.arm} ${label}`,
       signal: this.options.signal,
     });
@@ -210,13 +236,13 @@ export class WorkloadSession {
 
   /** Runs an arbitrary approved command (an oracle, a card's reset hook) in the arm. */
   runInArm(command: string, spec: ArmSpec, phase: SamplePhase, label: string) {
-    return this.run(command, spec, phase, label);
+    return this.run(command, spec, phase, undefined, label);
   }
 
   /** The workload's `setup` (the build). `undefined` when there is none. */
   async setup(spec: ArmSpec, phase: SamplePhase): Promise<CommandResult | undefined> {
     const { setup } = this.options.workload;
-    return setup === undefined ? undefined : this.run(setup, spec, phase, "setup");
+    return setup === undefined ? undefined : this.run(setup, spec, phase, "setup", "setup");
   }
 
   /** `start` (kept running), `healthcheck` until it passes, then `warmup`. */
@@ -229,7 +255,7 @@ export class WorkloadSession {
       entry.process = await startBackground(start, {
         runDir: this.options.runDir,
         cwd: spec.dir,
-        env: await this.env(spec.arm, phase),
+        env: await this.env(spec.arm, phase, "start"),
         label: `${spec.arm} start`,
         log: `start-${spec.arm}.log`,
       });
@@ -237,7 +263,7 @@ export class WorkloadSession {
     if (healthcheck !== undefined) {
       const deadline = Date.now() + HEALTHCHECK_TIMEOUT_MS;
       for (;;) {
-        const result = await this.run(healthcheck, spec, phase, "healthcheck");
+        const result = await this.run(healthcheck, spec, phase, "healthcheck", "healthcheck");
         if (succeeded(result)) break;
         if (entry.process !== undefined && !entry.process.running()) {
           throw new WorkloadError(`arm ${spec.arm}: \`${start}\` exited before it was healthy`);
@@ -252,7 +278,7 @@ export class WorkloadSession {
       }
     }
     if (warmup !== undefined) {
-      const result = await this.run(warmup, spec, phase, "warmup");
+      const result = await this.run(warmup, spec, phase, "warmup", "warmup");
       if (!succeeded(result)) {
         throw new WorkloadError(
           `arm ${spec.arm}: warmup failed: ${describeResult(result)}`,
@@ -300,11 +326,11 @@ export class WorkloadSession {
     if (!hygiene.ok) return record(`machine hygiene: ${describeHygiene(hygiene)}`);
     const { reset, command } = this.options.workload;
     if (reset !== undefined) {
-      const result = await this.run(reset, spec, phase, `reset ${index}`);
+      const result = await this.run(reset, spec, phase, "reset", `reset ${index}`);
       if (!succeeded(result)) return record(`reset failed: ${describeResult(result)}`);
     }
     const probe = watchClockDrift(this.options.machine.clock);
-    const result = await this.run(command, spec, phase, `sample ${index}`, {
+    const result = await this.run(command, spec, phase, "command", `sample ${index}`, {
       UFO_SAMPLE_INDEX: String(index),
     });
     const drift = probe();
@@ -371,7 +397,7 @@ export class WorkloadSession {
         await runCommand(teardown, {
           runDir: this.options.runDir,
           cwd: entry.arm.dir,
-          env: await this.env(entry.arm.arm, phase),
+          env: await this.env(entry.arm.arm, phase, "teardown"),
           label: `${entry.arm.arm} teardown`,
         }).catch(() => undefined);
       }

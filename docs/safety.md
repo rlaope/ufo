@@ -65,7 +65,10 @@ shows each one JSON-quoted; a command with invisible format characters or non-AS
 refused, so what you read is what runs. Each runs in its
 own process group, with exactly the environment captured when the run started (`PATH`, `HOME`,
 `LANG`, `LC_*`, `TMPDIR`, `USER`, `SHELL`, `TERM`, and the approved `env:` names). Other variables
-of the launching process, such as API keys or agent sockets, are not passed on.
+of the launching process, such as API keys or agent sockets, are not passed on. A profile job
+(`profile_target` with `workload.profile`) adds the approved profile variables to its profiled
+steps and `UFO_PROFILE_DIR`, a directory in the run state outside both arms, to every step; no
+baseline, sample, oracle, or final check gets them.
 
 **Careful cleanup.** Cancel and resume signal a process only after checking its start time (and,
 for the worker, its command line), and remove only containers labeled with the run's own id.

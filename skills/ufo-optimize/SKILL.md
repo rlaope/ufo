@@ -25,10 +25,11 @@ The tools are `inspect_target`, `check_capabilities`, `list_techniques`, `get_te
 
 2. **Configuration.** Call `inspect_target`. Without a `ufo.yaml`, its result carries `draftConfig`,
    a commented draft: write it to `ufo.yaml` at the repository root. Fill in the objective, the
-   workload command, the oracles (the test suite whose passing set must not shrink), and the cards
-   to enable (`list_techniques` indexes them). The full format is in
-   https://github.com/rlaope/ufo/blob/main/docs/cli.md#ufoyaml-reference. Done when `inspect_target`
-   reports the configuration valid.
+   workload command, the oracles (the test suite whose passing set must not shrink), the cards
+   to enable (`list_techniques` indexes them), and a `workload.profile` block for the stack's
+   profiler, so step 6 gets hot spots ([bottlenecks.md](bottlenecks.md), "Profiling"). The full
+   format is in https://github.com/rlaope/ufo/blob/main/docs/cli.md#ufoyaml-reference. Done when
+   `inspect_target` reports the configuration valid.
 
 3. **Approval.** Show the user the `ufo.yaml` you wrote and ask them to run `ufo approve` in their
    own terminal, then wait for them. Approving is the user's act alone: ask, and leave the command
@@ -43,13 +44,23 @@ The tools are `inspect_target`, `check_capabilities`, `list_techniques`, `get_te
    `usable: false`, the machine is too noisy to decide anything: tell the user `unusableReason`,
    call `finish_run`, and stop.
 
-6. **Diagnose.** Call `profile_target` and poll its job. Read its phase times and values, then the
-   code and configuration in arm A (`arms.a` from `get_run`). Name the bottleneck with
-   [bottlenecks.md](bottlenecks.md): its category, and the evidence that shows it. Then call
-   `list_techniques` with the stack `inspect_target` detected and that `bottleneck`, and open each
-   candidate with `get_technique` to check its `signals` and `preconditions` against the evidence.
-   Done when you have the bottleneck, its evidence, and the cards whose signals the evidence
-   matches, in the order bottlenecks.md gives.
+6. **Diagnose.** Call `profile_target` and poll its job. Read its phase times and values.
+   - With `hotspots`: take the heaviest file (the first). Its top `self` frames are where the time
+     is spent, its top `total` frames the code paths that hold it, and its `stacks` who calls the
+     hot frames. Read those frames' code in arm A (`arms.a` from `get_run`; paths in frames are
+     relative to the repository).
+   - Without `hotspots`, `ufo.yaml` has no `workload.profile`: ask the user to add one
+     ([bottlenecks.md](bottlenecks.md), "Profiling") and to approve it, which takes a new run. If
+     they decline, go on from the phase times and the code.
+   - A file with `valid: false` says why in `reason`; `files` empty means the profiler wrote
+     nothing, so check the block against bottlenecks.md.
+
+   Name the bottleneck with [bottlenecks.md](bottlenecks.md): its category, and the evidence that
+   shows it (the frames and their shares). Then call `list_techniques` with the stack
+   `inspect_target` detected and that `bottleneck`, and open each candidate with `get_technique`
+   to check its `signals` and `preconditions` against the evidence. Done when you have the
+   bottleneck, its evidence, and the cards whose signals the evidence matches, in the order
+   bottlenecks.md gives.
 
 7. **Changes.** For each matching card, in that order:
    - If the card is not in the enabled `cards` of `ufo.yaml`, ask the user to enable it and

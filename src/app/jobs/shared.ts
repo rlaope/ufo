@@ -17,7 +17,7 @@ import {
 import type { JobContext } from "../../worker/index.js";
 import { ERROR_RATE_KEY, RSS_KEY } from "../config.js";
 import type { OpenRun } from "../state.js";
-import { type Machine, WorkloadSession } from "../workload.js";
+import { type Machine, type ProfileEnv, WorkloadSession } from "../workload.js";
 
 /** Job kinds the app enqueues; the worker's handlers are keyed by them. */
 export const JOB_KINDS = {
@@ -40,8 +40,16 @@ export interface HandlerOptions {
   readonly home: string;
 }
 
-/** A workload session whose commands get exactly the run's captured environment. */
-export function newSession(open: OpenRun, context: JobContext, machine: Machine): WorkloadSession {
+/**
+ * A workload session whose commands get exactly the run's captured environment, and a profile
+ * job's `profile` variables.
+ */
+export function newSession(
+  open: OpenRun,
+  context: JobContext,
+  machine: Machine,
+  profile?: ProfileEnv,
+): WorkloadSession {
   return new WorkloadSession({
     runDir: open.runDir,
     runId: open.state.runId,
@@ -54,6 +62,7 @@ export function newSession(open: OpenRun, context: JobContext, machine: Machine)
       open.state.targetAddrs.length === 0
         ? open.state.env
         : { ...open.state.env, UFO_TARGET_ADDR: open.state.targetAddrs.join(",") },
+    ...(profile === undefined ? {} : { profile }),
   });
 }
 

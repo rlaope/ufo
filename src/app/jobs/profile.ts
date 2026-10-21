@@ -1,3 +1,4 @@
+import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { resetArms } from "../../core/git/index.js";
 import {
@@ -8,6 +9,8 @@ import {
   writeJsonAtomic,
 } from "../../core/jobs/index.js";
 import { PolicyError } from "../../core/policy/index.js";
+import { type FileHotspots, readProfileDir } from "../../core/profile/index.js";
+import { PROFILE_DIR_PLACEHOLDER, type ProfileFormat, profiledSteps } from "../../domain/index.js";
 import type { JobContext } from "../../worker/index.js";
 import { describeResult, succeeded } from "../commands.js";
 import { budgetStatus, wallClockViolation } from "../events.js";
@@ -28,13 +31,27 @@ export interface ProfileResult {
     | { valid: false; reason: string };
   /** Where the profile is kept, relative to the run state directory. */
   artifact: string;
+  /**
+   * With `workload.profile` only: what the profiler wrote into the job's profile directory,
+   * the heaviest files first, the others counted in `omitted`. Frame names are the
+   * repository's text.
+   */
+  hotspots?: {
+    format: ProfileFormat;
+    /** The profile directory, relative to the run state directory. */
+    dir: string;
+    files: FileHotspots[];
+    omitted: number;
+  };
 }
 
 /**
  * `profile_target`: the run's workload once in arm A at its commit, with the run's command
  * environment, timing each step. Decides nothing and is no technique, but runs only within the
  * wall-clock budget, checked when it is queued and again when it starts; the result is kept as
- * an artifact in the run state.
+ * an artifact in the run state. With `workload.profile`, the job's own directory in the run
+ * state (outside both arms) is `UFO_PROFILE_DIR` for every step, the profile's variables go to
+ * the profiled steps, and the files written there are read for hot spots.
  */
 export async function handleProfile(
   job: JobRecord,
@@ -54,7 +71,31 @@ export async function handleProfile(
   const sha = await resetArms(open.git);
   const arm = { arm: "a" as const, dir: open.git.armA, sha };
   const { workload } = open.config;
-  const session = newSession(open, context, options.machine);
+  const { profile } = workload;
+  const profileDir = path.join(ARTIFACTS_DIR, `profile-${job.jobId}`);
+  const dir = path.join(context.runDir, profileDir);
+  if (profile !== undefined) {
+    // A requeued job starts with an empty directory, not with what an interrupted one wrote.
+    await rm(dir, { recursive: true, force: true });
+    await mkdir(dir, { mode: 0o700 });
+  }
+  const session = newSession(
+    open,
+    context,
+    options.machine,
+    profile === undefined
+      ? undefined
+      : {
+          dir,
+          env: Object.fromEntries(
+            Object.entries(profile.env).map(([name, value]) => [
+              name,
+              value.replaceAll(PROFILE_DIR_PLACEHOLDER, dir),
+            ]),
+          ),
+          steps: profiledSteps(workload),
+        },
+  );
   const phases: ProfileResult["phases"] = [];
   const timed = async <T>(
     phase: ProfileResult["phases"][number]["phase"],
@@ -98,7 +139,16 @@ export async function handleProfile(
     await timed("teardown", () => session.teardown("profile"));
   }
   const artifact = path.join(ARTIFACTS_DIR, `profile-${job.jobId}.json`);
-  const result = toJson({ sha, phases, sample, artifact });
-  await writeJsonAtomic(path.join(context.runDir, artifact), result);
-  return result;
+  const result: ProfileResult = { sha, phases, sample, artifact };
+  if (profile !== undefined) {
+    result.hotspots = {
+      format: profile.format,
+      dir: profileDir,
+      // Paths in arm A are named relative to the repository.
+      ...(await readProfileDir(dir, profile.format, [`file://${arm.dir}/`, `${arm.dir}/`])),
+    };
+  }
+  const json = toJson(result);
+  await writeJsonAtomic(path.join(context.runDir, artifact), json);
+  return json;
 }

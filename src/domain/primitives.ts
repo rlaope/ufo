@@ -44,6 +44,11 @@ export function labelSchema(max: number = MAX_LABEL_LENGTH) {
 /** A short list of human-readable notes. */
 export const NoteListSchema = z.array(labelSchema(MAX_NOTE_LENGTH)).max(MAX_NOTES);
 
+// Bidi overrides, zero-width characters, and exotic spaces would make the line `ufo approve`
+// prints look different from the bytes that run.
+const NO_INVISIBLE = /^[^\p{Cf}\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*$/u;
+const NO_INVISIBLE_MESSAGE = "must not contain invisible format characters or non-ASCII spaces";
+
 /**
  * A single shell command line. Newlines are rejected so the command `ufo approve` prints is
  * exactly the command that runs.
@@ -54,12 +59,14 @@ export const CommandLineSchema = z
   .min(1)
   .max(MAX_COMMAND_LENGTH)
   .regex(/^[^\p{Cc}]*$/u, "must be a single line without control characters")
-  // Bidi overrides, zero-width characters, and exotic spaces would make the command `ufo approve`
-  // prints look different from the bytes that run.
-  .regex(
-    /^[^\p{Cf}\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*$/u,
-    "must not contain invisible format characters or non-ASCII spaces",
-  );
+  .regex(NO_INVISIBLE, NO_INVISIBLE_MESSAGE);
+
+/** An environment variable's value that `ufo approve` shows: one line, as it is, maybe empty. */
+export const EnvValueSchema = z
+  .string()
+  .max(MAX_COMMAND_LENGTH)
+  .regex(/^[^\p{Cc}]*$/u, "must be a single line without control characters")
+  .regex(NO_INVISIBLE, NO_INVISIBLE_MESSAGE);
 
 /** Repository-relative path or glob: no absolute paths, no `..` segments, no backslashes. */
 export const RepoPathSchema = z

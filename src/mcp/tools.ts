@@ -142,7 +142,7 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
     {
       title: "Profile the workload once",
       description:
-        "Queues one run of the workload in arm A at its commit, with the run's command environment, timing each step (setup, start, sample, teardown) and reading the workload's JSON line; kept as an artifact in the run state. Decides nothing and is no technique, but runs only within the run's wall-clock budget. Needs a running run. Returns a job id at once: poll get_job for the profile.",
+        "Queues one run of the workload in arm A at its commit, with the run's command environment, timing each step (setup, start, sample, teardown) and reading the workload's JSON line; kept as an artifact in the run state. When ufo.yaml has workload.profile, the profiled steps run under the profiler it configures, and the result's hotspots give, for each profile file, the frames with the largest self and total shares and the heaviest stacks: name the bottleneck from them. Without workload.profile there are no hotspots: ask the user to add one and approve again. Decides nothing and is no technique, but runs only within the run's wall-clock budget. Needs a running run. Returns a job id at once: poll get_job for the profile.",
       inputSchema: z.strictObject({ run_id: runId }),
       annotations: RUNS_WORKLOAD,
     },

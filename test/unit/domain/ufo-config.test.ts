@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { UfoConfigSchema } from "../../../src/domain/index.js";
+import { profiledSteps, UfoConfigSchema } from "../../../src/domain/index.js";
 import { expectAccepts, expectRejects, metric, ufoConfig } from "./fixtures.js";
 
 describe("UfoConfigSchema", () => {
@@ -96,5 +96,69 @@ describe("UfoConfigSchema hygiene", () => {
         UfoConfigSchema.safeParse({ ...ufoConfig(), hygiene: { maxLoadFactor: bad } }).success,
       ).toBe(false);
     }
+  });
+});
+
+// M4 E1: workload.profile, which only profile_target uses.
+describe("UfoConfigSchema workload.profile", () => {
+  const withProfile = (profile: unknown, workload: Record<string, unknown> = {}) => ({
+    ...ufoConfig(),
+    workload: { ...ufoConfig().workload, ...workload, profile },
+  });
+
+  it("profiles start by default, else the command, and takes no variables unless listed", () => {
+    const parsed = expectAccepts(UfoConfigSchema, withProfile({ format: "cpuprofile" }));
+    expect(parsed.workload.profile).toEqual({ env: {}, format: "cpuprofile" });
+    expect(profiledSteps(parsed.workload)).toEqual(["start"]);
+    expect(profiledSteps({ command: "node bench.mjs" })).toEqual(["command"]);
+    const listed = expectAccepts(
+      UfoConfigSchema,
+      withProfile(
+        {
+          env: {
+            NODE_OPTIONS: "--cpu-prof --cpu-prof-dir={{profile_dir}}",
+            EMPTY: "",
+            ...Object.fromEntries(Array.from({ length: 14 }, (_, i) => [`V${i}`, "x"])),
+          },
+          steps: ["setup", "command"],
+          format: "collapsed",
+        },
+        { setup: "npm run build" },
+      ),
+    );
+    expect(profiledSteps(listed.workload)).toEqual(["setup", "command"]);
+    expect(listed.workload.profile?.env.NODE_OPTIONS).toBe(
+      "--cpu-prof --cpu-prof-dir={{profile_dir}}",
+    );
+  });
+
+  it.each([
+    ["no format", { env: {} }],
+    ["an unknown format", { format: "pprof" }],
+    ["an unknown key", { format: "collapsed", output: "x" }],
+    ["a step that cannot be profiled", { format: "collapsed", steps: ["teardown"] }],
+    ["a step twice", { format: "collapsed", steps: ["start", "start"] }],
+    ["no steps", { format: "collapsed", steps: [] }],
+    ["a step the workload lacks", { format: "collapsed", steps: ["warmup"] }],
+    [
+      "more than 16 variables",
+      {
+        format: "collapsed",
+        env: Object.fromEntries(Array.from({ length: 17 }, (_, i) => [`V${i}`, "x"])),
+      },
+    ],
+    ["PATH", { format: "collapsed", env: { PATH: "/tmp" } }],
+    ["HOME", { format: "collapsed", env: { HOME: "/tmp" } }],
+    ["a UFO_ name", { format: "collapsed", env: { UFO_PROFILE_DIR: "/tmp" } }],
+    ["a lowercase name", { format: "collapsed", env: { node_options: "--cpu-prof" } }],
+    ["a name with a dash", { format: "collapsed", env: { "NODE-OPTIONS": "--cpu-prof" } }],
+    ["a name starting with a digit", { format: "collapsed", env: { "1X": "y" } }],
+    ["a multi-line value", { format: "collapsed", env: { X: "a\nb" } }],
+    ["an invisible character", { format: "collapsed", env: { X: "a\u202eb" } }],
+    ["a value over 4000 characters", { format: "collapsed", env: { X: "x".repeat(4001) } }],
+    ["another placeholder", { format: "collapsed", env: { X: "{{run_dir}}/p" } }],
+    ["a value that is no string", { format: "collapsed", env: { X: 1 } }],
+  ])("rejects %s", (_label, profile) => {
+    expectRejects(UfoConfigSchema, withProfile(profile));
   });
 });

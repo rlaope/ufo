@@ -1,0 +1,4 @@
+main;handle;parse 30
+main;handle;render;format 50
+main;handle;handle;parse 10
+main;idle 10

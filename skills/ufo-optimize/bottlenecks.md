@@ -5,10 +5,48 @@ chosen because its `bottlenecks` and `signals` match evidence you have, never be
 popular. Each category below gives the symptom, the evidence that confirms it, how to get that
 evidence per stack, and where to look in `list_techniques`.
 
-Evidence comes from `profile_target` (phase times and the workload's metric line) and from
-reading arm A's code and configuration. When the evidence needs a profiler, the profiler's command
-has to be part of the approved `ufo.yaml` (a workload or setup command, or a card's command
-template); ask the user to add and approve it rather than running it outside UFO.
+Evidence comes from `profile_target` (phase times, the workload's metric line, and with a
+`workload.profile` block the profiler's hot spots) and from reading arm A's code and
+configuration. A profiler runs only as the approved `ufo.yaml` says (its `workload.profile`, a
+workload or setup command, or a card's command template); ask the user to add and approve it
+rather than running it outside UFO.
+
+## Profiling
+
+`workload.profile` in `ufo.yaml` runs the profiled steps of a `profile_target` job under a
+profiler, and only those: baselines and samples stay unprofiled. Its `env` reaches the profiled
+steps (`start` by default, else `command`), `{{profile_dir}}` in a value is the job's own
+directory, and `format` says what the profiler writes there: `collapsed` (folded stacks),
+`cpuprofile` (V8), or `speedscope`. For Node:
+
+```yaml
+workload:
+  start: node server.js
+  command: node bench.mjs
+  profile:
+    env:
+      NODE_OPTIONS: "--cpu-prof --cpu-prof-dir={{profile_dir}}"
+    format: cpuprofile
+```
+
+`--cpu-prof` writes when the process exits, so a profiled server has to exit on SIGTERM
+(`process.on("SIGTERM", () => process.exit(0))`); without that, `files` comes back empty. Any
+profiler that writes one of the three formats into `{{profile_dir}}` (or `$UFO_PROFILE_DIR`) works
+the same way. Format and limits: docs/cli.md, "Profiling".
+
+## Reading hot spots
+
+- `self` is time in the frame itself: a hot loop, a codec, a regex. `total` is time with the frame
+  anywhere on the stack, once per stack: the request handler or job that holds the time. `stacks`
+  shows who calls the hot frames, the leaf last.
+- Start from the heaviest file (the first; one file per process). A frame in your code with a
+  large `self` share is the place to change; a library frame with a large `self` share is changed
+  through how your code calls it (call it less, batch it, cache it).
+- V8's own entries: `(idle)` is time waiting, so a server profile that is mostly idle is waiting
+  on I/O, the network, a database, or its own client, not computing (io, network, query,
+  contention); `(garbage collector)` is allocation; `(program)` is native code V8 does not name.
+- Shares of a CPU profile miss time spent blocked off the CPU. When the metric is slow and the
+  profile is mostly idle, look for the wait (query, network, contention) rather than a hot frame.
 
 ## startup
 - Symptom: the time from launch to the first useful response dominates the metric.
@@ -22,14 +60,16 @@ template); ask the user to add and approve it rather than running it outside UFO
 
 ## cpu
 - Symptom: the work is compute-bound; CPU near a core per worker while the metric is slow.
-- Confirm: a CPU profile with a few hot frames in the application's own code or a library.
+- Confirm: hot spots with a few frames holding a large `self` share, in the application's own
+  code or a library, and little `(idle)`.
 - Evidence: JVM — async-profiler (`asprof -e cpu`) or JFR; Node — `--cpu-prof`; Python — `py-spy
   record`; Go — pprof CPU profile; Rust — a sampling profiler (perf, cargo flamegraph).
 - Cards: `bottleneck: cpu`, and `generic.code-change` for a hot loop the profile names.
 
 ## allocation
 - Symptom: GC pauses or high allocation rates; memory grows with load.
-- Confirm: GC logs or allocation profiles show time in GC or allocation-heavy frames.
+- Confirm: GC logs or allocation profiles show time in GC or allocation-heavy frames; in V8 hot
+  spots, a large `(garbage collector)` share.
 - Evidence: JVM — `-Xlog:gc*`, JFR allocation events; Node — `--trace-gc`, heap profiles; Go —
   `GODEBUG=gctrace=1`, pprof `alloc_space`; Python — `tracemalloc`.
 - Cards: `bottleneck: allocation` (GC choice and heap sizing, reuse and pooling, fewer copies).
@@ -62,8 +102,8 @@ template); ask the user to add and approve it rather than running it outside UFO
 
 ## serialization
 - Symptom: time in encoding or decoding payloads.
-- Confirm: profile frames in JSON or other codec code (Jackson, `JSON.stringify`, `json.dumps`,
-  `encoding/json`), or new codec objects built per request.
+- Confirm: hot spots with codec frames (Jackson, `JSON.stringify`, `json.dumps`, `encoding/json`)
+  high in `self` or `total`, or new codec objects built per request.
 - Cards: `bottleneck: serialization` (reuse codec objects, schema-based or faster encoders).
 
 ## build

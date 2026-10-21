@@ -1,4 +1,11 @@
-import type { OptIn, TechniqueCard, UfoConfig } from "../domain/index.js";
+import {
+  type OptIn,
+  PROFILE_DIR_PLACEHOLDER,
+  profiledSteps,
+  type TechniqueCard,
+  type UfoConfig,
+  type Workload,
+} from "../domain/index.js";
 import type { CardSet } from "./cards.js";
 import { describeDefaultEnv, secretLikeNames } from "./env.js";
 import { hygieneLimitations } from "./jobs/shared.js";
@@ -45,6 +52,21 @@ function describeCommand(what: string, command: string): string {
   return `  ${what}${long}: ${JSON.stringify(command)}`;
 }
 
+/** `workload.profile`: each variable JSON-quoted, as the commands are. */
+function describeProfile(workload: Workload): string[] {
+  const { profile } = workload;
+  if (profile === undefined) return [];
+  return [
+    "",
+    "Profiling, for profile_target only (baselines, samples, oracles, and the final check run without it):",
+    `  every step of a profile job gets UFO_PROFILE_DIR, a new directory in the run state; UFO reads the ${profile.format} files written there`,
+    `  profiled steps: ${profiledSteps(workload).join(", ")}; they also get these variables, ${PROFILE_DIR_PLACEHOLDER} replaced with that directory`,
+    ...Object.entries(profile.env).map(([name, value]) =>
+      describeCommand(`profile env ${name}`, value),
+    ),
+  ];
+}
+
 function describeEdits(card: TechniqueCard): string[] {
   const defaults = card.params.map((p) => `${p.name}=${String(p.default)}`).join(", ");
   const withDefaults = defaults ? ` (defaults: ${defaults})` : "";
@@ -88,6 +110,7 @@ export function approvalReview(
     "",
     "Commands UFO will run (with /bin/sh -c, in each arm's directory; {{param}} is filled from the card's typed parameters):",
     ...approvedCommands(config, cards).map(({ what, command }) => describeCommand(what, command)),
+    ...describeProfile(config.workload),
   ];
   if (scripts.files.length > 0) {
     lines.push(

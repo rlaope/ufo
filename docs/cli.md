@@ -147,6 +147,11 @@ workload:
   reset: ./scripts/reset.sh        # optional; before every sample
   command: node bench/latency.mjs  # required; one sample, prints one JSON line
   teardown: ./scripts/stop.sh      # optional
+  profile:                         # optional; only profile_target runs it (see Profiling)
+    env:
+      NODE_OPTIONS: "--cpu-prof --cpu-prof-dir={{profile_dir}}"
+    steps: [start]                 # default: [start] with a start, else [command]
+    format: cpuprofile             # collapsed | cpuprofile | speedscope
 oracles:
   - name: unit-tests
     kind: test_pass_set
@@ -175,7 +180,7 @@ hygiene:                        # machine checks before every sample (plan §4.5
 | `objective.minEffect` | number | Default `0.03`. |
 | `objective.targetRatio` | number | Optional. |
 | `objective.budget` | object | `wallClockMinutes` (default 120), `maxTechniques` (default 10). |
-| `workload` | object | Only `command` is required. Every command is a single line. |
+| `workload` | object | Only `command` is required. Every command is a single line. `profile` is optional; see [Profiling](#profiling-workloadprofile). |
 | `oracles` | list | At most 16, unique `name`. M1 runs `test_pass_set` and `smoke`; the other kinds (`http_golden`, `result_set_equality`, `quality_eval`, `loss_tolerance`) are rejected until their packs exist. |
 | `targets` | list | IPv4/IPv6 addresses, CIDR ranges, or hostnames; at most 64. See [Load targets](#load-targets). |
 | `cards` | list of ids | Every id must exist in the card catalog (`policy:unknown_card` otherwise). |
@@ -206,8 +211,57 @@ anything else stay out unless `env:` names them. UFO adds these variables:
 | `UFO_PHASE` | `baseline`, `change`, `final_check`, or `profile` (one profiling run, MCP `profile_target`) |
 | `UFO_SAMPLE_INDEX` | The sample's index, on the workload `command` only |
 | `UFO_TARGET_ADDR` | When `targets:` is set: each entry as `host=address`, comma-separated, as checked when the run started |
+| `UFO_PROFILE_DIR` | In a profile job under `workload.profile` only: the job's profile directory, on every step |
 
 Whatever a command leaves running in its process group is killed when it exits.
+
+### Profiling: `workload.profile`
+
+`profile_target` (MCP) runs the workload once in arm A. With `workload.profile`, it runs it under
+the profiler this block sets up and reads what the profiler writes:
+
+- `env`: at most 16 variables added to the profiled steps of a profile job, and to nothing else.
+  Names are uppercase (`[A-Z_][A-Z0-9_]*`); `PATH`, `HOME`, `UFO_*`, and names that look like
+  secrets (`TOKEN`, `SECRET`, `PASSWORD`, `API_KEY`, `AWS_*`, and the like) are refused
+  (`config_invalid`), since the values are plain text in `ufo.yaml`. A value is one line without
+  control or invisible format characters, at most 4000 characters, and may be empty.
+  `{{profile_dir}}` is its only placeholder; UFO replaces it with the job's profile directory as
+  it is, not quoted.
+- `steps`: which of `setup`, `start`, `warmup`, and `command` get `env`, each set in the workload.
+  Default: `[start]` when the workload has a `start` (a server), else `[command]`.
+- `format`: what the profiler writes. `collapsed` is folded stacks, one `root;...;leaf <count>` per
+  line (async-profiler `-o collapsed`, py-spy `--format raw`, the stackcollapse scripts); its
+  weights are `samples`. `cpuprofile` is V8's `.cpuprofile` (`node --cpu-prof`), weighed in
+  microseconds, each sample until the next one. `speedscope` is the speedscope JSON format,
+  `sampled` or `evented`, in its own unit; profiles in a unit other than the first one's are left
+  out and noted.
+
+Each profile job gets a new, empty directory, `artifacts/profile-<job-id>/` in the run state,
+outside both arms, so nothing the profiler writes reaches a diff. Every step of the job gets it as
+`UFO_PROFILE_DIR`, so a command can also start a profiler itself. Baselines, samples, oracles,
+and the final check never get `env` or `UFO_PROFILE_DIR`: measurement stays unprofiled.
+
+A profiler that writes its file when the process exits, such as `node --cpu-prof`, writes nothing
+for a process killed by a signal. UFO stops `start` after `teardown` with SIGTERM to its process
+group, then SIGKILL 2 s later, so a profiled server has to exit on SIGTERM (in Node,
+`process.on("SIGTERM", () => process.exit(0))`); a step that exits by itself needs nothing.
+
+After the job's teardown, UFO reads the directory's regular files (never through a symbolic
+link), the largest first and at most 16 of them, each at most 32 MiB. For each file it sums the
+weights and lists, as percentages of the file's total: the 20 frames with the largest self share,
+the 20 with the largest total share (a frame counted once per stack, however often recursion
+repeats it), and the 10 heaviest stacks by their 5 leaf-most frames, the leaf last and a frame
+calling itself shown once, so deep recursion still shows its caller. Frame and file
+names are one line of at most 80 bytes, the middle cut out of a longer one, and paths inside arm A
+are named relative to the repository. A file that is not the configured format, holds no
+samples, is too large, or has more than 1 000 000 folded lines or 500 000 call-tree nodes is
+reported with its reason, never failing the job. Several files (one per process, as when
+`NODE_OPTIONS` reaches child processes) come back heaviest first, then those with a reason; the
+first 4 are summarized and the others counted in `omitted`. Without `workload.profile`, the result
+has no `hotspots` and the job creates no directory.
+
+The approval covers `workload.profile` like the rest of `ufo.yaml`; `ufo approve` shows the
+profiled steps, the format, and each variable JSON-quoted.
 
 ### Workload output: one JSON line
 
@@ -369,8 +423,9 @@ Approval is human-only.
    whole `find` and `replace`), the script tables the commands run through with the body of each
    package.json script they name, the card directories, the enabled cards with their risk classes
    and where each comes from, the load targets, the opt-ins, the machine checks, and the names of
-   the environment variables every command will see. Commands may not contain invisible format
-   characters or non-ASCII spaces (`config_invalid`).
+   the environment variables every command will see, and with `workload.profile` the profiled
+   steps, the format, and each profile variable, JSON-quoted. Commands may not contain invisible
+   format characters or non-ASCII spaces (`config_invalid`).
 5. You type `approve`. Anything else records nothing (`approval_declined`).
 6. UFO stores the approval in `$UFO_HOME/private/approvals/<repo-id>.json` (mode 0600), replacing
    an earlier approval of that repository: `sha256(ufo.yaml)`, the opt-ins, the `env:` names, and
@@ -777,7 +832,8 @@ A run state directory holds:
 | `jobs/job-NNNNNN.json` | One record per job, with status, progress, and result. |
 | `logs/` | `worker.out.log`, `worker.err.log`, `commands.log` (every command with its exit status), and `start-<arm>.log`. |
 | `report.json` | The finished run's report. |
-| `artifacts/profile-<job-id>.json` | A profile (MCP `profile_target`): arm A's commit, each workload step's wall time, and the workload's JSON line, or why the sample was not valid. |
+| `artifacts/profile-<job-id>.json` | A profile (MCP `profile_target`): arm A's commit, each workload step's wall time, the workload's JSON line or why the sample was not valid, and with `workload.profile` the hot spots. |
+| `artifacts/profile-<job-id>/` | With `workload.profile`: what the profiler wrote during that profile job, as it wrote it. |
 | `bundles/<bundle-id>/` | The evidence bundle: `bundle.json`, `diffs/<change-id>.diff`, and `manifest.json` with SHA-256 hashes. |
 | other | `heartbeat.json` (the worker's last sign of life), `cancel.json` (a requested cancel), `run.lock` and `control.lock`, and the `samples/` directory reserved for packs. |
 
