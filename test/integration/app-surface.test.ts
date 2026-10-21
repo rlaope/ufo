@@ -1,4 +1,5 @@
 import { rmSync, writeFileSync } from "node:fs";
+import { mkdir, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -6,6 +7,7 @@ import {
   cancelRun,
   describeFailure,
   finishRun,
+  getRun,
   report,
   resumeRun,
   runRecipes,
@@ -14,7 +16,7 @@ import {
   submitChange,
 } from "../../src/app/index.js";
 import { main } from "../../src/cli/main.js";
-import { CONTROL_LOCK_FILE } from "../../src/core/jobs/index.js";
+import { CONTROL_LOCK_FILE, JOBS_DIR, newRunId } from "../../src/core/jobs/index.js";
 import {
   approveToy,
   diffOf,
@@ -112,6 +114,33 @@ describe("status of a run that does not exist", () => {
         code: "no_run",
         message: `no run ${runId} in this repository`,
       });
+    }
+  });
+});
+
+// M5 V4 (debug-e1a): another process creating a run makes its directory, then jobs/, then
+// run.json. A run directory without run.json is a run not there yet: no call fails on it.
+describe("a run directory without run.json", { timeout: TIMEOUT_MS }, () => {
+  it("is left out of status and the latest run, refuses only by name, and blocks no start", async () => {
+    const run = await startedRun();
+    const creating = newRunId();
+    expect(creating > run.runId).toBe(true);
+    await mkdir(path.join(toy.runDir(creating), JOBS_DIR), { recursive: true, mode: 0o700 });
+    try {
+      const shown = await status(toy.context);
+      expect(shown.runs.map((listed) => listed.runId)).not.toContain(creating);
+      expect(shown.current?.runId).toBe(run.runId);
+      expect((await getRun(toy.context)).runId).toBe(run.runId);
+      expect((await status(toy.context, { runId: creating })).current).toBeUndefined();
+      await expect(getRun(toy.context, { runId: creating })).rejects.toMatchObject({
+        code: "run_starting",
+        message: `run ${creating} is still starting`,
+      });
+      await cancelRun(toy.context, { runId: run.runId });
+      const next = await startRun(toy.context);
+      await cancelRun(toy.context, { runId: next.runId });
+    } finally {
+      await rm(toy.runDir(creating), { recursive: true, force: true });
     }
   });
 });

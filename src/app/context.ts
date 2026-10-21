@@ -7,7 +7,7 @@ import {
   assertRealDir,
   isErrno,
   RunIdSchema,
-  readRun,
+  readRunIfExists,
   readTextNoFollow,
   resolveGitCommonDir,
 } from "../core/jobs/index.js";
@@ -384,22 +384,27 @@ export function refuseOtherWorkTree(
   );
 }
 
-/** The work tree whose start created the run, as its run state records it. */
+/**
+ * The work tree whose start created the run, as its run state records it (`root` is undefined
+ * when it records none), or `undefined` while the run has no `run.json` yet.
+ */
 export async function startedIn(
   home: string,
   repo: Repo,
   runId: string,
-): Promise<string | undefined> {
+): Promise<{ readonly root: string | undefined } | undefined> {
   const runDir = runDirFor(home, repo.repoId, runId);
   await assertTrustedDir(home, runDir);
-  return (await readRun(runDir)).repoRoot;
+  const run = await readRunIfExists(runDir);
+  return run === undefined ? undefined : { root: run.repoRoot };
 }
 
 /**
  * The run `runId`, or this work tree's latest run when it is omitted. Its directory is derived
  * from the trusted home and the repository id, and checked component by component; a work tree
  * whose git directory is another repository's is refused first (security N1), and a run another
- * work tree started is `run_other_work_tree` (code review R1).
+ * work tree started is `run_other_work_tree` (code review R1). A run whose `run.json` another
+ * process has not written yet is never the latest run, and is `run_starting` by name.
  */
 export async function locateRun(context: AppContext, runId?: string): Promise<LocatedRun> {
   const repo = await repoOf(context);
@@ -408,8 +413,10 @@ export async function locateRun(context: AppContext, runId?: string): Promise<Lo
   const ids = await listRunIds(home, repo);
   let id = runId;
   for (const candidate of runId === undefined ? [...ids].reverse() : []) {
-    const root = await startedIn(home, repo, candidate);
-    if (root === undefined || root === repo.root) {
+    const started = await startedIn(home, repo, candidate);
+    // Another process is still creating it.
+    if (started === undefined) continue;
+    if (started.root === undefined || started.root === repo.root) {
       id = candidate;
       break;
     }
@@ -425,6 +432,8 @@ export async function locateRun(context: AppContext, runId?: string): Promise<Lo
   if (!RunIdSchema.safeParse(id).success || !ids.includes(id)) {
     throw new AppError("no_run", `no run ${id} in this repository`);
   }
-  refuseOtherWorkTree(id, await startedIn(home, repo, id), repo);
+  const started = await startedIn(home, repo, id);
+  if (started === undefined) throw new AppError("run_starting", `run ${id} is still starting`);
+  refuseOtherWorkTree(id, started.root, repo);
   return { repo, home, runId: id, runDir: runDirFor(home, repo.repoId, id) };
 }

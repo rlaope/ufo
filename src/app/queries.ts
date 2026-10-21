@@ -14,6 +14,7 @@ import {
   readLedger,
   readMachineLock,
   readRun,
+  readRunIfExists,
   readTextNoFollow,
   runDirFor,
   TERMINAL_JOB_STATUSES,
@@ -300,7 +301,9 @@ export async function status(
   const runs: StatusView["runs"] = [];
   let latest: string | undefined;
   for (const id of ids) {
-    const run = await readRun(runDirFor(home, repo.repoId, id));
+    const run = await readRunIfExists(runDirFor(home, repo.repoId, id));
+    // Another process is still creating it: not listed until its run.json is written.
+    if (run === undefined) continue;
     const other =
       run.repoRoot === undefined || run.repoRoot === repo.root ? undefined : run.repoRoot;
     runs.push({
@@ -319,7 +322,7 @@ export async function status(
   const shownStarted =
     shown !== undefined &&
     elsewhere === undefined &&
-    (await readRun(runDirFor(home, repo.repoId, shown))).started;
+    (await readRunIfExists(runDirFor(home, repo.repoId, shown)))?.started === true;
   const current = shownStarted ? await getRun(context, { runId: shown }) : undefined;
   return toJson({
     ...redactView({

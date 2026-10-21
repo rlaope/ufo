@@ -155,9 +155,19 @@ export async function abandonedStart(run: RunRecord): Promise<boolean> {
 }
 
 export async function readRun(runDir: string): Promise<RunRecord> {
+  const run = await readRunIfExists(runDir);
+  if (run === undefined) throw new Error(`no ${RUN_FILE} in ${runDir}`);
+  return run;
+}
+
+/**
+ * The run's record, or `undefined` while it has none: `createRunState` makes the run directory
+ * before it writes `run.json`, so another process can find the directory first (and a creation
+ * that died in between leaves it so).
+ */
+export async function readRunIfExists(runDir: string): Promise<RunRecord | undefined> {
   const value = await readJsonIfExists(path.join(runDir, RUN_FILE));
-  if (value === undefined) throw new Error(`no ${RUN_FILE} in ${runDir}`);
-  return RunRecordSchema.parse(value);
+  return value === undefined ? undefined : RunRecordSchema.parse(value);
 }
 
 /** Writes `run` as-is. The caller must hold the run lock (see `withRunLock`). */
