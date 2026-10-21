@@ -321,6 +321,92 @@ describe("a run through the tools", { timeout: TIMEOUT_MS }, () => {
     });
   });
 
+  // M5 V1: list_techniques ranked by a profile job, over the wire as hosts call it.
+  it("ranks the technique index by a profile job, with its evidence", async () => {
+    const toy = toyFor();
+    await approveToy(toy);
+    const client = await connect(toy);
+    const started = (await ok(client, "start_run")).body as {
+      runId: string;
+      baselineJobId: string;
+    };
+    await poll(client, started.runId, started.baselineJobId);
+    const profiled = (await ok(client, "profile_target", { run_id: started.runId })).body;
+    const jobId = profiled.jobId as string;
+    await poll(client, started.runId, jobId);
+
+    // The toy has no workload.profile: the plain index and why it is not ranked.
+    const plain = (await ok(client, "list_techniques", {}, SHORT_TIMEOUT_MS)).body;
+    const unranked = (
+      await ok(client, "list_techniques", { profile_job_id: jobId }, SHORT_TIMEOUT_MS)
+    ).body;
+    expect(unranked).toEqual({
+      ...plain,
+      note: `profile ${jobId} has no hot spots (ufo.yaml has no workload.profile); the listing is not ranked`,
+    });
+
+    // The hot spots a profiled job would have written: async-profiler's slashed JVM names.
+    const file = path.join(toy.runDir(started.runId), "artifacts", `profile-${jobId}.json`);
+    const artifact = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
+    const frame = "com/fasterxml/jackson/databind/ObjectMapper.<init>";
+    writeFileSync(
+      file,
+      JSON.stringify({
+        ...artifact,
+        hotspots: {
+          format: "collapsed",
+          dir: `artifacts/profile-${jobId}`,
+          files: [
+            {
+              file: "app.collapsed",
+              valid: true,
+              unit: "samples",
+              weight: 100,
+              self: [{ frame, pct: 18 }],
+              total: [{ frame, pct: 41.5 }],
+              stacks: [],
+            },
+          ],
+          omitted: 0,
+        },
+      }),
+    );
+    const ranked = (
+      await ok(
+        client,
+        "list_techniques",
+        { stack: "jvm", bottleneck: "serialization", profile_job_id: jobId },
+        SHORT_TIMEOUT_MS,
+      )
+    ).body as { cards: Record<string, unknown>[]; note?: string };
+    expect(ranked.note).toBeUndefined();
+    expect(ranked.cards[0]).toMatchObject({
+      id: "jvm.jackson-mapper-reuse",
+      expectedEffect: expect.any(String),
+      evidence: [{ hint: "ObjectMapper.<init>", frame, share: 0.415, kind: "total" }],
+    });
+    for (const entry of ranked.cards.slice(1)) {
+      expect(entry).not.toHaveProperty("evidence");
+      expect(entry).not.toHaveProperty("expectedEffect");
+    }
+
+    // Not a profile of this run: a usage error the model can act on.
+    for (const id of [started.baselineJobId, "job-000099"]) {
+      const refused = await call(client, "list_techniques", { profile_job_id: id });
+      expect(refused, id).toMatchObject({ isError: true, body: { code: "usage" } });
+    }
+    // The strict schema: a string of at most 32 characters.
+    for (const value of [7, "j".repeat(33)]) {
+      const result = await client.callTool({
+        name: "list_techniques",
+        arguments: { profile_job_id: value },
+      });
+      expect(result.isError, String(value)).toBe(true);
+      expect((result.content as { text: string }[])[0]?.text).toContain("Input validation error");
+    }
+    await ok(client, "cancel_run", { run_id: started.runId });
+  });
+
   it("resumes a run and cancels it", async () => {
     const toy = toyFor();
     await approveToy(toy);
