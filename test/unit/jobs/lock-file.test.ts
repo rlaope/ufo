@@ -18,6 +18,19 @@ const fault = vi.hoisted(() => ({
   beforeRm: undefined as ((file: string) => Promise<void>) | undefined,
 }));
 
+const clock = vi.hoisted(() => ({
+  /** Replaces the start time `ps` or /proc gives for a PID. */
+  startTimeOf: undefined as ((pid: number) => Promise<string | undefined>) | undefined,
+}));
+
+vi.mock("../../../src/core/jobs/process.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../src/core/jobs/process.js")>();
+  return {
+    ...actual,
+    readProcessStartTime: (pid: number) => (clock.startTimeOf ?? actual.readProcessStartTime)(pid),
+  };
+});
+
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
   return {
@@ -40,6 +53,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   fault.beforeRm = undefined;
+  clock.startTimeOf = undefined;
   await rm(root, { recursive: true, force: true });
 });
 
@@ -79,6 +93,32 @@ describe("lock file", () => {
     await expect(withLockFile(file, options, ran)).rejects.toBeInstanceOf(LockTimeoutError);
     expect(ran).not.toHaveBeenCalled();
     expect(await readFile(file, "utf8")).toBe(held);
+  });
+
+  // M5 V4 review: a clock step moves what `ps` says a live process started at.
+  it("waits for a live holder whose start time a clock step moved, and takes over a reused PID", async () => {
+    for (const [recorded, now, stale] of [
+      ["Wed Oct 22 00:21:24 2026", "Wed Oct 22 00:21:26 2026", false],
+      ["ticks:555", "ticks:555", false],
+      ["Wed Oct 22 00:21:24 2026", "Wed Oct 22 03:21:24 2026", true],
+      ["ticks:555", "ticks:556", true],
+    ] as const) {
+      clock.startTimeOf = async () => now;
+      const held = JSON.stringify({ pid: process.pid, startTime: recorded });
+      await writeFile(file, held);
+      const ran = vi.fn(async () => "ran");
+      if (stale) {
+        expect(await withLockFile(file, options, ran), recorded).toBe("ran");
+        await expect(stat(file)).rejects.toThrow();
+      } else {
+        await expect(withLockFile(file, options, ran), recorded).rejects.toBeInstanceOf(
+          LockTimeoutError,
+        );
+        expect(ran).not.toHaveBeenCalled();
+        expect(await readFile(file, "utf8")).toBe(held);
+        await rm(file);
+      }
+    }
   });
 
   it("still takes over a lock of the old shape (a bare PID) whose holder died", async () => {

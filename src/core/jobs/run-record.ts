@@ -17,7 +17,13 @@ import {
   runsRoot,
   SAMPLES_DIR,
 } from "./paths.js";
-import { isPidAlive, PgidSchema, readProcessStartTime, StartTimeSchema } from "./process.js";
+import {
+  isPidAlive,
+  PgidSchema,
+  readProcessStartTime,
+  StartTimeSchema,
+  sameStartTime,
+} from "./process.js";
 
 const IsoSchema = z.iso.datetime({ offset: true });
 
@@ -146,12 +152,15 @@ export async function endRun(
  * A start that was cut short (the process died between creating the run state and finishing
  * the start): still `running`, never `started`, and its starter is gone. Nothing will finish it.
  */
-export async function abandonedStart(run: RunRecord): Promise<boolean> {
+export async function abandonedStart(
+  run: RunRecord,
+  startTimeOf: (pid: number) => Promise<string | undefined> = readProcessStartTime,
+): Promise<boolean> {
   if (run.status !== "running" || run.started) return false;
   const { starter } = run;
   if (starter === undefined || !isPidAlive(starter.pid)) return true;
-  const current = await readProcessStartTime(starter.pid);
-  return current !== undefined && current !== starter.startTime;
+  const current = await startTimeOf(starter.pid);
+  return current !== undefined && !sameStartTime(current, starter.startTime);
 }
 
 export async function readRun(runDir: string): Promise<RunRecord> {

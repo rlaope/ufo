@@ -2,7 +2,13 @@ import { link, rm, stat } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 import { isErrno, OPEN_CREATE_EXCLUSIVE, OPEN_READ, openNoFollow } from "./atomic-file.js";
-import { isPidAlive, PidSchema, readProcessStartTime, StartTimeSchema } from "./process.js";
+import {
+  isPidAlive,
+  PidSchema,
+  readProcessStartTime,
+  StartTimeSchema,
+  sameStartTime,
+} from "./process.js";
 
 /** A lock file whose holder never wrote its record (crash right after create) is stale after this. */
 const UNREADABLE_STALE_MS = 2000;
@@ -160,7 +166,7 @@ async function isStale(text: string, mtimeMs: number, verified: Set<string>): Pr
   const current = await readProcessStartTime(holder.pid);
   // Unknown (it just exited, or `ps` failed): a later retry decides.
   if (current === undefined) return false;
-  if (current !== holder.startTime) return true;
+  if (!sameStartTime(current, holder.startTime)) return true;
   verified.add(text);
   return false;
 }

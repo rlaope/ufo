@@ -1,4 +1,5 @@
 import { execFile, spawn } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import { z } from "zod";
 
@@ -107,13 +108,44 @@ function probe(target: number): boolean {
   }
 }
 
+/** Reads `/proc/<pid>/stat`; a test passes its own. */
+export type ProcStatReader = (pid: number) => Promise<string>;
+
+const readProcStat: ProcStatReader = (pid) => readFile(`/proc/${pid}/stat`, "utf8");
+
 /**
- * The start time `ps` reports for `pid` (one-second resolution), or `undefined` when the process
- * does not exist or the platform has no `ps`. The fixed locale and time zone make the value
- * comparable across processes with different environments.
+ * Field 22 of a `/proc/<pid>/stat` line, the start in clock ticks since boot, as `ticks:<n>`.
+ * The fields are read after the last `)`, since the command name (field 2) may hold spaces and
+ * parentheses.
  */
-export async function readProcessStartTime(pid: number): Promise<string | undefined> {
-  if (process.platform === "win32" || !PidSchema.safeParse(pid).success) return undefined;
+export function procStatStartTime(stat: string): string | undefined {
+  const close = stat.lastIndexOf(")");
+  if (close < 0) return undefined;
+  // After the name, the first field is field 3 (state), so field 22 is the twentieth.
+  const ticks = stat
+    .slice(close + 1)
+    .trim()
+    .split(/\s+/)[19];
+  return ticks !== undefined && /^\d{1,20}$/.test(ticks) ? `ticks:${ticks}` : undefined;
+}
+
+/**
+ * The start time of `pid`, or `undefined` when the process does not exist or the platform cannot
+ * tell. On Linux it is the start in clock ticks since boot (`/proc/<pid>/stat`): `ps -o lstart`
+ * there adds the boot time, which the kernel recomputes from the clock on every read, so a clock
+ * step (NTP, a resumed VM) would move a live process's start. Elsewhere it is what `ps` reports
+ * (one-second resolution), in a fixed locale and time zone so that it is comparable across
+ * processes with different environments; compare it with `sameStartTime`.
+ */
+export async function readProcessStartTime(
+  pid: number,
+  platform: NodeJS.Platform = process.platform,
+  readStat: ProcStatReader = readProcStat,
+): Promise<string | undefined> {
+  if (platform === "win32" || !PidSchema.safeParse(pid).success) return undefined;
+  if (platform === "linux") {
+    return readStat(pid).then(procStatStartTime, () => undefined);
+  }
   try {
     const { stdout } = await execFileAsync("ps", ["-o", "lstart=", "-p", String(pid)], {
       env: { ...process.env, LC_ALL: "C", TZ: "UTC" },
@@ -124,6 +156,38 @@ export async function readProcessStartTime(pid: number): Promise<string | undefi
   } catch {
     return undefined;
   }
+}
+
+/** Seconds two `ps` start times of one process may differ by and still name it. */
+export const START_TIME_TOLERANCE_S = 2;
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** A `ps -o lstart` time in the C locale and UTC (`Wed Oct 22 00:21:24 2026`) in epoch seconds. */
+function lstartSeconds(value: string): number | undefined {
+  const match = /^[A-Z][a-z]{2} ([A-Z][a-z]{2}) (\d{1,2}) (\d{2}):(\d{2}):(\d{2}) (\d{4})$/.exec(
+    value.replace(/\s+/g, " "),
+  );
+  if (match === null) return undefined;
+  const [, month, day, hours, minutes, seconds, year] = match;
+  const index = MONTHS.indexOf(month ?? "");
+  if (index < 0) return undefined;
+  return (
+    Date.UTC(Number(year), index, Number(day), Number(hours), Number(minutes), Number(seconds)) /
+    1000
+  );
+}
+
+/**
+ * Whether two start times read with `readProcessStartTime` name the same process: equal, or two
+ * `ps` times at most `START_TIME_TOLERANCE_S` apart (a reading that crossed a second, or a clock
+ * that moved under it). Linux's tick counts must be equal.
+ */
+export function sameStartTime(a: string, b: string): boolean {
+  if (a === b) return true;
+  const x = lstartSeconds(a);
+  const y = lstartSeconds(b);
+  return x !== undefined && y !== undefined && Math.abs(x - y) <= START_TIME_TOLERANCE_S;
 }
 
 /**
