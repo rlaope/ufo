@@ -1,6 +1,9 @@
+import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
-import { describe, expect, it } from "vitest";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { collectFingerprint, readDockerDesktopVm } from "../../../src/core/evidence/index.js";
+import { DOCKER_PROBE_TIMEOUT_MS, isPidAlive } from "../../../src/core/jobs/index.js";
 import { MachineFingerprintSchema } from "../../../src/domain/index.js";
 
 describe("collectFingerprint", () => {
@@ -52,11 +55,51 @@ describe("collectFingerprint", () => {
   });
 });
 
+// M5 V4: no test runs the real Docker. Each case puts a fake `docker` first on PATH.
 describe("readDockerDesktopVm", () => {
-  it("returns a valid VM or nothing, whatever Docker setup this machine has", async () => {
-    const vm = await readDockerDesktopVm();
-    if (vm !== undefined) {
-      expect(MachineFingerprintSchema.shape.dockerVm.parse(vm)).toEqual(vm);
-    }
+  let bin: string;
+
+  beforeEach(async () => {
+    bin = await realpath(await mkdtemp(path.join(os.tmpdir(), "ufo-docker-")));
+    vi.stubEnv("PATH", [bin, "/usr/bin", "/bin"].join(path.delimiter));
   });
+
+  afterEach(async () => {
+    vi.unstubAllEnvs();
+    await rm(bin, { recursive: true, force: true });
+  });
+
+  async function fakeDocker(script: string): Promise<void> {
+    await writeFile(path.join(bin, "docker"), `#!/bin/sh\n${script}\n`, { mode: 0o755 });
+  }
+
+  it("reads the CPUs and memory of a Docker Desktop VM", async () => {
+    await fakeDocker(`printf 'Docker Desktop\\t8\\t%s\\n' ${16 * 1024 ** 3}`);
+    expect(await readDockerDesktopVm()).toEqual({ cpus: 8, memoryBytes: 16 * 1024 ** 3 });
+  });
+
+  it("returns nothing for native Docker, a stopped daemon, or no Docker", async () => {
+    await fakeDocker(`printf 'Ubuntu 24.04 LTS\\t8\\t%s\\n' ${16 * 1024 ** 3}`);
+    expect(await readDockerDesktopVm()).toBeUndefined();
+    await fakeDocker("echo 'Cannot connect to the Docker daemon' >&2; exit 1");
+    expect(await readDockerDesktopVm()).toBeUndefined();
+    vi.stubEnv("PATH", path.join(bin, "none"));
+    expect(await readDockerDesktopVm()).toBeUndefined();
+  });
+
+  // Docker Desktop installed but unable to start: the CLI waits on its backend, and a helper it
+  // started keeps the output open after the CLI itself is gone.
+  it("gives up on a docker that hangs, kills what it started, and says the VM is unknown", async () => {
+    await fakeDocker(`sleep 20 &\necho $! > '${path.join(bin, "helper.pid")}'\nwait`);
+    const started = Date.now();
+    const vm = await readDockerDesktopVm();
+    expect(Date.now() - started).toBeLessThan(DOCKER_PROBE_TIMEOUT_MS + 2000);
+    expect(vm).toEqual({
+      unknown: true,
+      reason: `docker info did not finish within ${DOCKER_PROBE_TIMEOUT_MS / 1000} s`,
+    });
+    expect(MachineFingerprintSchema.shape.dockerVm.parse(vm)).toEqual(vm);
+    const helper = Number(await readFile(path.join(bin, "helper.pid"), "utf8"));
+    await vi.waitFor(() => expect(isPidAlive(helper)).toBe(false), { timeout: 2000 });
+  }, 15_000);
 });

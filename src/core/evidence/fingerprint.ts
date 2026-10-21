@@ -1,20 +1,15 @@
-import { execFile } from "node:child_process";
 import os from "node:os";
-import { promisify } from "node:util";
 import {
   type MachineFingerprint,
   MachineFingerprintSchema,
   type PowerSource,
 } from "../../domain/index.js";
-
-const execFileAsync = promisify(execFile);
+import { DOCKER_PROBE_TIMEOUT_MS, execBounded } from "../jobs/process.js";
 
 type Awaitable<T> = T | Promise<T>;
 
-export interface DockerVm {
-  cpus: number;
-  memoryBytes: number;
-}
+/** The Docker Desktop VM's resources, or why they are unknown. */
+export type DockerVm = NonNullable<MachineFingerprint["dockerVm"]>;
 
 /**
  * Sources of each fingerprint field. Everything but `powerSource` defaults to the local machine;
@@ -57,24 +52,29 @@ export async function collectFingerprint(readers: FingerprintReaders): Promise<M
   });
 }
 
-const DockerInfoSchema = MachineFingerprintSchema.shape.dockerVm.unwrap();
+const DockerInfoSchema = MachineFingerprintSchema.shape.dockerVm.unwrap().options[0];
 
 /**
  * CPUs and memory of the Docker Desktop VM, from `docker info`. `undefined` when Docker is
  * missing, its daemon is down, or it runs natively (Linux), where containers share the host.
+ * `docker info` gets `DOCKER_PROBE_TIMEOUT_MS`; past it, the VM is `unknown` with the reason.
  */
 export async function readDockerDesktopVm(): Promise<DockerVm | undefined> {
   try {
-    const { stdout } = await execFileAsync(
+    const { stdout } = await execBounded(
       "docker",
       ["info", "--format", "{{.OperatingSystem}}\t{{.NCPU}}\t{{.MemTotal}}"],
-      { timeout: 5000 },
+      DOCKER_PROBE_TIMEOUT_MS,
     );
     const [system = "", cpus, memory] = stdout.trim().split("\t");
     if (!system.includes("Docker Desktop")) return undefined;
     const parsed = DockerInfoSchema.safeParse({ cpus: Number(cpus), memoryBytes: Number(memory) });
     return parsed.success ? parsed.data : undefined;
-  } catch {
-    return undefined;
+  } catch (error) {
+    if ((error as { code?: unknown }).code !== "ETIMEDOUT") return undefined;
+    return {
+      unknown: true,
+      reason: `docker info did not finish within ${DOCKER_PROBE_TIMEOUT_MS / 1000} s`,
+    };
   }
 }

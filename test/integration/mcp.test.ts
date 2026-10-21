@@ -1,9 +1,18 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { Client, type ClientOptions, ProtocolError } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { draftConfigFor, readAppState } from "../../src/app/index.js";
 import { CONTROL_LOCK_FILE } from "../../src/core/jobs/index.js";
 import { ERROR_PREAMBLE, RESULT_PREAMBLE } from "../../src/mcp/index.js";
@@ -464,6 +473,36 @@ describe("the server's repository and PATH", { timeout: TIMEOUT_MS }, () => {
     plantPrograms(tools, marker);
     expect((await ok(client, "inspect_target")).body).toMatchObject({ repoRoot: plain });
     expect(existsSync(marker) ? readFileSync(marker, "utf8") : "").toBe("");
+  });
+
+  // M5 V4: Docker Desktop installed but unable to start leaves `docker` waiting on its backend,
+  // with a helper holding its output open; check_capabilities still answers within a tool call.
+  it("answers check_capabilities within a tool call when docker hangs", async () => {
+    const toy = toyFor();
+    const bin = mkdtempSync(path.join(os.tmpdir(), "ufo-hung-docker-"));
+    try {
+      const helper = path.join(bin, "helper.pid");
+      writeFileSync(
+        path.join(bin, "docker"),
+        `#!/bin/sh\nsleep 20 &\necho $! > '${helper}'\nwait\n`,
+        {
+          mode: 0o755,
+        },
+      );
+      const env = { ...serverEnv(toy), PATH: [bin, process.env.PATH ?? ""].join(path.delimiter) };
+      const client = await connect(toy, {}, { env });
+      const report = await ok(client, "check_capabilities", {}, SHORT_TIMEOUT_MS + 2000);
+      expect(report.body.docker).toEqual({
+        found: true,
+        reachable: false,
+        error: "docker version --format {{.Server.Version}} did not finish within 3 s",
+      });
+      // What the hung docker started is gone too.
+      const pid = Number(readFileSync(helper, "utf8"));
+      await vi.waitFor(() => expect(() => process.kill(pid, 0)).toThrow(), { timeout: 2000 });
+    } finally {
+      rmSync(bin, { recursive: true, force: true });
+    }
   });
 
   // Security N1, S2-1: a work tree that shares a git directory elsewhere is served only as a

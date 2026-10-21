@@ -1,5 +1,14 @@
 import { execFileSync } from "node:child_process";
-import { copyFileSync, cpSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import {
+  copyFileSync,
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -37,5 +46,16 @@ export default function setup(): () => void {
   cpSync(path.join(root, "src", "presets"), path.join(pkg, "src", "presets"), { recursive: true });
   symlinkSync(path.join(root, "node_modules"), path.join(pkg, "node_modules"));
   process.env.UFO_TEST_BUILT_CLI = path.join(pkg, "dist", "cli", "index.js");
+  // No test runs the real Docker (a Docker Desktop that cannot start hangs it): first on every
+  // test's PATH is a `docker` whose daemon is not running. Tests about Docker put their own
+  // fake before it.
+  const bin = path.join(pkg, "fake-bin");
+  mkdirSync(bin);
+  writeFileSync(
+    path.join(bin, "docker"),
+    "#!/bin/sh\necho 'Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?' >&2\nexit 1\n",
+    { mode: 0o755 },
+  );
+  process.env.PATH = [bin, process.env.PATH ?? ""].join(path.delimiter);
   return () => rmSync(pkg, { recursive: true, force: true });
 }

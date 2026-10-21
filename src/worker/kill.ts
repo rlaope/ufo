@@ -1,9 +1,9 @@
-import { execFile } from "node:child_process";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { promisify } from "node:util";
 import {
   type ChildGroup,
+  DOCKER_PROBE_TIMEOUT_MS,
+  execBounded,
   isPidAlive,
   isProcessGroupAlive,
   readProcessCommand,
@@ -12,12 +12,18 @@ import {
 } from "../core/jobs/index.js";
 import { readChildGroups, runContainerLabel, workerArgv } from "./launch.js";
 
-const execFileAsync = promisify(execFile);
+/**
+ * Runs a program with array arguments; rejects when it cannot start, exits non-zero, or runs
+ * past `timeoutMs` (it is then killed).
+ */
+export type Exec = (
+  file: string,
+  args: readonly string[],
+  timeoutMs: number,
+) => Promise<{ stdout: string }>;
 
-/** Runs a program with array arguments; rejects when it cannot start or exits non-zero. */
-export type Exec = (file: string, args: readonly string[]) => Promise<{ stdout: string }>;
-
-const defaultExec: Exec = (file, args) => execFileAsync(file, [...args], { timeout: 30_000 });
+/** `docker ps` and `docker rm -f` of a reachable Docker. */
+const DOCKER_COMMAND_TIMEOUT_MS = 30_000;
 
 export interface KillOptions {
   /** How long groups get after SIGTERM before SIGKILL. */
@@ -97,7 +103,7 @@ export async function killRunProcesses(
   const labels = [own, ...run.containerLabels].filter(
     (label) => label === own || label.startsWith(`${own}.`),
   );
-  report.containers = await removeContainers(labels, options.exec ?? defaultExec);
+  report.containers = await removeContainers(labels, options.exec ?? execBounded);
   return report;
 }
 
@@ -180,7 +186,7 @@ async function removeContainers(
   exec: Exec,
 ): Promise<KillReport["containers"]> {
   try {
-    await exec("docker", ["version", "--format", "{{.Server.Version}}"]);
+    await exec("docker", ["version", "--format", "{{.Server.Version}}"], DOCKER_PROBE_TIMEOUT_MS);
   } catch (error) {
     return { dockerAvailable: false, removed: [], error: describe(error) };
   }
@@ -188,12 +194,16 @@ async function removeContainers(
   try {
     for (const label of new Set(labels)) {
       // `-a` includes stopped containers; the label filter keeps unlabeled containers out.
-      const { stdout } = await exec("docker", ["ps", "-aq", "--filter", `label=${label}`]);
+      const { stdout } = await exec(
+        "docker",
+        ["ps", "-aq", "--filter", `label=${label}`],
+        DOCKER_COMMAND_TIMEOUT_MS,
+      );
       for (const id of stdout.split(/\s+/)) {
         if (CONTAINER_ID.test(id)) ids.add(id);
       }
     }
-    if (ids.size > 0) await exec("docker", ["rm", "-f", ...ids]);
+    if (ids.size > 0) await exec("docker", ["rm", "-f", ...ids], DOCKER_COMMAND_TIMEOUT_MS);
   } catch (error) {
     return { dockerAvailable: true, removed: [], error: describe(error) };
   }
