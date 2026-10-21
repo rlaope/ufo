@@ -189,6 +189,7 @@ describe("a profile job's result", () => {
       return {
         ...summary,
         unit: "microseconds",
+        idle: 123_456_789_012.345,
         note: "99 of 100 profiles are in another unit and left out",
       };
     });

@@ -36,6 +36,8 @@ export type FileHotspots =
       unit: string;
       /** The file's total weight, in `unit`. */
       weight: number;
+      /** Of `weight`, what V8 spent idle (`(idle)`): waiting, not computing. */
+      idle?: number;
       /** Time in the frame itself. */
       self: FrameShare[];
       /** Time with the frame anywhere on the stack, counted once per stack. */
@@ -96,7 +98,7 @@ export class Tally {
 
 /** What a parser makes of one file's text. */
 export type Parsed =
-  | { valid: true; tally: Tally; unit: string; note?: string }
+  | { valid: true; tally: Tally; unit: string; idle?: number; note?: string }
   | { valid: false; reason: string };
 
 export function invalid(reason: string): Parsed {
@@ -190,6 +192,9 @@ export function summarize(
     valid: true,
     unit: parsed.unit,
     weight: Math.round(tally.weight * 1000) / 1000,
+    ...(parsed.idle === undefined || parsed.idle === 0
+      ? {}
+      : { idle: Math.round(parsed.idle * 1000) / 1000 }),
     self: frames(tally.self),
     total: frames(tally.total),
     stacks: heaviest(tally.stacks, (s) => s.weight, TOP_STACKS).map(([, stack]) => ({
@@ -204,14 +209,15 @@ export function summarize(
 export const MAX_FILES_SUMMARIZED = 4;
 
 /**
- * Several files (one per process the profiler reached): the heaviest first, then the ones that
- * could not be read, the first `MAX_FILES_SUMMARIZED` kept and the rest counted in `omitted`.
+ * Several files (one per process the profiler reached): the busiest first (weight less idle, so
+ * a wrapper process that waits on the app sorts below it), then the ones that could not be read,
+ * the first `MAX_FILES_SUMMARIZED` kept and the rest counted in `omitted`.
  */
 export function heaviestFiles(
   files: readonly FileHotspots[],
   unread = 0,
 ): { files: FileHotspots[]; omitted: number } {
-  const weight = (file: FileHotspots) => (file.valid ? file.weight : -1);
+  const weight = (file: FileHotspots) => (file.valid ? file.weight - (file.idle ?? 0) : -1);
   const sorted = [...files].sort(
     (a, b) => weight(b) - weight(a) || (a.file < b.file ? -1 : a.file > b.file ? 1 : 0),
   );

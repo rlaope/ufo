@@ -14,32 +14,30 @@ rather than running it outside UFO.
 ## Profiling
 
 `workload.profile` in `ufo.yaml` runs the profiled steps of a `profile_target` job under a
-profiler, and only those: baselines and samples stay unprofiled. Its `env` reaches the profiled
-steps (`start` by default, else `command`), `{{profile_dir}}` in a value is the job's own
-directory, and `format` says what the profiler writes there: `collapsed` (folded stacks),
-`cpuprofile` (V8), or `speedscope`. For Node:
+profiler, and only those (`start` by default, else `command`): baselines and samples stay
+unprofiled. The draft `ufo.yaml` from `inspect_target` carries the block for the detected stack:
 
-```yaml
-workload:
-  start: node server.js
-  command: node bench.mjs
-  profile:
-    env:
-      NODE_OPTIONS: "--cpu-prof --cpu-prof-dir={{profile_dir}}"
-    format: cpuprofile
-```
+- Node: `profile: { preset: node-cpu }`, active in the draft. It runs `node --cpu-prof` through
+  `NODE_OPTIONS`, with UFO's preload so a server stopped by SIGTERM still writes its profile. A
+  wrapper that exits without waiting for the server (`cd app && node server.js`) loses it; run
+  the server as the single command, or through npm.
+- JVM: the async-profiler agent through `JAVA_TOOL_OPTIONS`, commented in the draft. The user
+  installs async-profiler and sets the library's path; whether it writes on SIGTERM is unverified.
+- Python: py-spy as a wrapper on `start` that only a profile job expands
+  (`${UFO_PROFILE_DIR:+py-spy record -f raw -o "$UFO_PROFILE_DIR/py.txt" -s --} python app.py`),
+  commented in the draft; py-spy needs root on macOS.
+- Go and Rust: no block yet; read the code and the phase times.
 
-`--cpu-prof` writes when the process exits, so a profiled server has to exit on SIGTERM
-(`process.on("SIGTERM", () => process.exit(0))`); without that, `files` comes back empty. Any
-profiler that writes one of the three formats into `{{profile_dir}}` (or `$UFO_PROFILE_DIR`) works
-the same way. Format and limits: docs/cli.md, "Profiling".
+Any profiler that writes folded stacks, a V8 `.cpuprofile`, or a speedscope file into
+`$UFO_PROFILE_DIR` works the same way. Format and limits: docs/cli.md, "Profiling".
 
 ## Reading hot spots
 
 - `self` is time in the frame itself: a hot loop, a codec, a regex. `total` is time with the frame
   anywhere on the stack, once per stack: the request handler or job that holds the time. `stacks`
   shows who calls the hot frames, the leaf last.
-- Start from the heaviest file (the first; one file per process). A frame in your code with a
+- Start from the first file, the busiest (one file per process; a wrapper such as npm that only
+  waited comes after the app). A frame in your code with a
   large `self` share is the place to change; a library frame with a large `self` share is changed
   through how your code calls it (call it less, batch it, cache it).
 - V8's own entries: `(idle)` is time waiting, so a server profile that is mostly idle is waiting
@@ -54,7 +52,8 @@ the same way. Format and limits: docs/cli.md, "Profiling".
   are fast; startup traces show where the time goes.
 - Evidence by stack: Spring Boot — startup steps from `BufferingApplicationStartup` and the
   `/actuator/startup` endpoint, class loading with `-Xlog:class+load`; JVM — JFR from launch
-  (`-XX:StartFlightRecording`); Node — `node --cpu-prof` over boot; Python — `python -X importtime`.
+  (`-XX:StartFlightRecording`); Node — the `node-cpu` preset's hot spots over boot; Python —
+  `python -X importtime`.
 - Cards: `list_techniques` with `bottleneck: startup` (CDS/AOT caches, AOT processing, lazy
   initialization, scanning less, checkpoint/restore, native images).
 
@@ -62,8 +61,9 @@ the same way. Format and limits: docs/cli.md, "Profiling".
 - Symptom: the work is compute-bound; CPU near a core per worker while the metric is slow.
 - Confirm: hot spots with a few frames holding a large `self` share, in the application's own
   code or a library, and little `(idle)`.
-- Evidence: JVM — async-profiler (`asprof -e cpu`) or JFR; Node — `--cpu-prof`; Python — `py-spy
-  record`; Go — pprof CPU profile; Rust — a sampling profiler (perf, cargo flamegraph).
+- Evidence: JVM — the draft's commented async-profiler block, or JFR; Node — the `node-cpu`
+  preset; Python — the draft's commented py-spy wrapper on `start`; Go — pprof CPU profile; Rust —
+  a sampling profiler (perf, cargo flamegraph).
 - Cards: `bottleneck: cpu`, and `generic.code-change` for a hot loop the profile names.
 
 ## allocation

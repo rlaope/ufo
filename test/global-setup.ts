@@ -34,6 +34,7 @@ export default function setup(): () => void {
     recursive: true,
     filter: (source) => !source.endsWith(".ts"),
   });
+  cpSync(path.join(root, "src", "presets"), path.join(pkg, "src", "presets"), { recursive: true });
   symlinkSync(path.join(root, "node_modules"), path.join(pkg, "node_modules"));
   process.env.UFO_TEST_BUILT_CLI = path.join(pkg, "dist", "cli", "index.js");
   return () => rmSync(pkg, { recursive: true, force: true });

@@ -23,6 +23,13 @@ export const PROFILE_DIR_PLACEHOLDER = "{{profile_dir}}";
 export const ProfileFormatSchema = z.enum(["collapsed", "cpuprofile", "speedscope"]);
 export type ProfileFormat = z.infer<typeof ProfileFormatSchema>;
 
+/**
+ * Profilers UFO sets up itself. `node-cpu`: `node --cpu-prof` through `NODE_OPTIONS`, with UFO's
+ * preload so a server stopped by SIGTERM still writes its profile.
+ */
+export const ProfilePresetSchema = z.enum(["node-cpu"]);
+export type ProfilePreset = z.infer<typeof ProfilePresetSchema>;
+
 /** Workload steps a profiler can run under. */
 export const ProfileStepSchema = z.enum(["setup", "start", "warmup", "command"]);
 export type ProfileStep = z.infer<typeof ProfileStepSchema>;
@@ -40,43 +47,60 @@ const ProfileEnvNameSchema = z
 
 /**
  * `workload.profile`: how `profile_target` runs the workload under a profiler. Only a profile
- * job uses it; baselines, samples, oracles, and the final check run unprofiled.
+ * job uses it; baselines, samples, oracles, and the final check run unprofiled. A `preset` sets
+ * `env` and `format` itself; without one, `format` is required and `env` optional (a command
+ * can start the profiler itself in `$UFO_PROFILE_DIR`).
  */
-export const WorkloadProfileSchema = z.strictObject({
-  /** Added to the profiled steps; `{{profile_dir}}` is replaced with the job's directory. */
-  env: z
-    .record(
-      z.string(),
-      EnvValueSchema.refine(
-        (value) => !value.replaceAll(PROFILE_DIR_PLACEHOLDER, "").includes("{{"),
-        `${PROFILE_DIR_PLACEHOLDER} is the only placeholder`,
-      ),
+export const WorkloadProfileSchema = z
+  .strictObject({
+    preset: ProfilePresetSchema.optional(),
+    /** Added to the profiled steps; `{{profile_dir}}` is replaced with the job's directory. */
+    env: z
+      .record(
+        z.string(),
+        EnvValueSchema.refine(
+          (value) => !value.replaceAll(PROFILE_DIR_PLACEHOLDER, "").includes("{{"),
+          `${PROFILE_DIR_PLACEHOLDER} is the only placeholder`,
+        ),
+      )
+      .superRefine((env, ctx) => {
+        const names = Object.keys(env);
+        if (names.length > MAX_PROFILE_ENV) {
+          ctx.addIssue({ code: "custom", message: `must have at most ${MAX_PROFILE_ENV} entries` });
+        }
+        // Checked here rather than as the record's key, so the message says what is wrong.
+        for (const name of names) {
+          const issue = ProfileEnvNameSchema.safeParse(name).error?.issues[0];
+          if (issue !== undefined)
+            ctx.addIssue({ code: "custom", path: [name], message: issue.message });
+        }
+      })
+      .optional(),
+    /** Default: `[start]` when the workload has a `start`, else `[command]`. */
+    steps: uniqueArray(
+      ProfileStepSchema,
+      ProfileStepSchema.options.length,
+      (step) => step,
+      "profile steps",
     )
-    .superRefine((env, ctx) => {
-      const names = Object.keys(env);
-      if (names.length > MAX_PROFILE_ENV) {
-        ctx.addIssue({ code: "custom", message: `must have at most ${MAX_PROFILE_ENV} entries` });
+      .min(1)
+      .optional(),
+    /** What the profiler writes into the directory. */
+    format: ProfileFormatSchema.optional(),
+  })
+  .superRefine((profile, ctx) => {
+    if (profile.preset === undefined) {
+      if (profile.format === undefined) {
+        ctx.addIssue({ code: "custom", path: ["format"], message: "is required without a preset" });
       }
-      // Checked here rather than as the record's key, so the message says what is wrong.
-      for (const name of names) {
-        const issue = ProfileEnvNameSchema.safeParse(name).error?.issues[0];
-        if (issue !== undefined)
-          ctx.addIssue({ code: "custom", path: [name], message: issue.message });
+      return;
+    }
+    for (const key of ["env", "format"] as const) {
+      if (profile[key] !== undefined) {
+        ctx.addIssue({ code: "custom", path: [key], message: `preset ${profile.preset} sets it` });
       }
-    })
-    .default({}),
-  /** Default: `[start]` when the workload has a `start`, else `[command]`. */
-  steps: uniqueArray(
-    ProfileStepSchema,
-    ProfileStepSchema.options.length,
-    (step) => step,
-    "profile steps",
-  )
-    .min(1)
-    .optional(),
-  /** What the profiler writes into the directory. */
-  format: ProfileFormatSchema,
-});
+    }
+  });
 export type WorkloadProfile = z.infer<typeof WorkloadProfileSchema>;
 
 /**

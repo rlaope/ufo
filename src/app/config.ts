@@ -132,7 +132,57 @@ const DRAFT_ORACLE_EXAMPLE = `#  - name: unit-tests
 #    command: ./scripts/smoke.sh
 `;
 
-function renderDraft(workloadNotes: string, oracleNotes: string, cardNotes: string): string {
+/**
+ * A Python `start` that runs under py-spy in a profile job only: `UFO_PROFILE_DIR` is set there
+ * alone, so in every measured run `/bin/sh` expands the prefix to nothing.
+ */
+export const PYTHON_PROFILED_START =
+  // biome-ignore lint/suspicious/noTemplateCurlyInString: a shell expansion, not a JS template.
+  '${UFO_PROFILE_DIR:+py-spy record -f raw -o "$UFO_PROFILE_DIR/py.txt" -s --} python app.py';
+
+/** The `profile` block of the draft for the detected stacks: Node's preset, others commented. */
+function profileNotes(stacks: readonly DetectedStack[]): string {
+  const has = (...ids: string[]) => stacks.some((stack) => ids.includes(stack.id));
+  let notes = "";
+  if (has("node")) {
+    notes += `  # profile_target runs the profiled step (start, else the command) under node --cpu-prof, with
+  # UFO's preload so a server stopped by SIGTERM still writes its profile (docs/cli.md, "Profiling").
+  profile:
+    preset: node-cpu
+`;
+  }
+  if (has("jvm", "spring-boot")) {
+    notes += `  # JVM: the async-profiler agent (https://github.com/async-profiler/async-profiler), installed
+  # separately, writes folded stacks for each JVM. JAVA_TOOL_OPTIONS also reaches the JVMs Maven and
+  # Gradle start, each writing its own %p file; whether the agent writes on SIGTERM is unverified.
+  # With the server JVM in start, set the library's path (.dylib on macOS, .so on Linux) and
+  # uncomment:
+  # profile:
+  #   env:
+  #     JAVA_TOOL_OPTIONS: "-agentpath:/path/to/libasyncProfiler.dylib=start,event=cpu,collapsed,file={{profile_dir}}/prof-%p.collapsed"
+  #   steps: [start]
+  #   format: collapsed
+`;
+  }
+  if (has("python", "django", "fastapi", "flask")) {
+    notes += `  # Python: py-spy wraps start in a profile job only (UFO_PROFILE_DIR is set there alone, so
+  # measured runs start the bare command); py-spy needs root on macOS. On Python 3.15+,
+  # python \${UFO_PROFILE_DIR:+-m profiling.sampling run --collapsed -o "$UFO_PROFILE_DIR/py.collapsed"} app.py
+  # is the built-in alternative (privileges on macOS unconfirmed). Adapt and uncomment:
+  # start: ${PYTHON_PROFILED_START}
+  # profile:
+  #   format: collapsed
+`;
+  }
+  return notes;
+}
+
+function renderDraft(
+  workloadNotes: string,
+  oracleNotes: string,
+  cardNotes: string,
+  profile = "",
+): string {
   return `# UFO configuration. Edit it; then ${personMustRun("ufo approve")}.
 # Reference: docs/cli.md (ufo.yaml reference).
 version: 1
@@ -157,7 +207,7 @@ workload:
   # Runs in each arm's directory and prints one JSON line on stdout, e.g.
   # {"latency_ms": 12.3, "error_rate": 0}
 ${workloadNotes}  command: "${DRAFT_WORKLOAD_COMMAND}"
-${oracleNotes}targets: []
+${profile}${oracleNotes}targets: []
 cards:
   - generic.code-change
 ${cardNotes}optIns: []
@@ -174,9 +224,10 @@ env: []
 export const DRAFT_CONFIG = renderDraft("", `oracles: []\n${DRAFT_ORACLE_EXAMPLE}`, "");
 
 /**
- * The draft for the stacks found in the repository: their measuring hints, the detected test
- * command as a commented-out oracle, and the stacks whose cards to enable. `DRAFT_CONFIG` when
- * nothing was detected. It is valid as written; only the workload command is left to fill in.
+ * The draft for the stacks found in the repository: their measuring hints, a profile block for
+ * profile_target (Node's preset, the JVM's and Python's commented), the detected test command as
+ * a commented-out oracle, and the stacks whose cards to enable. `DRAFT_CONFIG` when nothing was
+ * detected. It is valid as written; only the workload command is left to fill in.
  */
 export function draftConfigFor(stacks: readonly DetectedStack[]): string {
   if (stacks.length === 0) return DRAFT_CONFIG;
@@ -201,7 +252,7 @@ oracles: []
   const cardNotes = `# Detected: ${stacks.map((stack) => stack.id).join(", ")}. List the cards for them with the
 # list_techniques tool (filter by stack and by the bottleneck the profile shows), then add their ids.
 `;
-  return renderDraft(workloadNotes, oracleNotes, cardNotes);
+  return renderDraft(workloadNotes, oracleNotes, cardNotes, profileNotes(stacks));
 }
 
 /**

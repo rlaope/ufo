@@ -26,8 +26,9 @@ The tools are `inspect_target`, `check_capabilities`, `list_techniques`, `get_te
 2. **Configuration.** Call `inspect_target`. Without a `ufo.yaml`, its result carries `draftConfig`,
    a commented draft: write it to `ufo.yaml` at the repository root. Fill in the objective, the
    workload command, the oracles (the test suite whose passing set must not shrink), the cards
-   to enable (`list_techniques` indexes them), and a `workload.profile` block for the stack's
-   profiler, so step 6 gets hot spots ([bottlenecks.md](bottlenecks.md), "Profiling"). The full
+   to enable (`list_techniques` indexes them), and the `workload.profile` block for the stack's
+   profiler, so step 6 gets hot spots: the draft has it active for Node and commented for the JVM
+   and Python ([bottlenecks.md](bottlenecks.md), "Profiling"). The full
    format is in https://github.com/rlaope/ufo/blob/main/docs/cli.md#ufoyaml-reference. Done when
    `inspect_target` reports the configuration valid.
 

@@ -148,10 +148,8 @@ workload:
   command: node bench/latency.mjs  # required; one sample, prints one JSON line
   teardown: ./scripts/stop.sh      # optional
   profile:                         # optional; only profile_target runs it (see Profiling)
-    env:
-      NODE_OPTIONS: "--cpu-prof --cpu-prof-dir={{profile_dir}}"
+    preset: node-cpu               # or env (optional) and format: collapsed | cpuprofile | speedscope
     steps: [start]                 # default: [start] with a start, else [command]
-    format: cpuprofile             # collapsed | cpuprofile | speedscope
 oracles:
   - name: unit-tests
     kind: test_pass_set
@@ -220,6 +218,16 @@ Whatever a command leaves running in its process group is killed when it exits.
 `profile_target` (MCP) runs the workload once in arm A. With `workload.profile`, it runs it under
 the profiler this block sets up and reads what the profiler writes:
 
+- `preset`: a profiler UFO sets up itself; with one, `env` and `format` are not allowed. The only
+  one is `node-cpu`: the profiled steps get `NODE_OPTIONS` set to
+  `--cpu-prof --cpu-prof-dir="<profile dir>" --require "<UFO's preload>"` (after the value `env:`
+  passes, if it lists `NODE_OPTIONS`), and the format is `cpuprofile`. `--cpu-prof` writes only
+  when the process exits normally, and Node ends on SIGTERM or SIGINT without writing unless a
+  JavaScript listener exits instead; UFO's preload (`src/presets/node-exit-on-signal.cjs`, shipped
+  with UFO) is that listener on the main thread, for a process with no listener of its own (it
+  exits with 128 + the signal's number). A process with its own listener keeps it, and its
+  profile is written when that listener exits. `NODE_OPTIONS` reaches every Node process the
+  step starts, and each writes its own file.
 - `env`: at most 16 variables added to the profiled steps of a profile job, and to nothing else.
   Names are uppercase (`[A-Z_][A-Z0-9_]*`); `PATH`, `HOME`, `UFO_*`, and names that look like
   secrets (`TOKEN`, `SECRET`, `PASSWORD`, `API_KEY`, `AWS_*`, and the like) are refused
@@ -229,7 +237,7 @@ the profiler this block sets up and reads what the profiler writes:
   it is, not quoted.
 - `steps`: which of `setup`, `start`, `warmup`, and `command` get `env`, each set in the workload.
   Default: `[start]` when the workload has a `start` (a server), else `[command]`.
-- `format`: what the profiler writes. `collapsed` is folded stacks, one `root;...;leaf <count>` per
+- `format`: what the profiler writes, required without a preset. `collapsed` is folded stacks, one `root;...;leaf <count>` per
   line (async-profiler `-o collapsed`, py-spy `--format raw`, the stackcollapse scripts); its
   weights are `samples`. `cpuprofile` is V8's `.cpuprofile` (`node --cpu-prof`), weighed in
   microseconds, each sample until the next one. `speedscope` is the speedscope JSON format,
@@ -241,10 +249,43 @@ outside both arms, so nothing the profiler writes reaches a diff. Every step of 
 `UFO_PROFILE_DIR`, so a command can also start a profiler itself. Baselines, samples, oracles,
 and the final check never get `env` or `UFO_PROFILE_DIR`: measurement stays unprofiled.
 
-A profiler that writes its file when the process exits, such as `node --cpu-prof`, writes nothing
-for a process killed by a signal. UFO stops `start` after `teardown` with SIGTERM to its process
-group, then SIGKILL 2 s later, so a profiled server has to exit on SIGTERM (in Node,
-`process.on("SIGTERM", () => process.exit(0))`); a step that exits by itself needs nothing.
+UFO stops `start` after `teardown` with SIGTERM to its process group, then SIGKILL to the group
+once the process `start` launched has exited, or 2 s after SIGTERM. A profiler that writes when
+its process exits has that long. A wrapper that exits on SIGTERM without waiting for the app,
+such as a shell running `cd app && node server.js` (a single command is run in place of the
+shell, a list is not), ends the group before the app writes its profile; npm forwards the signal
+and waits, so `npm start` is fine.
+
+Since `UFO_PROFILE_DIR` is set only in a profile job, a command can start a profiler itself with
+`/bin/sh` parameter expansion, which leaves the bare command in every measured run:
+
+```yaml
+workload:
+  start: ${UFO_PROFILE_DIR:+py-spy record -f raw -o "$UFO_PROFILE_DIR/py.txt" -s --} python app.py
+  command: python bench.py
+  profile:
+    format: collapsed
+```
+
+py-spy (https://github.com/benfred/py-spy) is installed separately and needs root on macOS. On
+Python 3.15 and later, `python ${UFO_PROFILE_DIR:+-m profiling.sampling run --collapsed -o
+"$UFO_PROFILE_DIR/py.collapsed"} app.py` uses the built-in sampling profiler instead (whether it
+needs privileges on macOS is unconfirmed). For a JVM, the async-profiler agent
+(https://github.com/async-profiler/async-profiler, installed separately) writes folded stacks
+through `JAVA_TOOL_OPTIONS`:
+
+```yaml
+  profile:
+    env:
+      JAVA_TOOL_OPTIONS: "-agentpath:/path/to/libasyncProfiler.dylib=start,event=cpu,collapsed,file={{profile_dir}}/prof-%p.collapsed"
+    steps: [start]
+    format: collapsed
+```
+
+`JAVA_TOOL_OPTIONS` also reaches the JVMs Maven and Gradle start, each writing its own `%p` file;
+whether the agent writes its file when the JVM is stopped with SIGTERM is unverified. The draft
+`ufo.yaml` (`ufo init`, `inspect_target`) carries the `node-cpu` preset for a Node repository and
+these two blocks, commented, for JVM and Python ones.
 
 After the job's teardown, UFO reads the directory's regular files (never through a symbolic
 link), the largest first and at most 16 of them, each at most 32 MiB. For each file it sums the
@@ -255,13 +296,15 @@ calling itself shown once, so deep recursion still shows its caller. Frame and f
 names are one line of at most 80 bytes, the middle cut out of a longer one, and paths inside arm A
 are named relative to the repository. A file that is not the configured format, holds no
 samples, is too large, or has more than 1 000 000 folded lines or 500 000 call-tree nodes is
-reported with its reason, never failing the job. Several files (one per process, as when
-`NODE_OPTIONS` reaches child processes) come back heaviest first, then those with a reason; the
-first 4 are summarized and the others counted in `omitted`. Without `workload.profile`, the result
+reported with its reason, never failing the job. A V8 file also gives `idle`, the part of its
+weight spent in `(idle)`. Several files (one per process, as when `NODE_OPTIONS` reaches child
+processes) come back busiest first (weight less `idle`, so a wrapper that only waits on the app
+comes after it), then those with a reason; the first 4 are summarized and the others counted in
+`omitted`. Without `workload.profile`, the result
 has no `hotspots` and the job creates no directory.
 
 The approval covers `workload.profile` like the rest of `ufo.yaml`; `ufo approve` shows the
-profiled steps, the format, and each variable JSON-quoted.
+profiled steps, the format, the preset, and each variable JSON-quoted, a preset's as it expands.
 
 ### Workload output: one JSON line
 

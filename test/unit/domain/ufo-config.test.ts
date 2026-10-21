@@ -108,7 +108,7 @@ describe("UfoConfigSchema workload.profile", () => {
 
   it("profiles start by default, else the command, and takes no variables unless listed", () => {
     const parsed = expectAccepts(UfoConfigSchema, withProfile({ format: "cpuprofile" }));
-    expect(parsed.workload.profile).toEqual({ env: {}, format: "cpuprofile" });
+    expect(parsed.workload.profile).toEqual({ format: "cpuprofile" });
     expect(profiledSteps(parsed.workload)).toEqual(["start"]);
     expect(profiledSteps({ command: "node bench.mjs" })).toEqual(["command"]);
     const listed = expectAccepts(
@@ -127,14 +127,24 @@ describe("UfoConfigSchema workload.profile", () => {
       ),
     );
     expect(profiledSteps(listed.workload)).toEqual(["setup", "command"]);
-    expect(listed.workload.profile?.env.NODE_OPTIONS).toBe(
+    expect(listed.workload.profile?.env?.NODE_OPTIONS).toBe(
       "--cpu-prof --cpu-prof-dir={{profile_dir}}",
     );
+  });
+
+  it("takes a preset with steps, the preset setting the variables and the format", () => {
+    expect(
+      expectAccepts(UfoConfigSchema, withProfile({ preset: "node-cpu" })).workload.profile,
+    ).toEqual({ preset: "node-cpu" });
+    expectAccepts(UfoConfigSchema, withProfile({ preset: "node-cpu", steps: ["command"] }));
   });
 
   it.each([
     ["no format", { env: {} }],
     ["an unknown format", { format: "pprof" }],
+    ["an unknown preset", { preset: "jvm-cpu" }],
+    ["a preset with variables", { preset: "node-cpu", env: { X: "y" } }],
+    ["a preset with a format", { preset: "node-cpu", format: "cpuprofile" }],
     ["an unknown key", { format: "collapsed", output: "x" }],
     ["a step that cannot be profiled", { format: "collapsed", steps: ["teardown"] }],
     ["a step twice", { format: "collapsed", steps: ["start", "start"] }],

@@ -4,11 +4,11 @@ import {
   profiledSteps,
   type TechniqueCard,
   type UfoConfig,
-  type Workload,
 } from "../domain/index.js";
 import type { CardSet } from "./cards.js";
 import { describeDefaultEnv, secretLikeNames } from "./env.js";
 import { hygieneLimitations } from "./jobs/shared.js";
+import { profileSettings } from "./profiler.js";
 
 // What `ufo approve` shows the human before they type `approve`.
 
@@ -52,16 +52,24 @@ function describeCommand(what: string, command: string): string {
   return `  ${what}${long}: ${JSON.stringify(command)}`;
 }
 
-/** `workload.profile`: each variable JSON-quoted, as the commands are. */
-function describeProfile(workload: Workload): string[] {
-  const { profile } = workload;
+/** `workload.profile`, its preset expanded: each variable JSON-quoted, as the commands are. */
+function describeProfile(config: UfoConfig): string[] {
+  const { profile } = config.workload;
   if (profile === undefined) return [];
+  const settings = profileSettings(profile, PROFILE_DIR_PLACEHOLDER);
+  const preset =
+    profile.preset === undefined
+      ? []
+      : [
+          `  preset ${profile.preset}: node --cpu-prof, with UFO's preload so a process stopped by SIGTERM or SIGINT still writes its profile${config.env.includes("NODE_OPTIONS") ? "; NODE_OPTIONS goes after the value env: passes" : ""}`,
+        ];
   return [
     "",
     "Profiling, for profile_target only (baselines, samples, oracles, and the final check run without it):",
-    `  every step of a profile job gets UFO_PROFILE_DIR, a new directory in the run state; UFO reads the ${profile.format} files written there`,
-    `  profiled steps: ${profiledSteps(workload).join(", ")}; they also get these variables, ${PROFILE_DIR_PLACEHOLDER} replaced with that directory`,
-    ...Object.entries(profile.env).map(([name, value]) =>
+    `  every step of a profile job gets UFO_PROFILE_DIR, a new directory in the run state; UFO reads the ${settings.format} files written there`,
+    `  profiled steps: ${profiledSteps(config.workload).join(", ")}; they also get these variables, ${PROFILE_DIR_PLACEHOLDER} replaced with that directory`,
+    ...preset,
+    ...Object.entries(settings.env).map(([name, value]) =>
       describeCommand(`profile env ${name}`, value),
     ),
   ];
@@ -110,7 +118,7 @@ export function approvalReview(
     "",
     "Commands UFO will run (with /bin/sh -c, in each arm's directory; {{param}} is filled from the card's typed parameters):",
     ...approvedCommands(config, cards).map(({ what, command }) => describeCommand(what, command)),
-    ...describeProfile(config.workload),
+    ...describeProfile(config),
   ];
   if (scripts.files.length > 0) {
     lines.push(

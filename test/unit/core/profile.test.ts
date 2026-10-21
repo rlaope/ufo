@@ -122,6 +122,7 @@ describe("a V8 .cpuprofile", () => {
       valid: true,
       unit: "microseconds",
       weight: 100,
+      idle: 10,
       self: [
         { frame: "parse (lib/parse.js:5)", pct: 70 },
         { frame: "handle (server.js:10)", pct: 20 },
@@ -451,6 +452,14 @@ describe("several profile files", () => {
       omitted: 4,
     });
     expect(heaviestFiles(files.slice(0, 2)).files.map((f) => f.file)).toEqual(["p1", "bad"]);
+  });
+
+  it("put a process that mostly waited (a wrapper) below the one that worked", () => {
+    const wrapper = { ...valid("wrapper", 1000), idle: 990 };
+    expect(heaviestFiles([wrapper, valid("app", 600)]).files.map((f) => f.file)).toEqual([
+      "app",
+      "wrapper",
+    ]);
   });
 });
 

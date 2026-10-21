@@ -180,5 +180,9 @@ export function parseCpuprofile(text: string): Parsed {
     if (top.pushed) shown.pop();
     onPath.set(frame, (onPath.get(frame) ?? 1) - 1);
   }
-  return { valid: true, tally, unit: "microseconds" };
+  const idle = frames.reduce(
+    (sum, frame, i) => (frame === "(idle)" ? sum + (self[i] ?? 0) : sum),
+    0,
+  );
+  return { valid: true, tally, unit: "microseconds", idle };
 }

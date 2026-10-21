@@ -3,6 +3,7 @@ import { readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { NODE_EXIT_ON_SIGNAL } from "../../../src/app/profiler.js";
 import { BUILTIN_CARDS_DIR } from "../../../src/techniques/index.js";
 
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
@@ -22,5 +23,7 @@ describe("the npm package", () => {
     ) as { files: { path: string }[] }[];
     const files = new Set(packed[0]?.files.map((file) => file.path));
     for (const card of cards) expect(files).toContain(card.split(path.sep).join("/"));
+    // The node-cpu preset's preload, where the built app looks for it.
+    expect(files).toContain(path.relative(ROOT, NODE_EXIT_ON_SIGNAL).split(path.sep).join("/"));
   });
 });

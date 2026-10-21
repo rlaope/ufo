@@ -29,6 +29,7 @@
   "files": [
     "dist",
     "src/techniques/**/*.yaml",
+    "src/presets/*.cjs",
     "skills",
     "README.md",
     "LICENSE"

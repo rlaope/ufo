@@ -9,6 +9,8 @@ import {
   profileTarget,
   startRun,
 } from "../../src/app/index.js";
+import { NODE_EXIT_ON_SIGNAL } from "../../src/app/profiler.js";
+import type { FileHotspots } from "../../src/core/profile/index.js";
 import { approveToy, git, makeToy, TIMEOUT_MS, type Toy, waitDone } from "./helpers.js";
 
 // M4 E1–E3: profile_target under workload.profile. The profile's variables reach only the
@@ -63,21 +65,26 @@ interface StepRecord {
   dir: string | null;
 }
 
-/** The toy with `workload` (each line indented under it) and the step script committed. */
-function profileToy(workload: string[]): { toy: Toy; logDir: string } {
+/** The toy with `workload` (each line indented under it) and `files` committed. */
+function profileToy(
+  workload: string[],
+  files: Record<string, string> = { "step.mjs": STEP },
+  env: Record<string, string> = {},
+): { toy: Toy; logDir: string } {
   const logDir = mkdtempSync(path.join(tmpdir(), "ufo-it-steps-"));
+  const listed = ["TOY_LOG_DIR", ...Object.keys(env)].map((name) => `  - ${name}\n`).join("");
   const toy = makeToy({
-    env: { TOY_LOG_DIR: logDir },
+    env: { TOY_LOG_DIR: logDir, ...env },
     config: (yaml) => {
       const start = yaml.indexOf("workload:\n");
       const end = yaml.indexOf("cards:\n");
       const lines = ["workload:", ...workload.map((line) => `  ${line}`), "oracles: []", ""];
-      return `${yaml.slice(0, start)}${lines.join("\n")}${yaml.slice(end)}env:\n  - TOY_LOG_DIR\n`;
+      return `${yaml.slice(0, start)}${lines.join("\n")}${yaml.slice(end)}env:\n${listed}`;
     },
   });
-  writeFileSync(path.join(toy.repo, "step.mjs"), STEP);
+  for (const [name, text] of Object.entries(files)) writeFileSync(path.join(toy.repo, name), text);
   git(toy.repo, "add", "--all");
-  git(toy.repo, "commit", "--quiet", "--message", "step script");
+  git(toy.repo, "commit", "--quiet", "--message", "profiled scripts");
   return { toy, logDir };
 }
 
@@ -283,6 +290,131 @@ describe("a profile block ufo.yaml cannot have", { timeout: TIMEOUT_MS }, () => 
       expect(view.config).toMatchObject({ present: true, valid: false });
       expect((view.config as { error: string }).error).toContain(message);
       await expect(approveToy(toy)).rejects.toMatchObject({ code: "config_invalid" });
+    } finally {
+      await toy.cleanup();
+      rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+});
+
+// M4 E4: the node-cpu preset with the real node binary. A server spends 40 ms of CPU in burn()
+// per /work request; the measured command makes three.
+const SERVER = `import { writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+import path from "node:path";
+
+function burn(ms) {
+  const end = Date.now() + ms;
+  let x = 0;
+  while (Date.now() < end) x += Math.sqrt(x + 1);
+  return x;
+}
+
+const server = createServer((req, res) => {
+  if (req.url === "/work") burn(40);
+  res.end("ok");
+});
+writeFileSync(
+  path.join(process.env.TOY_LOG_DIR, \`node-options-\${process.env.UFO_PHASE}\`),
+  process.env.NODE_OPTIONS ?? "",
+);
+if (process.argv.includes("--own-handler")) {
+  process.on("SIGTERM", () => {
+    writeFileSync(path.join(process.env.TOY_LOG_DIR, \`handled-\${process.env.UFO_PHASE}\`), "");
+    process.exit(0);
+  });
+}
+server.listen(Number(process.env.UFO_PORT), "127.0.0.1");
+`;
+
+const CLIENT = `const base = \`http://127.0.0.1:\${process.env.UFO_PORT}\`;
+if (process.argv[2] === "health") {
+  const ok = await fetch(\`\${base}/health\`).then((r) => r.ok, () => false);
+  process.exit(ok ? 0 : 1);
+}
+const started = performance.now();
+for (let i = 0; i < 3; i++) await (await fetch(\`\${base}/work\`)).text();
+console.log(JSON.stringify({ latency_ms: (performance.now() - started) / 3, error_rate: 0 }));
+`;
+
+/** A wrapper as npm is one: it forwards SIGTERM to the app and exits when the app has. */
+const LAUNCHER = `import { spawn } from "node:child_process";
+
+const app = spawn(process.execPath, ["srv.mjs"], { stdio: "inherit" });
+process.on("SIGTERM", () => app.kill("SIGTERM"));
+app.on("exit", (code) => process.exit(code ?? 1));
+`;
+
+const NODE_FILES = { "srv.mjs": SERVER, "client.mjs": CLIENT, "launcher.mjs": LAUNCHER };
+
+function nodeWorkload(start: string): string[] {
+  return [
+    `start: ${start}`,
+    "healthcheck: node client.mjs health",
+    "command: node client.mjs measure",
+    "profile:",
+    "  preset: node-cpu",
+  ];
+}
+
+function hotFrames(file: FileHotspots | undefined): string[] {
+  if (file === undefined) throw new Error("no such file");
+  if (!file.valid) throw new Error(file.reason);
+  return file.self.map((s) => s.frame);
+}
+
+describe("the node-cpu preset", { timeout: TIMEOUT_MS }, () => {
+  it("profiles a server with no SIGTERM handler, through a wrapper, the app's file first", async () => {
+    const { toy, logDir } = profileToy(nodeWorkload("node launcher.mjs"), NODE_FILES);
+    try {
+      const printed: string[] = [];
+      await approveToy(toy, { print: (text) => printed.push(text) });
+      const options = `--cpu-prof --cpu-prof-dir="{{profile_dir}}" --require "${NODE_EXIT_ON_SIGNAL}"`;
+      expect(printed.join("")).toContain(
+        [
+          "  profiled steps: start; they also get these variables, {{profile_dir}} replaced with that directory",
+          "  preset node-cpu: node --cpu-prof, with UFO's preload so a process stopped by SIGTERM or SIGINT still writes its profile",
+          `  profile env NODE_OPTIONS: ${JSON.stringify(options)}`,
+        ].join("\n"),
+      );
+      const { run, profile } = await profileOnce(toy);
+      const hotspots = profile.hotspots;
+      expect(hotspots).toMatchObject({ format: "cpuprofile", omitted: 0 });
+      // The wrapper and the app each wrote one; the app, which did the work, comes first.
+      expect(hotspots?.files).toHaveLength(2);
+      const [app, wrapper] = hotspots?.files ?? [];
+      expect(hotFrames(app)).toContainEqual(expect.stringMatching(/^burn \(srv\.mjs:\d+\)$/));
+      expect(hotFrames(wrapper).some((frame) => frame.startsWith("burn "))).toBe(false);
+      expect(git(run.arms.a, "status", "--porcelain")).toBe("");
+      await cancelRun(toy.context, { runId: run.runId });
+    } finally {
+      await toy.cleanup();
+      rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves a server's own SIGTERM handler to run, and adds to the NODE_OPTIONS env: passes", async () => {
+    const { toy, logDir } = profileToy(nodeWorkload("node srv.mjs --own-handler"), NODE_FILES, {
+      NODE_OPTIONS: "--no-deprecation",
+    });
+    try {
+      const printed: string[] = [];
+      await approveToy(toy, { print: (text) => printed.push(text) });
+      expect(printed.join("")).toContain("; NODE_OPTIONS goes after the value env: passes");
+      const { run, jobId, profile } = await profileOnce(toy);
+      expect(readdirSync(logDir)).toContain("handled-profile");
+      const dir = path.join(toy.runDir(run.runId), "artifacts", `profile-${jobId}`);
+      const read = (phase: string) =>
+        readFileSync(path.join(logDir, `node-options-${phase}`), "utf8");
+      expect(read("baseline")).toBe("--no-deprecation");
+      expect(read("profile")).toBe(
+        `--no-deprecation --cpu-prof --cpu-prof-dir="${dir}" --require "${NODE_EXIT_ON_SIGNAL}"`,
+      );
+      expect(profile.hotspots?.files).toHaveLength(1);
+      expect(hotFrames(profile.hotspots?.files[0])).toContainEqual(
+        expect.stringMatching(/^burn \(srv\.mjs:\d+\)$/),
+      );
+      await cancelRun(toy.context, { runId: run.runId });
     } finally {
       await toy.cleanup();
       rmSync(logDir, { recursive: true, force: true });

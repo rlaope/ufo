@@ -10,10 +10,11 @@ import {
 } from "../../core/jobs/index.js";
 import { PolicyError } from "../../core/policy/index.js";
 import { type FileHotspots, readProfileDir } from "../../core/profile/index.js";
-import { PROFILE_DIR_PLACEHOLDER, type ProfileFormat, profiledSteps } from "../../domain/index.js";
+import { type ProfileFormat, profiledSteps } from "../../domain/index.js";
 import type { JobContext } from "../../worker/index.js";
 import { describeResult, succeeded } from "../commands.js";
 import { budgetStatus, wallClockViolation } from "../events.js";
+import { profileSettings } from "../profiler.js";
 import { approvalViolation, openRun, toJson } from "../state.js";
 import { type HandlerOptions, newSession } from "./shared.js";
 
@@ -79,22 +80,13 @@ export async function handleProfile(
     await rm(dir, { recursive: true, force: true });
     await mkdir(dir, { mode: 0o700 });
   }
+  const settings =
+    profile === undefined ? undefined : profileSettings(profile, dir, open.state.env);
   const session = newSession(
     open,
     context,
     options.machine,
-    profile === undefined
-      ? undefined
-      : {
-          dir,
-          env: Object.fromEntries(
-            Object.entries(profile.env).map(([name, value]) => [
-              name,
-              value.replaceAll(PROFILE_DIR_PLACEHOLDER, dir),
-            ]),
-          ),
-          steps: profiledSteps(workload),
-        },
+    settings === undefined ? undefined : { dir, env: settings.env, steps: profiledSteps(workload) },
   );
   const phases: ProfileResult["phases"] = [];
   const timed = async <T>(
@@ -140,12 +132,12 @@ export async function handleProfile(
   }
   const artifact = path.join(ARTIFACTS_DIR, `profile-${job.jobId}.json`);
   const result: ProfileResult = { sha, phases, sample, artifact };
-  if (profile !== undefined) {
+  if (settings !== undefined) {
     result.hotspots = {
-      format: profile.format,
+      format: settings.format,
       dir: profileDir,
       // Paths in arm A are named relative to the repository.
-      ...(await readProfileDir(dir, profile.format, [`file://${arm.dir}/`, `${arm.dir}/`])),
+      ...(await readProfileDir(dir, settings.format, [`file://${arm.dir}/`, `${arm.dir}/`])),
     };
   }
   const json = toJson(result);
