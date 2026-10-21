@@ -140,6 +140,20 @@ describe("listing techniques by a profile", { timeout: TIMEOUT_MS }, () => {
       expect(startup.note).toBe(
         `no listed card's frame hints are among the hot frames of profile ${queued.jobId}`,
       );
+      // Pointing at no card, the profile leaves the index as it is, expected effects and all.
+      expect(startup.cards).toEqual(
+        (await listTechniques(toy.context, { bottleneck: "startup" })).cards,
+      );
+      expect(
+        startup.cards.filter((entry) => entry.expectedEffect !== undefined).length,
+      ).toBeGreaterThan(5);
+      // An artifact cut short ranks nothing either.
+      writeFileSync(file, "{");
+      expect(await listTechniques(toy.context, { profileJobId: queued.jobId })).toEqual({
+        cards: plain.cards,
+        note: `the artifact of profile ${queued.jobId} cannot be read; the listing is not ranked`,
+      });
+      writeFileSync(file, JSON.stringify(artifact));
       // An artifact that is not what a summary writes ranks nothing.
       const long = artifact.hotspots?.files[0] as { self: { frame: string; pct: number }[] };
       long.self.push({ frame: "x".repeat(81), pct: 1 });

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { indexEntries, MAX_EVIDENCE_CARDS } from "../../../src/app/inspect.js";
-import { type HintedFile, hotFrames, MAX_NAME_BYTES } from "../../../src/core/profile/index.js";
+import {
+  displayName,
+  type HintedFile,
+  hotFrames,
+  MAX_NAME_BYTES,
+} from "../../../src/core/profile/index.js";
 import {
   MAX_LABEL_LENGTH,
   type StackId,
@@ -103,6 +108,18 @@ describe("the technique index ranked by a profile", () => {
     }
   });
 
+  it("is the usual index when the frames point at no card", () => {
+    const { cards: listed, evidenceOmitted } = indexEntries(
+      cards,
+      NONE,
+      new Set<StackId>(["node"]),
+      frames([["main.handler", 90]]),
+    );
+    expect(listed).toEqual(indexEntries(cards, NONE, new Set<StackId>(["node"])).cards);
+    expect(listed.every((entry) => entry.expectedEffect === "faster when measured")).toBe(true);
+    expect(evidenceOmitted).toBeUndefined();
+  });
+
   it("is the usual index without frames", () => {
     const { cards: listed } = indexEntries(cards, NONE, new Set<StackId>(["node"]));
     expect(listed.map((entry) => entry.id)).toEqual([
@@ -134,6 +151,33 @@ describe("the technique index ranked by a profile", () => {
     expect(listed.slice(0, MAX_EVIDENCE_CARDS).every((entry) => entry.evidence)).toBe(true);
     expect(evidenceOmitted).toBe(3);
     expect(listed.at(-1)?.id).toBe("idx.plain");
+  });
+
+  it("does not point at classpath scanning for the share every Spring startup has", async () => {
+    const catalog = [...(await loadCatalog()).cards.values()];
+    const spring = (pct: number) =>
+      frames([
+        ["org/springframework/context/annotation/ClassPathBeanDefinitionScanner.doScan", pct],
+        ["org/springframework/context/annotation/ComponentScanAnnotationParser.parse", pct],
+        [
+          displayName(
+            "org/springframework/context/annotation/ClassPathScanningCandidateComponentProvider.findCandidateComponents",
+          ),
+          pct,
+        ],
+        [
+          displayName(
+            "org/springframework/boot/autoconfigure/AutoConfigurationImportSelector.getAutoConfigurationEntry",
+          ),
+          pct,
+        ],
+      ]);
+    const matched = (pct: number) =>
+      indexEntries(catalog, NONE, NO_STACKS, spring(pct))
+        .cards.filter((entry) => entry.evidence !== undefined)
+        .map((entry) => entry.id);
+    expect(matched(9.9)).toEqual([]);
+    expect(matched(12)).toEqual(["jvm.reduce-classpath-scanning", "jvm.spring-aot-processing"]);
   });
 
   it("stays within the result budget with every built-in card matched at its bounds", async () => {

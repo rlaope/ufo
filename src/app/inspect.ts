@@ -368,7 +368,10 @@ export interface TechniqueListEntry {
   /** Stacks the card applies to; empty means any. */
   stacks: StackId[];
   bottlenecks: Bottleneck[];
-  /** With a profile, only on the cards that carry evidence, so the ranked index stays small. */
+  /**
+   * With a profile that points at a card, only on the cards that carry evidence, so the ranked
+   * index stays small.
+   */
   expectedEffect?: string | undefined;
   /** ufo.yaml enables it; only enabled cards can be submitted. */
   enabled: boolean;
@@ -421,6 +424,8 @@ export function indexEntries(
         rank(a.card, wanted) - rank(b.card, wanted) ||
         a.card.id.localeCompare(b.card.id),
     );
+  // A profile that points at no card leaves the index as it is, expected effects and all.
+  const pointed = ranked.some(({ evidence }) => evidence.length > 0);
   let carried = 0;
   let omitted = 0;
   const entries = ranked.map(({ card, evidence }): TechniqueListEntry => {
@@ -436,7 +441,7 @@ export function indexEntries(
       riskClass: card.riskClass,
       stacks: [...card.stacks],
       bottlenecks: [...card.bottlenecks],
-      expectedEffect: frames === undefined || shown ? card.expectedEffect : undefined,
+      expectedEffect: !pointed || shown ? card.expectedEffect : undefined,
       enabled: enabled.has(card.id),
       ...(shown ? { evidence } : {}),
     };
@@ -499,8 +504,14 @@ async function profileFrames(
       `profile ${jobId} is ${job.status}; wait for it with get_job, or profile again`,
     );
   }
+  // A truncated or garbled artifact ranks nothing; a link in its place still refuses.
   const artifact = ProfileArtifactSchema.safeParse(
-    await readJsonIfExists(path.join(active.runDir, ARTIFACTS_DIR, `profile-${jobId}.json`)),
+    await readJsonIfExists(path.join(active.runDir, ARTIFACTS_DIR, `profile-${jobId}.json`)).catch(
+      (error: unknown) => {
+        if (error instanceof SyntaxError) return undefined;
+        throw error;
+      },
+    ),
   );
   if (!artifact.success) {
     return { note: `the artifact of profile ${jobId} cannot be read; the listing is not ranked` };

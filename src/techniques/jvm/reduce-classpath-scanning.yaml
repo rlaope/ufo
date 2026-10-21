@@ -10,10 +10,10 @@ signals:
   - "Startup shows many auto-configurations evaluated for libraries the application does not use (debug report or --debug lists large negative-match set)."
   - "@ComponentScan or @SpringBootApplication scans a broad root package, or the class path contains many unused starters."
 frameHints:
-  - "findCandidateComponents"
-  - "ClassPathBeanDefinitionScanner.doScan"
-  - "ComponentScanAnnotationParser.parse"
-  - "getAutoConfigurationEntry"
+  - { match: "findCandidateComponents", minShare: 0.1 }
+  - { match: "ClassPathBeanDefinitionScanner.doScan", minShare: 0.1 }
+  - { match: "ComponentScanAnnotationParser.parse", minShare: 0.1 }
+  - { match: "getAutoConfigurationEntry", minShare: 0.1 }
 preconditions:
   - "Spring Boot. The change must leave the needed bean set unchanged, verified against the bean list before and after; if a bean has to go, this is not the card."
 steps:
