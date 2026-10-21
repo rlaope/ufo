@@ -31,6 +31,7 @@ import {
   listJobs,
   readLedger,
   readRun,
+  readRunIfExists,
   reconcileLedger,
   releaseMachineLock,
   runDirFor,
@@ -119,8 +120,9 @@ async function refuseActiveRuns(
   warnings: readonly string[],
 ): Promise<void> {
   for (const id of await listRunIds(home, repo)) {
-    const run = await readRun(runDirFor(home, repo.repoId, id));
-    if (run.status !== "running") continue;
+    const run = await readRunIfExists(runDirFor(home, repo.repoId, id));
+    // No run.json yet: another start is creating it, and the machine lock decides between them.
+    if (run === undefined || run.status !== "running") continue;
     const cleanup = cleanupNote(warnings);
     const other = run.repoRoot !== undefined && run.repoRoot !== repo.root;
     const which = other
@@ -192,7 +194,9 @@ async function cleanUpRuns(home: string, repo: Repo, waitMs: number): Promise<st
   for (const id of await listRunIds(home, repo)) {
     try {
       const runDir = runDirFor(home, repo.repoId, id);
-      const run = await readRun(runDir);
+      const run = await readRunIfExists(runDir);
+      // Another start is creating it: nothing to clean up yet.
+      if (run === undefined) continue;
       if (await abandonedStart(run)) {
         await endAbandonedStart(home, repo, id, Math.max(0, deadline - Date.now()));
         continue;

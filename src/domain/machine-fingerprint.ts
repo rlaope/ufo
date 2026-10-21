@@ -24,12 +24,18 @@ export const MachineFingerprintSchema = z.strictObject({
   /** Runtimes the target uses, e.g. `{ node: "22.11.0", java: "25" }`. */
   runtimes: VersionMapSchema.default({}),
   powerSource: PowerSourceSchema,
-  /** Resources of the Docker Desktop VM, when the workload runs containers. */
+  /**
+   * Resources of the Docker Desktop VM, when the workload runs containers; `unknown` with the
+   * reason when Docker did not answer (installed, but its VM cannot start).
+   */
   dockerVm: z
-    .strictObject({
-      cpus: z.number().int().min(1).max(MAX_CORES),
-      memoryBytes: BytesSchema,
-    })
+    .union([
+      z.strictObject({
+        cpus: z.number().int().min(1).max(MAX_CORES),
+        memoryBytes: BytesSchema,
+      }),
+      z.strictObject({ unknown: z.literal(true), reason: labelSchema() }),
+    ])
     .optional(),
 });
 export type MachineFingerprint = z.infer<typeof MachineFingerprintSchema>;

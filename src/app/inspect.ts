@@ -1,14 +1,18 @@
 // What an agent reads before a run: the target repository and its ufo.yaml, the programs its
 // approved commands start, and the technique cards. Nothing here runs a repository command.
 
-import { execFile } from "node:child_process";
 import { access, constants, lstat } from "node:fs/promises";
 import path from "node:path";
-import { promisify } from "node:util";
 import { z } from "zod";
 import { redact } from "../core/evidence/index.js";
 import { runGit } from "../core/git/index.js";
-import { ARTIFACTS_DIR, readJob, readJsonIfExists } from "../core/jobs/index.js";
+import {
+  ARTIFACTS_DIR,
+  DOCKER_PROBE_TIMEOUT_MS,
+  execBounded,
+  readJob,
+  readJsonIfExists,
+} from "../core/jobs/index.js";
 import { checkApproval } from "../core/policy/index.js";
 import {
   type HintEvidence,
@@ -30,8 +34,6 @@ import { captureEnv } from "./env.js";
 import { AppError, describeFailure } from "./errors.js";
 import { JOB_KINDS } from "./jobs/index.js";
 import { type ApprovedCommand, approvedCommands } from "./review.js";
-
-const execFileAsync = promisify(execFile);
 
 /** Files at the repository root that name its stack. */
 export const STACK_MARKERS: readonly string[] = [
@@ -307,9 +309,12 @@ export async function checkCapabilities(context: AppContext): Promise<Capability
         : { found: false, error: result.stderr.trim() },
     (error: unknown) => ({ found: false, error: describe(error) }),
   );
-  const exec: Exec =
-    context.exec ?? ((file, args) => execFileAsync(file, [...args], { timeout: 10_000 }));
-  const docker = await exec("docker", ["version", "--format", "{{.Server.Version}}"]).then(
+  const exec: Exec = context.exec ?? execBounded;
+  const docker = await exec(
+    "docker",
+    ["version", "--format", "{{.Server.Version}}"],
+    DOCKER_PROBE_TIMEOUT_MS,
+  ).then(
     ({ stdout }): CapabilityReport["docker"] => ({
       found: true,
       reachable: true,

@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -32,6 +33,25 @@ function runtimeImports(text: string): string[] {
       return specifier.startsWith("@") ? parts.slice(0, 2).join("/") : (parts[0] ?? "");
     });
 }
+
+// M5 V4 (security-m2a L6): the MCP SDK's server bundles ajv and fast-uri inside its own files,
+// where neither `npm ls` nor `npm audit` sees them; the release audit finds them in its source maps.
+describe("the release audit of bundled copies", () => {
+  it("finds the copies the MCP server bundles, which npm ls does not list", () => {
+    const run = (file: string, args: string[]) =>
+      execFileSync(file, args, { cwd: ROOT, encoding: "utf8", timeout: 60_000 });
+    const tree = run("npm", ["ls", "--omit=dev", "--all", "--parseable"]);
+    expect(tree).not.toMatch(/node_modules\/(?:fast-uri|ajv)$/m);
+    const listed = run(process.execPath, [
+      path.join(ROOT, "scripts", "audit-bundled.mjs"),
+      "--list",
+    ]);
+    expect(listed).toMatch(
+      /^bundled: fast-uri@\d+\.\d+\.\d+ \(in @modelcontextprotocol\/server\)$/m,
+    );
+    expect(listed).toMatch(/^bundled: ajv@\d+\.\d+\.\d+ \(in @modelcontextprotocol\/server\)$/m);
+  });
+});
 
 describe("the packages src/ imports at runtime", () => {
   it("are all declared in package.json dependencies", () => {

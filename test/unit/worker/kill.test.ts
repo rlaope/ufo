@@ -3,10 +3,11 @@ import { once } from "node:events";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CHILDREN_FILE,
   createRunState,
+  DOCKER_PROBE_TIMEOUT_MS,
   isProcessGroupAlive,
   readProcessStartTime,
   readRun,
@@ -102,6 +103,26 @@ describe("killRunProcesses", () => {
       error: "spawn docker ENOENT",
     });
   });
+
+  // M5 V4: Docker Desktop installed but unable to start leaves `docker` waiting on its backend.
+  it("gives up on a docker that hangs after the probe timeout", async () => {
+    const bin = path.join(root, "bin");
+    await mkdir(bin);
+    await writeFile(path.join(bin, "docker"), "#!/bin/sh\nexec sleep 20\n", { mode: 0o755 });
+    vi.stubEnv("PATH", [bin, "/usr/bin", "/bin"].join(path.delimiter));
+    try {
+      const started = Date.now();
+      const report = await killRunProcesses(runDir);
+      expect(Date.now() - started).toBeLessThan(DOCKER_PROBE_TIMEOUT_MS + 2000);
+      expect(report.containers).toEqual({
+        dockerAvailable: false,
+        removed: [],
+        error: `docker version --format {{.Server.Version}} did not finish within ${DOCKER_PROBE_TIMEOUT_MS / 1000} s`,
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  }, 15_000);
 
   it("reports a failed docker command without failing", async () => {
     const exec: Exec = async (_file, args) => {

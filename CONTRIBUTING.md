@@ -31,8 +31,11 @@ node dist/cli/index.js --help
 | `npm test` | Runs all tests with Vitest |
 | `npm run test:unit` | Runs `test/unit` |
 | `npm run test:integration` | Runs `test/integration` |
+| `npm run audit:deps` | Audits the runtime dependencies: `npm audit --omit=dev`, then `scripts/audit-bundled.mjs`, which finds the packages a runtime dependency bundles inside its own files (the MCP SDK's server ships ajv and fast-uri in its `dist/`, which `npm audit` cannot see) and looks each one up in [OSV](https://osv.dev). Needs network access. |
 
 CI runs lint, typecheck, test, and build on every pull request. Run them locally before you push.
+
+Before a release, run `npm run audit:deps`. It fails on any advisory. For each one, update the dependency that carries it, or review it and add its id to `ACCEPTED` in `scripts/audit-bundled.mjs` with why it does not reach UFO. The bundled-copy check reads the dependencies' source maps, so a bundle without them is not seen: check the files of a new runtime dependency by hand.
 
 ## Project layout
 
