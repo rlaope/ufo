@@ -128,10 +128,12 @@ describe("status of a run that does not exist", () => {
 describe("a run directory without run.json", { timeout: TIMEOUT_MS }, () => {
   it("is left out of status and the latest run, refuses only by name, and blocks no start", async () => {
     const run = await startedRun();
-    const creating = newRunId();
-    expect(creating > run.runId).toBe(true);
-    await mkdir(path.join(toy.runDir(creating), JOBS_DIR), { recursive: true, mode: 0o700 });
+    // A second later, so it sorts after the run: within the run's own second the random suffix
+    // decides, and a baseline can finish in that second.
+    const creating = newRunId(new Date(Date.now() + 1000));
     try {
+      expect(creating > run.runId).toBe(true);
+      await mkdir(path.join(toy.runDir(creating), JOBS_DIR), { recursive: true, mode: 0o700 });
       const shown = await status(toy.context);
       expect(shown.runs.map((listed) => listed.runId)).not.toContain(creating);
       expect(shown.current?.runId).toBe(run.runId);
@@ -146,6 +148,8 @@ describe("a run directory without run.json", { timeout: TIMEOUT_MS }, () => {
       await cancelRun(toy.context, { runId: next.runId });
     } finally {
       await rm(toy.runDir(creating), { recursive: true, force: true });
+      // A failure above leaves no run active for the tests after it.
+      await cancelRun(toy.context, { runId: run.runId }).catch(() => undefined);
     }
   });
 });
