@@ -313,6 +313,39 @@ describe("findJfr", () => {
     expect(await findJfr({ PATH })).toBeUndefined();
   });
 
+  it("searches the PATH UFO's own processes get: no node_modules entry, none inside untrusted", async () => {
+    const jdk = path.join(dir, "jdk", "bin");
+    tool(path.join(jdk, "java"));
+    tool(path.join(jdk, "jfr"));
+    // npx puts a project's .bin directories first; a package could ship a java and a jfr there.
+    const bin = path.join(dir, "app", "node_modules", ".bin");
+    tool(path.join(bin, "java"));
+    tool(path.join(bin, "jfr"));
+    expect(await findJfr({ PATH: `${bin}:${jdk}` })).toBe(path.join(jdk, "jfr"));
+    // An entry inside a git directory, as captureEnv's roots list them.
+    const gitDir = path.join(dir, "repo", ".git");
+    tool(path.join(gitDir, "hooks", "java"));
+    tool(path.join(gitDir, "hooks", "jfr"));
+    const PATH = `${path.join(gitDir, "hooks")}:${jdk}`;
+    expect(await findJfr({ PATH }, [gitDir])).toBe(path.join(jdk, "jfr"));
+  });
+
+  it("never takes a jfr under node_modules, however it is reached", async () => {
+    const pkg = path.join(dir, "app", "node_modules", "some-jdk", "bin");
+    tool(path.join(pkg, "java"));
+    tool(path.join(pkg, "jfr"));
+    // A java outside that leads into it, and a JAVA_HOME there.
+    mkdirSync(path.join(dir, "bin"));
+    symlinkSync(path.join(pkg, "java"), path.join(dir, "bin", "java"));
+    expect(await findJfr({ PATH: path.join(dir, "bin") })).toBeUndefined();
+    expect(await findJfr({ JAVA_HOME: path.dirname(pkg) })).toBeUndefined();
+    // A JAVA_HOME there leaves PATH's.
+    const jdk = path.join(dir, "jdk", "bin");
+    tool(path.join(jdk, "java"));
+    tool(path.join(jdk, "jfr"));
+    expect(await findJfr({ JAVA_HOME: path.dirname(pkg), PATH: jdk })).toBe(path.join(jdk, "jfr"));
+  });
+
   it("never takes a jfr inside the repository or UFO's home", async () => {
     const repo = path.join(dir, "repo");
     tool(path.join(repo, "jdk", "bin", "jfr"));

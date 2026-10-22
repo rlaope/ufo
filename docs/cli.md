@@ -424,7 +424,9 @@ its own process group, stopped after 120 s, with the run's command environment l
 `JAVA_TOOL_OPTIONS` and `_JAVA_OPTIONS` (`jfr` is a JVM, and the preset's option would record it
 too). `jfr` is `$JAVA_HOME/bin/jfr` when `env:` lists `JAVA_HOME`, else the `jfr` next to the
 real file of the first `java` on the run's `PATH` (`/usr/bin/java` followed through its links
-into the JDK); one inside the repository or UFO's home is never run. Its `--events` and
+into the JDK), that `PATH` without `node_modules` entries, as UFO's own processes get it; one
+inside the repository, its git directories, UFO's home, or a `node_modules` directory is never
+run. Its `--events` and
 `--stack-depth` options are in JDK 11.0.6 and later. Without a `jfr`, each file is reported with
 `no jfr tool next to java or in JAVA_HOME` and the job still succeeds; a file `jfr` cannot read
 is reported with the end of its error, redacted whole before it is cut (the error can repeat

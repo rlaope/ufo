@@ -18,7 +18,7 @@ import {
   type WorkloadProfile,
 } from "../domain/index.js";
 import { runCommand, succeeded } from "./commands.js";
-import { inside } from "./env.js";
+import { inside, processPath } from "./env.js";
 
 /** The preload of the `node-cpu` preset, as this UFO ships it. */
 export const NODE_EXIT_ON_SIGNAL = fileURLToPath(
@@ -117,8 +117,11 @@ async function executable(file: string): Promise<boolean> {
 /**
  * The JDK's `jfr` tool for a run's command environment: `$JAVA_HOME/bin/jfr`, else the one next
  * to the first `java` on its `PATH`, that `java` followed to its real file (`/usr/bin/java` is
- * often a link into the JDK). Never one inside `untrusted` (the repository, UFO's home), where a
- * patch could plant it; `undefined` when there is none.
+ * often a link into the JDK). `PATH` is the one UFO's own processes get (`processPath`: no entry
+ * inside `untrusted` or with a `node_modules` segment, which npx and npm scripts put first), and
+ * the tool found is never one inside `untrusted` (the repository, its git directories, UFO's
+ * home) or under `node_modules`, where a patch or a package could plant it; `undefined` when
+ * there is none.
  */
 export async function findJfr(
   env: Readonly<Record<string, string | undefined>>,
@@ -132,8 +135,8 @@ export async function findJfr(
   const candidates: string[] = [];
   const home = env.JAVA_HOME;
   if (home !== undefined && path.isAbsolute(home)) candidates.push(path.join(home, "bin", "jfr"));
-  for (const entry of (env.PATH ?? "").split(path.delimiter)) {
-    if (!path.isAbsolute(entry) || !(await executable(path.join(entry, "java")))) continue;
+  for (const entry of processPath(env.PATH ?? "", untrusted).split(path.delimiter)) {
+    if (entry === "" || !(await executable(path.join(entry, "java")))) continue;
     const java = await realpath(path.join(entry, "java")).catch(() => undefined);
     if (java !== undefined) candidates.push(path.join(path.dirname(java), "jfr"));
     break;
@@ -141,7 +144,8 @@ export async function findJfr(
   for (const candidate of candidates) {
     if (!(await executable(candidate))) continue;
     const real = await realpath(candidate).catch(() => undefined);
-    if (real !== undefined && !inside(real, roots)) return real;
+    if (real === undefined || inside(real, roots)) continue;
+    if (!real.split(path.sep).includes("node_modules")) return real;
   }
   return undefined;
 }

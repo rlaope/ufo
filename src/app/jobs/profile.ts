@@ -14,6 +14,7 @@ import { type FileHotspots, type Parsed, readProfileDir } from "../../core/profi
 import { type ProfileFormat, profiledSteps } from "../../domain/index.js";
 import type { JobContext } from "../../worker/index.js";
 import { describeResult, succeeded } from "../commands.js";
+import { resolveRepo } from "../context.js";
 import { budgetStatus, wallClockViolation } from "../events.js";
 import { convertJfr, findJfr, profileSettings } from "../profiler.js";
 import { approvalViolation, openRun, toJson } from "../state.js";
@@ -142,7 +143,14 @@ export async function handleProfile(
     // A JFR recording is read by the JDK's jfr tool, with the run's command environment.
     let convert: ((file: string) => Promise<Parsed>) | undefined;
     if (settings.format === "jfr") {
-      const jfr = await findJfr(open.state.env, [options.home, open.git.repoRoot]);
+      // The roots the run's PATH was captured without.
+      const repo = await resolveRepo(open.git.repoRoot);
+      const jfr = await findJfr(open.state.env, [
+        repo.root,
+        repo.gitDir,
+        repo.commonDir,
+        options.home,
+      ]);
       convert = (file) =>
         convertJfr(file, {
           jfr,
