@@ -250,7 +250,7 @@ describe("pages of the technique index", () => {
     configError: label,
   });
 
-  it("fits a default page whole in the result budget with every field at its bound", () => {
+  it("ends a default page as full as fits the budget with every field at its bound", () => {
     for (const name of packages) expect(bytes(name) - 2).toBe(MAX_NAME_BYTES);
     for (const hint of hints) expect(bytes(hint) - 2).toBe(MAX_NAME_BYTES + 15);
     const listing = worst(40);
@@ -260,16 +260,17 @@ describe("pages of the technique index", () => {
     expect(listing.cards[0]?.evidence).toHaveLength(MAX_EVIDENCE);
     expect(listing.cards[0]?.evidence?.[0]).toMatchObject({ kind: "package", share: 0.999 });
     const page = indexPage(listing, 0, DEFAULT_INDEX_PAGE, "k");
-    expect(page.cards).toHaveLength(DEFAULT_INDEX_PAGE);
-    expect(page.nextCursor).toBeDefined();
+    expect(page.cards.length).toBeGreaterThan(1);
+    expect(page.cards.length).toBeLessThan(DEFAULT_INDEX_PAGE);
+    // The next page starts at the first entry left out.
+    expect(page.nextCursor?.split(".")[0]).toBe(String(page.cards.length));
     const text = JSON.stringify(success(page).structuredContent);
     expect(text).not.toContain("truncated");
     expect(Buffer.byteLength(text)).toBeLessThanOrEqual(MAX_INDEX_PAGE_BYTES);
     expect(MAX_INDEX_PAGE_BYTES).toBeLessThan(MAX_RESULT_BYTES);
-    // The default is the most such entries a page holds: one more and the page ends early.
-    expect(indexPage(listing, 0, DEFAULT_INDEX_PAGE + 1, "k").cards).toHaveLength(
-      DEFAULT_INDEX_PAGE,
-    );
+    // As full as fits: the next entry would have taken it past the budget.
+    const next = listing.cards[page.cards.length];
+    expect(bytes(page) + bytes(next) + 1).toBeGreaterThan(MAX_INDEX_PAGE_BYTES);
   });
 
   it("ends a page early rather than past the budget, and goes on from there", () => {

@@ -463,11 +463,8 @@ export function indexEntries(
 
 /** Entries a page of the index lists at most. */
 export const MAX_INDEX_PAGE = 50;
-/**
- * Entries a page lists by default: that many entries with every field at its bound still fit
- * the result budget whole (test/unit/app/technique-index.test.ts).
- */
-export const DEFAULT_INDEX_PAGE = 8;
+/** Entries a page lists by default: as many as fit `MAX_INDEX_PAGE_BYTES`, up to the most. */
+export const DEFAULT_INDEX_PAGE = MAX_INDEX_PAGE;
 /**
  * A page's JSON stays under this many bytes, below the 40 000 of a tool result: a page asked for
  * more entries than fit ends early, and its cursor goes on from the first one left out.
