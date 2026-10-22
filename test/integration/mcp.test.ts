@@ -13,7 +13,7 @@ import path from "node:path";
 import { Client, type ClientOptions, ProtocolError } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { draftConfigFor, readAppState } from "../../src/app/index.js";
+import { DEFAULT_INDEX_PAGE, draftConfigFor, readAppState } from "../../src/app/index.js";
 import { CONTROL_LOCK_FILE } from "../../src/core/jobs/index.js";
 import { ERROR_PREAMBLE, RESULT_PREAMBLE } from "../../src/mcp/index.js";
 import {
@@ -340,10 +340,13 @@ describe("a run through the tools", { timeout: TIMEOUT_MS }, () => {
     const unranked = (
       await ok(client, "list_techniques", { profile_job_id: jobId }, SHORT_TIMEOUT_MS)
     ).body;
+    // Its cursor is the ranked listing's, not the plain one's.
     expect(unranked).toEqual({
       ...plain,
+      nextCursor: expect.any(String),
       note: `profile ${jobId} has no hot spots (ufo.yaml has no workload.profile); the listing is not ranked`,
     });
+    expect(unranked.nextCursor).not.toBe(plain.nextCursor);
 
     // The hot spots a profiled job would have written: async-profiler's slashed JVM names.
     const file = path.join(toy.runDir(started.runId), "artifacts", `profile-${jobId}.json`);
@@ -424,6 +427,55 @@ describe("a run through the tools", { timeout: TIMEOUT_MS }, () => {
     expect(cancelled).toMatchObject({ runId: started.runId, cancelledJobs: [] });
     const again = await call(client, "cancel_run", { run_id: started.runId });
     expect(again).toMatchObject({ isError: true, body: { code: "run_not_active" } });
+  });
+});
+
+// M6: the technique index in pages, over the wire as hosts call it.
+describe("the technique index in pages", { timeout: TIMEOUT_MS }, () => {
+  it("pages the whole index with nextCursor and refuses a cursor of other arguments", async () => {
+    const client = await connect(toyFor());
+    const list = async (args: Record<string, unknown>) =>
+      (await ok(client, "list_techniques", args, SHORT_TIMEOUT_MS)).body as {
+        cards: { id: string }[];
+        total: number;
+        nextCursor?: string;
+      };
+    const first = await list({});
+    expect(first.total).toBeGreaterThan(50);
+    expect(first.cards).toHaveLength(DEFAULT_INDEX_PAGE);
+    const ids = first.cards.map((card) => card.id);
+    let next = first.nextCursor;
+    while (next !== undefined) {
+      const page = await list({ limit: 50, cursor: next });
+      expect(page.total).toBe(first.total);
+      ids.push(...page.cards.map((card) => card.id));
+      next = page.nextCursor;
+    }
+    expect(new Set(ids).size).toBe(first.total);
+    const bigger = await list({ limit: 50 });
+    expect(bigger.cards.map((card) => card.id)).toEqual(ids.slice(0, 50));
+
+    const refused = await call(client, "list_techniques", {
+      bottleneck: "cpu",
+      cursor: first.nextCursor,
+    });
+    expect(refused).toMatchObject({
+      isError: true,
+      body: { code: "usage", message: expect.stringContaining("without cursor") },
+    });
+    // The strict schema: a whole limit from 1 to 50, a cursor of at most 64 characters.
+    for (const args of [
+      { limit: 0 },
+      { limit: 51 },
+      { limit: 2.5 },
+      { limit: "8" },
+      { cursor: 8 },
+      { cursor: "c".repeat(65) },
+    ]) {
+      const result = await client.callTool({ name: "list_techniques", arguments: args });
+      expect(result.isError, JSON.stringify(args)).toBe(true);
+      expect((result.content as { text: string }[])[0]?.text).toContain("Input validation error");
+    }
   });
 });
 

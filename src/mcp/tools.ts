@@ -8,12 +8,14 @@ import {
   BottleneckSchema,
   cancelRun,
   checkCapabilities,
+  DEFAULT_INDEX_PAGE,
   finishRun,
   getJob,
   getRun,
   getTechnique,
   inspectTarget,
   listTechniques,
+  MAX_INDEX_PAGE,
   MAX_WAIT_S,
   profileTarget,
   RepoPathSchema,
@@ -102,7 +104,7 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
     "list_techniques",
     {
       title: "List technique cards",
-      description: `An index of the technique cards UFO knows for this repository: id, title, domain, kind (recipe or guided), risk class, the stacks and bottlenecks each applies to, its expected effect, and whether ufo.yaml enables it. Filter by the stack inspect_target detected and by the bottleneck the profile found; without a filter, cards for the detected stacks come first. With profile_job_id (a succeeded profile_target job of the active run), the cards whose frame hints its hot frames show come first, the first 12 each with evidence (the matched hint, frame, share, and list: self or total, or a bundle's module or package) and its expected effect; further matches rank next without either, counted in evidenceOmitted, and every other card leaves out its expected effect (open get_technique for it); a profile that points at no card leaves the index as it is. Evidence is a lead to confirm with get_technique's signals, not proof. Pick candidates here, then open each with get_technique for its signals, preconditions, steps, verification, and traps. ${DATA}`,
+      description: `An index of the technique cards UFO knows for this repository: id, title, domain, kind (recipe or guided), risk class, the stacks and bottlenecks each applies to, its expected effect, and whether ufo.yaml enables it. Filter by the stack inspect_target detected and by the bottleneck the profile found; without a filter, cards for the detected stacks come first. With profile_job_id (a succeeded profile_target job of the active run), the cards whose frame hints its hot frames show come first, the first 12 each with evidence (the matched hint, frame, share, and list: self or total, or a bundle's module or package) and its expected effect; further matches rank next without either, counted in evidenceOmitted, and every other card leaves out its expected effect (open get_technique for it); a profile that points at no card leaves the index as it is. Evidence is a lead to confirm with get_technique's signals, not proof. The index comes in pages of that order, limit cards each (default ${String(DEFAULT_INDEX_PAGE)}): total counts the cards after the filters, and nextCursor, while more remain, is the cursor of the next page; pass it with the same domain, stack, bottleneck, and profile_job_id. Filter by stack and bottleneck first, then page until nextCursor is absent or you have enough candidates. A cursor of other arguments, or of a listing that changed since, is a usage error: list again without cursor. Pick candidates here, then open each with get_technique for its signals, preconditions, steps, verification, and traps. ${DATA}`,
       inputSchema: z.strictObject({
         domain: z.string().max(64).optional().describe("Only cards of this domain."),
         stack: StackIdSchema.optional().describe(
@@ -116,6 +118,20 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
           .max(32)
           .optional()
           .describe("A profile_target job id of the active run, e.g. job-000002, to rank by."),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(MAX_INDEX_PAGE)
+          .optional()
+          .describe(
+            `Cards per page, 1 to ${String(MAX_INDEX_PAGE)}; a page that would not fit one result ends early. Default: ${String(DEFAULT_INDEX_PAGE)}.`,
+          ),
+        cursor: z
+          .string()
+          .max(64)
+          .optional()
+          .describe("The previous page's nextCursor, for the next page. Default: the first page."),
       }),
       annotations: READ_ONLY,
     },
@@ -126,6 +142,8 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
           ...(args.stack === undefined ? {} : { stack: args.stack }),
           ...(args.bottleneck === undefined ? {} : { bottleneck: args.bottleneck }),
           ...(args.profile_job_id === undefined ? {} : { profileJobId: args.profile_job_id }),
+          ...(args.limit === undefined ? {} : { limit: args.limit }),
+          ...(args.cursor === undefined ? {} : { cursor: args.cursor }),
         }),
       ),
   );

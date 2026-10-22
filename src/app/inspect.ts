@@ -1,6 +1,7 @@
 // What an agent reads before a run: the target repository and its ufo.yaml, the programs its
 // approved commands start, and the technique cards. Nothing here runs a repository command.
 
+import { createHash } from "node:crypto";
 import { access, constants, lstat } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
@@ -390,8 +391,12 @@ export interface TechniqueListEntry {
 }
 
 export interface TechniqueListing {
-  /** One compact entry per card; `getTechnique` opens the full card. */
+  /** One compact entry per card of this page; `getTechnique` opens the full card. */
   cards: TechniqueListEntry[];
+  /** The cards after the filters, on every page. */
+  total: number;
+  /** While cards remain: the cursor of the next page, for the same filters and profile. */
+  nextCursor?: string | undefined;
   /**
    * With a profile: the cards it points at beyond `MAX_EVIDENCE_CARDS`, listed next without
    * evidence or expected effect.
@@ -454,6 +459,79 @@ export function indexEntries(
     };
   });
   return { cards: entries, ...(omitted > 0 ? { evidenceOmitted: omitted } : {}) };
+}
+
+/** Entries a page of the index lists at most. */
+export const MAX_INDEX_PAGE = 50;
+/**
+ * Entries a page lists by default: that many entries with every field at its bound still fit
+ * the result budget whole (test/unit/app/technique-index.test.ts).
+ */
+export const DEFAULT_INDEX_PAGE = 8;
+/**
+ * A page's JSON stays under this many bytes, below the 40 000 of a tool result: a page asked for
+ * more entries than fit ends early, and its cursor goes on from the first one left out.
+ */
+export const MAX_INDEX_PAGE_BYTES = 36_000;
+
+/** `<offset>.<digest>`: where the next page starts, and a digest of it and the listing it pages. */
+const CURSOR = /^(0|[1-9]\d{0,5})\.[0-9a-f]{16}$/;
+
+function cursorFor(offset: number, listing: string): string {
+  const digest = createHash("sha256")
+    .update(`${String(offset)}\n${listing}`)
+    .digest("hex");
+  return `${String(offset)}.${digest.slice(0, 16)}`;
+}
+
+function jsonBytes(value: unknown): number {
+  return Buffer.byteLength(JSON.stringify(value), "utf8");
+}
+
+/**
+ * The page of `entries` from entry `offset` on: at most `limit` entries, and at most
+ * `MAX_INDEX_PAGE_BYTES` of JSON with the rest of the listing, though always one entry so paging
+ * goes on. `listing` names what is paged (filters, profile, and the ordered ids) for the cursor.
+ */
+export function indexPage(
+  entries: Omit<TechniqueListing, "total" | "nextCursor">,
+  offset: number,
+  limit: number,
+  listing: string,
+): TechniqueListing {
+  const { cards, ...rest } = entries;
+  // The longest cursor of this listing: no offset has more digits than the total.
+  let size = jsonBytes({
+    ...entries,
+    cards: [],
+    total: cards.length,
+    nextCursor: cursorFor(cards.length, listing),
+  });
+  const stop = Math.min(offset + limit, cards.length);
+  let end = offset;
+  while (end < stop) {
+    size += jsonBytes(cards[end]) + 1;
+    if (end > offset && size > MAX_INDEX_PAGE_BYTES) break;
+    end++;
+  }
+  return {
+    cards: cards.slice(offset, end),
+    total: cards.length,
+    ...rest,
+    ...(end < cards.length ? { nextCursor: cursorFor(end, listing) } : {}),
+  };
+}
+
+/** Where the page `cursor` names starts. `usage` for a cursor of another or a changed listing. */
+function offsetOf(cursor: string, listing: string, total: number): number {
+  const offset = Number(CURSOR.exec(cursor)?.[1] ?? Number.NaN);
+  if (!(offset > 0 && offset < total) || cursorFor(offset, listing) !== cursor) {
+    throw new AppError(
+      "usage",
+      "cursor is no nextCursor of this listing, or the cards, filters, or profile changed since; list_techniques again without cursor",
+    );
+  }
+  return offset;
 }
 
 /** A listed name as a summary writes it: at most `MAX_NAME_BYTES` of JSON. */
@@ -553,7 +631,8 @@ async function profileFrames(
  * stack (cards for that stack and cards for any stack), or one bottleneck. Without a stack
  * filter the cards for the repository's detected stacks come first, then the stack-independent
  * ones. With a profile job of the active run, the cards whose frame hints its hot frames show
- * come before all of them.
+ * come before all of them. One page of that order, from `cursor` (a `nextCursor`) on; `usage`
+ * for a `limit` outside 1 to `MAX_INDEX_PAGE`.
  */
 export async function listTechniques(
   context: AppContext,
@@ -562,8 +641,14 @@ export async function listTechniques(
     readonly stack?: StackId;
     readonly bottleneck?: Bottleneck;
     readonly profileJobId?: string;
+    readonly limit?: number;
+    readonly cursor?: string;
   } = {},
 ): Promise<TechniqueListing> {
+  const limit = options.limit ?? DEFAULT_INDEX_PAGE;
+  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_INDEX_PAGE) {
+    throw new AppError("usage", `limit must be a whole number from 1 to ${String(MAX_INDEX_PAGE)}`);
+  }
   const repo = await repoOf(context);
   const profile =
     options.profileJobId === undefined
@@ -597,11 +682,22 @@ export async function listTechniques(
       : frames !== undefined && listed.cards[0]?.evidence === undefined
         ? `no listed card's frame hints are among the hot frames of profile ${options.profileJobId ?? ""}`
         : undefined;
-  return redact({
+  const listing = JSON.stringify([
+    options.domain,
+    options.stack,
+    options.bottleneck,
+    options.profileJobId,
+    listed.cards.map((entry) => entry.id),
+  ]);
+  const offset =
+    options.cursor === undefined ? 0 : offsetOf(options.cursor, listing, listed.cards.length);
+  // Redacted before it is paged, so a page is measured as it is returned.
+  const entries = redact({
     ...listed,
     ...(note === undefined ? {} : { note }),
     ...("error" in read ? { configError: read.error } : {}),
   });
+  return indexPage(entries, offset, limit, listing);
 }
 
 export interface TechniqueDetail {

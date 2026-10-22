@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   cancelRun,
   checkCapabilities,
+  DEFAULT_INDEX_PAGE,
   draftConfigFor,
   finishRun,
   getJob,
@@ -28,6 +29,7 @@ import {
   approveToy,
   git,
   lightWorkload,
+  listEveryTechnique,
   makeToy,
   TIMEOUT_MS,
   type Toy,
@@ -224,7 +226,7 @@ describe("checking capabilities", { timeout: TIMEOUT_MS }, () => {
 
 describe("listing techniques", { timeout: TIMEOUT_MS }, () => {
   it("lists every known card with its signals and whether ufo.yaml enables it", async () => {
-    const { cards } = await listTechniques(toy.context);
+    const { cards } = await listEveryTechnique(toy.context);
     expect(cards.map((card) => card.id)).toEqual(
       expect.arrayContaining(["generic.code-change", "toy.fast-path", "toy.no-delay"]),
     );
@@ -264,14 +266,86 @@ describe("listing techniques", { timeout: TIMEOUT_MS }, () => {
 });
 
 describe("the technique index", { timeout: TIMEOUT_MS }, () => {
-  it("lists every built-in card within the result budget, unfiltered", async () => {
+  it("lists the first page of every built-in card within the result budget, unfiltered", async () => {
     const listing = await listTechniques(toy.context);
-    expect(listing.cards.length).toBeGreaterThan(50);
+    expect(listing.total).toBeGreaterThan(50);
+    expect(listing.cards).toHaveLength(DEFAULT_INDEX_PAGE);
+    expect(listing.nextCursor).toEqual(expect.any(String));
     const text = JSON.stringify(success(listing).structuredContent);
     expect(Buffer.byteLength(text)).toBeLessThan(MAX_RESULT_BYTES);
     expect(text).not.toContain("truncated");
     for (const card of listing.cards) {
       expect(Object.keys(card)).not.toContain("signals");
+    }
+  });
+
+  // M6: pages of one order, computed once over the whole listing.
+  it("pages the whole order, whatever the page size, to a last page without a cursor", async () => {
+    const pagesOf = async (options: Parameters<typeof listTechniques>[1] = {}) => {
+      const pages = [await listTechniques(toy.context, options)];
+      for (let next = pages[0]?.nextCursor; next !== undefined; next = pages.at(-1)?.nextCursor) {
+        pages.push(await listTechniques(toy.context, { ...options, cursor: next }));
+      }
+      return pages;
+    };
+    const every = await listEveryTechnique(toy.context);
+    expect(every.cards).toHaveLength(every.total);
+    expect(new Set(every.cards.map((card) => card.id)).size).toBe(every.total);
+    for (const limit of [undefined, 1, 7, 50]) {
+      const pages = await pagesOf(limit === undefined ? {} : { limit });
+      const size = limit ?? DEFAULT_INDEX_PAGE;
+      expect(pages, String(limit)).toHaveLength(Math.ceil(every.total / size));
+      expect(pages.flatMap((page) => page.cards)).toEqual(every.cards);
+      expect(pages.every((page) => page.total === every.total)).toBe(true);
+      expect(pages.at(-1)).not.toHaveProperty("nextCursor");
+    }
+    // The total counts the cards after the filters.
+    const startup = await listEveryTechnique(toy.context, { bottleneck: "startup" });
+    expect(startup.total).toBe(
+      every.cards.filter((card) => card.bottlenecks.includes("startup")).length,
+    );
+    expect(startup.cards).toHaveLength(startup.total);
+    const jvm = await listTechniques(toy.context, { stack: "jvm", bottleneck: "startup" });
+    expect(jvm.total).toBe(
+      startup.cards.filter((card) => card.stacks.length === 0 || card.stacks.includes("jvm"))
+        .length,
+    );
+  });
+
+  it("refuses a cursor of other filters, a cursor altered or made up, and a limit out of bounds", async () => {
+    const first = await listTechniques(toy.context, { bottleneck: "cpu", limit: 2 });
+    const cursor = first.nextCursor ?? "";
+    expect(cursor).toMatch(/^2\.[0-9a-f]{16}$/);
+    expect(
+      (await listTechniques(toy.context, { bottleneck: "cpu", cursor })).cards[0]?.id,
+    ).toBeDefined();
+    const [offset, digest] = cursor.split(".");
+    for (const [options, label] of [
+      [{ bottleneck: "io", cursor }, "another bottleneck"],
+      [{ cursor }, "no filter"],
+      [{ bottleneck: "cpu", stack: "jvm", cursor }, "another stack"],
+      [{ bottleneck: "cpu", domain: "toy", cursor }, "another domain"],
+      [{ bottleneck: "cpu", cursor: `3.${digest}` }, "another offset"],
+      [{ bottleneck: "cpu", cursor: `0${offset}.${digest}` }, "a leading zero"],
+      [{ bottleneck: "cpu", cursor: `${offset}.${digest}0` }, "a longer digest"],
+      [{ bottleneck: "cpu", cursor: `${offset}.${digest?.toUpperCase()}` }, "an upper-case digest"],
+      [{ bottleneck: "cpu", cursor: `-1.${digest}` }, "a negative offset"],
+      [{ bottleneck: "cpu", cursor: `1e1.${digest}` }, "an exponent"],
+      [{ bottleneck: "cpu", cursor: `999999.${digest}` }, "an offset past the end"],
+      [{ bottleneck: "cpu", cursor: "" }, "empty"],
+      [{ bottleneck: "cpu", cursor: "../run.json" }, "a path"],
+      [{ bottleneck: "cpu", cursor: "x".repeat(10_000) }, "oversized"],
+    ] as const) {
+      await expect(listTechniques(toy.context, options), label).rejects.toMatchObject({
+        code: "usage",
+        message: expect.stringContaining("list_techniques again without cursor"),
+      });
+    }
+    for (const limit of [0, 51, 1.5, Number.NaN]) {
+      await expect(listTechniques(toy.context, { limit }), String(limit)).rejects.toMatchObject({
+        code: "usage",
+        message: "limit must be a whole number from 1 to 50",
+      });
     }
   });
 });
@@ -326,7 +400,7 @@ describe("filtering and ordering techniques by stack and bottleneck", {
       expect(await ids({ stack: "python" })).toEqual(["stk.b-any-io"]);
       expect(await ids({ bottleneck: "io" })).toEqual(["stk.c-node-cpu", "stk.b-any-io"]);
       expect(await ids({ stack: "node", bottleneck: "startup" })).toEqual([]);
-      const { cards } = await listTechniques(other.context);
+      const { cards } = await listEveryTechnique(other.context);
       const at = (id: string) => cards.findIndex((listed) => listed.id === id);
       // The detected stack's card before the any-stack ones, and a JVM card after both.
       expect(at("stk.c-node-cpu")).toBeLessThan(at("stk.b-any-io"));
@@ -372,6 +446,17 @@ describe("filtering and ordering techniques by stack and bottleneck", {
       await expect(getTechnique(other.context, { cardId: "stk.nope" })).rejects.toMatchObject({
         code: "usage",
         message: expect.stringContaining("stk.nope"),
+      });
+      // M6: a card added between pages changes the listing, so its cursor is refused.
+      const page = await listTechniques(other.context, { domain: "stk", limit: 1 });
+      expect(page).toMatchObject({ total: 3, nextCursor: expect.any(String) });
+      const cursor = page.nextCursor ?? "";
+      expect((await listTechniques(other.context, { domain: "stk", cursor })).cards).toHaveLength(
+        2,
+      );
+      write("d-any-cpu", [], ["cpu"]);
+      await expect(listTechniques(other.context, { domain: "stk", cursor })).rejects.toMatchObject({
+        code: "usage",
       });
     } finally {
       await other.cleanup();

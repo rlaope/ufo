@@ -15,7 +15,14 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { approveWithGate, type HumanGate } from "../../src/app/human-gate.js";
-import { type AppContext, type ApproveOptions, getJob } from "../../src/app/index.js";
+import {
+  type AppContext,
+  type ApproveOptions,
+  getJob,
+  listTechniques,
+  MAX_INDEX_PAGE,
+  type TechniqueListing,
+} from "../../src/app/index.js";
 import {
   type JobRecord,
   LOGS_DIR,
@@ -251,6 +258,21 @@ export function workerLog(toy: Toy, runId: string): string {
   } catch {
     return "";
   }
+}
+
+/** Every page of a technique listing as one: their cards in turn, the rest as each page has it. */
+export async function listEveryTechnique(
+  context: AppContext,
+  options: Omit<NonNullable<Parameters<typeof listTechniques>[1]>, "cursor"> = {},
+): Promise<TechniqueListing> {
+  let page = await listTechniques(context, { limit: MAX_INDEX_PAGE, ...options });
+  const cards = [...page.cards];
+  while (page.nextCursor !== undefined) {
+    const cursor: string = page.nextCursor;
+    page = await listTechniques(context, { limit: MAX_INDEX_PAGE, ...options, cursor });
+    cards.push(...page.cards);
+  }
+  return { ...page, cards };
 }
 
 /** Long-polls a job until it is terminal; a timeout includes the worker's stderr. */

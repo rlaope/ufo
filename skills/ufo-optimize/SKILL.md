@@ -64,11 +64,14 @@ The tools are `inspect_target`, `check_capabilities`, `list_techniques`, `get_te
    `list_techniques` with the stack `inspect_target` detected, that `bottleneck`, and
    `profile_job_id` (the profile's job id). The cards whose frame hints the hot frames show come
    first, each with `evidence` (the hint, the frame, its share, and `self` or `total`, or a
-   bundle's `module` or `package`). Evidence is a lead, not proof: open each candidate with
-   `get_technique` and check its `signals` and `preconditions` against the evidence, and read the
-   cards without evidence too when the bottleneck points at them. Done when you have the
-   bottleneck, its evidence, and the cards whose signals the evidence matches, in the order
-   bottlenecks.md gives.
+   bundle's `module` or `package`). The index comes in pages: while `nextCursor` is in the
+   result, call `list_techniques` again with the same arguments and `cursor` set to it, until it
+   is absent or you have enough candidates. Narrow with `stack` and `bottleneck` before paging
+   further; a `usage` error about the cursor means list again without it. Evidence is a lead,
+   not proof: open each candidate with `get_technique` and check its `signals` and
+   `preconditions` against the evidence, and read the cards without evidence too when the
+   bottleneck points at them. Done when you have the bottleneck, its evidence, and the cards
+   whose signals the evidence matches, in the order bottlenecks.md gives.
 
 7. **Changes.** For each matching card, in that order:
    - If the card is not in the enabled `cards` of `ufo.yaml`, ask the user to enable it and

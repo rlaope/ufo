@@ -113,11 +113,13 @@ describe("the adapter modules", () => {
     expect(Object.keys(api).sort()).toEqual([
       "BottleneckSchema",
       "CONTROL_LOCK_WAIT_MS",
+      "DEFAULT_INDEX_PAGE",
       "DRAFT_CONFIG",
       "EXIT_INTERNAL",
       "EXIT_OK",
       "EXIT_REFUSED",
       "EXIT_USAGE",
+      "MAX_INDEX_PAGE",
       "MAX_WAIT_S",
       "RepoPathSchema",
       "StackIdSchema",

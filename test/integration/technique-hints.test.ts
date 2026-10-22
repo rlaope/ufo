@@ -10,7 +10,15 @@ import {
 } from "../../src/app/index.js";
 import { writeJob } from "../../src/core/jobs/index.js";
 import { displayName, summarizeProfile } from "../../src/core/profile/index.js";
-import { approveToy, lightWorkload, makeToy, TIMEOUT_MS, type Toy, waitDone } from "./helpers.js";
+import {
+  approveToy,
+  lightWorkload,
+  listEveryTechnique,
+  makeToy,
+  TIMEOUT_MS,
+  type Toy,
+  waitDone,
+} from "./helpers.js";
 
 // M5 V1: list_techniques ranked by a profile job of the active run. The toy has no
 // workload.profile, so its profile has no hot spots until the test writes them into the artifact
@@ -38,8 +46,8 @@ describe("listing techniques by a profile", { timeout: TIMEOUT_MS }, () => {
       expect(job.status, job.error?.message).toBe("succeeded");
 
       // A profile without hot spots: the plain listing, and why it is not ranked.
-      const plain = await listTechniques(toy.context);
-      const unranked = await listTechniques(toy.context, { profileJobId: queued.jobId });
+      const plain = await listEveryTechnique(toy.context);
+      const unranked = await listEveryTechnique(toy.context, { profileJobId: queued.jobId });
       expect(unranked.cards).toEqual(plain.cards);
       expect(unranked.note).toBe(
         `profile ${queued.jobId} has no hot spots (ufo.yaml has no workload.profile); the listing is not ranked`,
@@ -112,7 +120,7 @@ describe("listing techniques by a profile", { timeout: TIMEOUT_MS }, () => {
         omitted: 0,
       };
       writeFileSync(file, JSON.stringify(artifact));
-      const ranked = await listTechniques(toy.context, { profileJobId: queued.jobId });
+      const ranked = await listEveryTechnique(toy.context, { profileJobId: queued.jobId });
       expect(ranked.note).toBeUndefined();
       expect(ranked.cards[0]).toMatchObject({
         id: "jvm.jackson-mapper-reuse",
@@ -133,7 +141,7 @@ describe("listing techniques by a profile", { timeout: TIMEOUT_MS }, () => {
         plain.cards.map((entry) => entry.id).sort(),
       );
       // A bottleneck filter the card is outside of leaves it out, evidence or not.
-      const startup = await listTechniques(toy.context, {
+      const startup = await listEveryTechnique(toy.context, {
         bottleneck: "startup",
         profileJobId: queued.jobId,
       });
@@ -143,15 +151,16 @@ describe("listing techniques by a profile", { timeout: TIMEOUT_MS }, () => {
       );
       // Pointing at no card, the profile leaves the index as it is, expected effects and all.
       expect(startup.cards).toEqual(
-        (await listTechniques(toy.context, { bottleneck: "startup" })).cards,
+        (await listEveryTechnique(toy.context, { bottleneck: "startup" })).cards,
       );
       expect(
         startup.cards.filter((entry) => entry.expectedEffect !== undefined).length,
       ).toBeGreaterThan(5);
       // An artifact cut short ranks nothing either.
       writeFileSync(file, "{");
-      expect(await listTechniques(toy.context, { profileJobId: queued.jobId })).toEqual({
+      expect(await listEveryTechnique(toy.context, { profileJobId: queued.jobId })).toEqual({
         cards: plain.cards,
+        total: plain.total,
         note: `the artifact of profile ${queued.jobId} cannot be read; the listing is not ranked`,
       });
       writeFileSync(file, JSON.stringify(artifact));
@@ -159,8 +168,9 @@ describe("listing techniques by a profile", { timeout: TIMEOUT_MS }, () => {
       const long = artifact.hotspots?.files[0] as { self: { frame: string; pct: number }[] };
       long.self.push({ frame: "x".repeat(81), pct: 1 });
       writeFileSync(file, JSON.stringify(artifact));
-      expect(await listTechniques(toy.context, { profileJobId: queued.jobId })).toEqual({
+      expect(await listEveryTechnique(toy.context, { profileJobId: queued.jobId })).toEqual({
         cards: plain.cards,
+        total: plain.total,
         note: `the artifact of profile ${queued.jobId} cannot be read; the listing is not ranked`,
       });
       // M5 V2: a bundle's modules and packages, as a bundle-stats summary writes them.
@@ -201,8 +211,9 @@ describe("listing techniques by a profile", { timeout: TIMEOUT_MS }, () => {
         ...Array.from({ length: 20 }, () => ({ module: "a", bytes: 1, pct: 0 })),
       );
       writeFileSync(file, JSON.stringify(artifact));
-      expect(await listTechniques(toy.context, { profileJobId: queued.jobId })).toEqual({
+      expect(await listEveryTechnique(toy.context, { profileJobId: queued.jobId })).toEqual({
         cards: plain.cards,
+        total: plain.total,
         note: `the artifact of profile ${queued.jobId} cannot be read; the listing is not ranked`,
       });
       other = queued.jobId;
