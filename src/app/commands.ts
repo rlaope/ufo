@@ -30,6 +30,11 @@ export interface CommandOptions {
   readonly label: string;
   readonly signal?: AbortSignal;
   readonly timeoutMs?: number;
+  /**
+   * Gets stdout as it comes, for output larger than `MAX_OUTPUT_BYTES`; the result's `stdout` is
+   * then empty.
+   */
+  readonly onStdout?: (chunk: Buffer) => void;
 }
 
 export interface CommandResult {
@@ -164,7 +169,10 @@ export async function runCommand(command: string, options: CommandOptions): Prom
   const child = spawnShell(command, options, "pipe");
   const stdout = collector();
   const stderr = collector();
-  child.stdout?.on("data", (chunk: Buffer) => stdout.push(chunk));
+  const { onStdout } = options;
+  child.stdout?.on("data", (chunk: Buffer) =>
+    onStdout === undefined ? stdout.push(chunk) : onStdout(chunk),
+  );
   child.stderr?.on("data", (chunk: Buffer) => stderr.push(chunk));
   const exited = once(child, "exit").catch(() => undefined);
   const closed = once(child, "close").catch(() => undefined);

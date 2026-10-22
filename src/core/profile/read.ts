@@ -7,6 +7,7 @@ import { assertRealDir, isErrno } from "../jobs/index.js";
 import { summarizeBundle } from "./bundle.js";
 import { parseCollapsed } from "./collapsed.js";
 import { parseCpuprofile } from "./cpuprofile.js";
+import { parseJfrJson } from "./jfr.js";
 import { parsePprof } from "./pprof.js";
 import { parseSpeedscope } from "./speedscope.js";
 import {
@@ -30,11 +31,13 @@ const PARSERS: Record<
   collapsed: parseCollapsed,
   cpuprofile: parseCpuprofile,
   speedscope: parseSpeedscope,
+  jfr: parseJfrJson,
 };
 
 /**
  * The hot spots of one file in `format`, from its bytes or its text; never throws for what the
- * file holds. `pprof` is binary; the other formats are UTF-8 text.
+ * file holds. `pprof` is binary; the other formats are UTF-8 text, `jfr` as `jfr print --json`
+ * writes a recording.
  */
 export function summarizeProfile(
   file: string,
@@ -84,13 +87,15 @@ async function readCapped(file: string): Promise<Buffer | Parsed> {
  * through a symlink): at most `MAX_PROFILE_FILES_READ` regular files read, the largest first,
  * each at most `MAX_PROFILE_BYTES`, then the heaviest kept as `heaviestFiles` keeps them. A
  * file that is not a profile in `format` is reported with its reason; no file fails the read.
- * A directory the workload removed holds no files.
+ * A directory the workload removed holds no files. With `convert`, each regular file is handed
+ * to it instead of read (a JFR recording, which the JDK's own tool reads).
  */
 export async function readProfileDir(
   dir: string,
   format: ProfileFormat,
   prefixes: readonly string[] = [],
   redact: NameRedactor = createTextRedactor({}),
+  convert?: (file: string) => Promise<Parsed>,
 ): Promise<{ files: FileHotspots[]; omitted: number }> {
   let names: string[];
   try {
@@ -117,7 +122,9 @@ export async function readProfileDir(
           ? invalid("a symbolic link; UFO does not follow it")
           : !info.isFile()
             ? invalid("not a regular file")
-            : await readCapped(path.join(dir, name));
+            : convert !== undefined
+              ? await convert(path.join(dir, name))
+              : await readCapped(path.join(dir, name));
     files.push(
       Buffer.isBuffer(read)
         ? summarizeProfile(name, read, format, prefixes, redact)

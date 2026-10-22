@@ -186,7 +186,10 @@ export const GO_PROFILED_TEST =
 export const GO_PROFILE_FETCH =
   'if [ -n "$UFO_PROFILE_DIR" ]; then curl -fso "$UFO_PROFILE_DIR/cpu.pprof" "http://127.0.0.1:$UFO_PORT/debug/pprof/profile?seconds=10" & fi; ./bench.sh; s=$?; wait; exit $s';
 
-/** The `profile` block of the draft for the detected stacks: Node's preset, others commented. */
+/**
+ * The `profile` block of the draft for the detected stacks: Node's preset, else the JVM's, the
+ * others commented.
+ */
 function profileNotes(stacks: readonly DetectedStack[]): string {
   const has = (...ids: string[]) => stacks.some((stack) => ids.includes(stack.id));
   let notes = "";
@@ -198,11 +201,23 @@ function profileNotes(stacks: readonly DetectedStack[]): string {
 `;
   }
   if (has("jvm", "spring-boot")) {
-    notes += `  # JVM: the async-profiler agent (https://github.com/async-profiler/async-profiler), installed
-  # separately, writes folded stacks for each JVM. JAVA_TOOL_OPTIONS also reaches the JVMs Maven and
-  # Gradle start, each writing its own %p file; whether the agent writes on SIGTERM is unverified.
-  # With the server JVM in start, set the library's path (.dylib on macOS, .so on Linux) and
-  # uncomment:
+    // One profile block is active: Node's preset when the repository is a Node one too.
+    const preset = has("node")
+      ? `  # To profile the JVM in place of the node-cpu profile above, uncomment:
+  # profile:
+  #   preset: jvm-jfr
+`
+      : `  profile:
+    preset: jvm-jfr
+`;
+    notes += `  # JVM: profile_target runs the profiled step (start, else the command) under JDK Flight
+  # Recorder, built into JDK 11 and later, through JAVA_TOOL_OPTIONS; each JVM it reaches (Maven's
+  # and Gradle's too) writes its own recording when it exits, and UFO reads them with the JDK's jfr
+  # tool ($JAVA_HOME/bin/jfr, else next to java on PATH; docs/cli.md, "Profiling").
+${preset}  # Or the async-profiler agent (https://github.com/async-profiler/async-profiler), installed
+  # separately, which writes folded stacks for each JVM, each its own %p file; whether the agent
+  # writes on SIGTERM is unverified. With the server JVM in start, set the library's path (.dylib
+  # on macOS, .so on Linux) and, in place of the block above, uncomment:
   # profile:
   #   env:
   #     JAVA_TOOL_OPTIONS: "-agentpath:/path/to/libasyncProfiler.dylib=start,event=cpu,collapsed,file={{profile_dir}}/prof-%p.collapsed"
@@ -318,9 +333,9 @@ export const DRAFT_CONFIG = renderDraft("", `oracles: []\n${DRAFT_ORACLE_EXAMPLE
 
 /**
  * The draft for the stacks found in the repository: their measuring hints, a profile block for
- * profile_target (Node's preset, the JVM's, Python's, Go's, and the bundle analyzers' commented),
- * the detected test command as a commented-out oracle, and the stacks whose cards to enable. `DRAFT_CONFIG` when
- * nothing was detected. It is valid as written; only the workload command is left to fill in.
+ * profile_target (Node's preset, else the JVM's; Python's, Go's, and the bundle analyzers'
+ * commented), the detected test command as a commented-out oracle, and the stacks whose cards to
+ * enable. `DRAFT_CONFIG` when nothing was detected. It is valid as written; only the workload command is left to fill in.
  */
 export function draftConfigFor(stacks: readonly DetectedStack[]): string {
   if (stacks.length === 0) return DRAFT_CONFIG;

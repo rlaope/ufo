@@ -10,12 +10,12 @@ import {
   writeJsonAtomic,
 } from "../../core/jobs/index.js";
 import { PolicyError } from "../../core/policy/index.js";
-import { type FileHotspots, readProfileDir } from "../../core/profile/index.js";
+import { type FileHotspots, type Parsed, readProfileDir } from "../../core/profile/index.js";
 import { type ProfileFormat, profiledSteps } from "../../domain/index.js";
 import type { JobContext } from "../../worker/index.js";
 import { describeResult, succeeded } from "../commands.js";
 import { budgetStatus, wallClockViolation } from "../events.js";
-import { profileSettings } from "../profiler.js";
+import { convertJfr, findJfr, profileSettings } from "../profiler.js";
 import { approvalViolation, openRun, toJson } from "../state.js";
 import { type HandlerOptions, newSession } from "./shared.js";
 
@@ -55,7 +55,8 @@ export interface ProfileResult {
  * wall-clock budget, checked when it is queued and again when it starts; the result is kept as
  * an artifact in the run state. With `workload.profile`, the job's own directory in the run
  * state (outside both arms) is `UFO_PROFILE_DIR` for every step, the profile's variables go to
- * the profiled steps, and the files written there are read for hot spots.
+ * the profiled steps, and the files written there are read for hot spots (JFR recordings through
+ * the JDK's `jfr print`, after teardown).
  */
 export async function handleProfile(
   job: JobRecord,
@@ -136,6 +137,19 @@ export async function handleProfile(
   const artifact = path.join(ARTIFACTS_DIR, `profile-${job.jobId}.json`);
   const result: ProfileResult = { sha, phases, sample, artifact };
   if (settings !== undefined) {
+    // A JFR recording is read by the JDK's jfr tool, with the run's command environment.
+    let convert: ((file: string) => Promise<Parsed>) | undefined;
+    if (settings.format === "jfr") {
+      const jfr = await findJfr(open.state.env, [options.home, open.git.repoRoot]);
+      convert = (file) =>
+        convertJfr(file, {
+          jfr,
+          env: open.state.env,
+          runDir: context.runDir,
+          cwd: dir,
+          signal: context.signal,
+        });
+    }
     result.hotspots = {
       format: settings.format,
       dir: profileDir,
@@ -147,7 +161,10 @@ export async function handleProfile(
         settings.format,
         [`file://${arm.dir}/`, `${arm.dir}/`],
         createTextRedactor({ env: { ...process.env, ...open.state.env } }),
+        convert,
       ).catch((error: unknown) => {
+        // A cancelled job stops here, not with a reason.
+        context.signal.throwIfAborted();
         const code = (error as { code?: unknown }).code;
         return {
           files: [],

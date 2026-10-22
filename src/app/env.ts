@@ -41,7 +41,8 @@ function pick(source: NodeJS.ProcessEnv, keep: (name: string) => boolean): Recor
   return picked;
 }
 
-function inside(dir: string, roots: readonly string[]): boolean {
+/** Whether `dir` is one of `roots` or inside one, compared as written. */
+export function inside(dir: string, roots: readonly string[]): boolean {
   return roots.some((root) => dir === root || dir.startsWith(`${root}${path.sep}`));
 }
 

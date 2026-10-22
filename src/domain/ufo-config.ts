@@ -22,7 +22,8 @@ export const PROFILE_DIR_PLACEHOLDER = "{{profile_dir}}";
 /**
  * File formats `profile_target` reads hot spots from. `bundle-stats` is a build's bundle
  * analyzer JSON (webpack stats, rollup-plugin-visualizer raw-data, source-map-explorer), each
- * file's tool found from what it holds.
+ * file's tool found from what it holds. `jfr` is a JDK Flight Recorder recording, which UFO reads
+ * through the JDK's `jfr print`.
  */
 export const ProfileFormatSchema = z.enum([
   "collapsed",
@@ -30,14 +31,16 @@ export const ProfileFormatSchema = z.enum([
   "speedscope",
   "bundle-stats",
   "pprof",
+  "jfr",
 ]);
 export type ProfileFormat = z.infer<typeof ProfileFormatSchema>;
 
 /**
  * Profilers UFO sets up itself. `node-cpu`: `node --cpu-prof` through `NODE_OPTIONS`, with UFO's
- * preload so a server stopped by SIGTERM still writes its profile.
+ * preload so a server stopped by SIGTERM still writes its profile. `jvm-jfr`: JDK Flight
+ * Recorder through `JAVA_TOOL_OPTIONS`, each JVM writing its recording when it exits.
  */
-export const ProfilePresetSchema = z.enum(["node-cpu"]);
+export const ProfilePresetSchema = z.enum(["node-cpu", "jvm-jfr"]);
 export type ProfilePreset = z.infer<typeof ProfilePresetSchema>;
 
 /** Workload steps a profiler can run under. */

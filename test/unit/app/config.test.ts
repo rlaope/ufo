@@ -113,7 +113,11 @@ describe("the draft's profile block", () => {
     const lines = draft.split("\n");
     const from = lines.findIndex((line) => line.includes(marker));
     let at = lines.findIndex((line, i) => i > from && /^ {2}# (start|profile):/.test(line));
-    while (lines[at]?.startsWith("  # ") && !lines[at]?.startsWith("  # Python")) {
+    while (
+      lines[at]?.startsWith("  # ") &&
+      !lines[at]?.startsWith("  # Python") &&
+      !lines[at]?.startsWith("  # Or ")
+    ) {
       lines[at] = `  ${(lines[at] ?? "").slice(4)}`;
       at++;
     }
@@ -127,15 +131,16 @@ describe("the draft's profile block", () => {
     expect(parseConfigText(draftConfigFor([GRADLE])).workload).not.toHaveProperty("profile");
   });
 
-  it("offers the JVM's async-profiler agent commented, valid once uncommented", () => {
+  // M6: JFR for the JVM.
+  it("profiles the JVM with its JFR preset, async-profiler commented in its place", () => {
     const draft = draftConfigFor([stack("jvm"), stack("spring-boot")]);
-    expect(parseConfigText(draft).workload).not.toHaveProperty("profile");
+    expect(parseConfigText(draft).workload.profile).toEqual({ preset: "jvm-jfr" });
     expect(draft.match(/# JVM: /g)).toHaveLength(1);
     expect(draft).toContain("https://github.com/async-profiler/async-profiler");
-    const withStart = uncommented(draft, "# JVM: ").replace(
-      "  command:",
-      "  start: java -jar app.jar\n  command:",
-    );
+    const withStart = uncommented(
+      draft.replace(/^ {2}profile:\n {4}preset: jvm-jfr\n/m, ""),
+      "# Or the async-profiler agent",
+    ).replace("  command:", "  start: java -jar app.jar\n  command:");
     expect(parseConfigText(withStart).workload.profile).toEqual({
       env: {
         JAVA_TOOL_OPTIONS:
@@ -144,6 +149,17 @@ describe("the draft's profile block", () => {
       steps: ["start"],
       format: "collapsed",
     });
+  });
+
+  it("keeps Node's preset in a Node and JVM repository, with JFR commented in its place", () => {
+    const draft = draftConfigFor([NODE, stack("jvm")]);
+    expect(parseConfigText(draft).workload.profile).toEqual({ preset: "node-cpu" });
+    expect(draft.match(/^ {2}profile:$/gm)).toHaveLength(1);
+    const jfr = uncommented(
+      draft.replace(/^ {2}profile:\n {4}preset: node-cpu\n/m, ""),
+      "# To profile the JVM in place of the node-cpu profile above",
+    );
+    expect(parseConfigText(jfr).workload.profile).toEqual({ preset: "jvm-jfr" });
   });
 
   it("offers Python's py-spy wrapper on start commented, valid once uncommented", () => {

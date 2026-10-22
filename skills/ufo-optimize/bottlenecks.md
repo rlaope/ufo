@@ -20,8 +20,15 @@ unprofiled. The draft `ufo.yaml` from `inspect_target` carries the block for the
 - Node: `profile: { preset: node-cpu }`, active in the draft. It runs `node --cpu-prof` through
   `NODE_OPTIONS`, with UFO's preload so a server stopped by SIGTERM still writes its profile
   (within 2 s of SIGTERM, then UFO kills what is left).
-- JVM: the async-profiler agent through `JAVA_TOOL_OPTIONS`, commented in the draft. The user
-  installs async-profiler and sets the library's path; whether it writes on SIGTERM is unverified.
+- JVM: `profile: { preset: jvm-jfr }`, active in the draft (commented in place of `node-cpu`
+  when the repository is both). JDK Flight Recorder, built into JDK 11 and later, records every
+  JVM the profiled step starts (Maven's and Gradle's forks too, each its own file) through
+  `JAVA_TOOL_OPTIONS`, and UFO reads each recording with the JDK's `jfr print`
+  (`$JAVA_HOME/bin/jfr`, else next to `java` on PATH; without one, each file says so). A server
+  stopped by SIGTERM writes its recording within the 2 s UFO gives it. Frames are
+  `com.foo.Bar.baz`, which the JVM cards' `Class.method` frame hints match. The async-profiler
+  agent is commented as the alternative (the user installs it; whether it writes on SIGTERM is
+  unverified).
 - Python: py-spy as a wrapper on `start` that only a profile job expands
   (`${UFO_PROFILE_DIR:+py-spy record -f raw -o "$UFO_PROFILE_DIR/py.txt" -s --} python app.py`),
   commented in the draft; py-spy needs root on macOS.
@@ -42,7 +49,8 @@ unprofiled. The draft `ufo.yaml` from `inspect_target` carries the block for the
   rather than letting npx fetch it. Use it when bytes are the metric, in place of the Node
   preset.
 
-Any profiler that writes folded stacks, a V8 `.cpuprofile`, a speedscope file, or a pprof file into
+Any profiler that writes folded stacks, a V8 `.cpuprofile`, a speedscope file, a pprof file, or a
+JFR recording (`format: jfr`) into
 `$UFO_PROFILE_DIR` works the same way. Format and limits: docs/cli.md, "Profiling".
 
 ## Reading hot spots
@@ -70,8 +78,9 @@ Any profiler that writes folded stacks, a V8 `.cpuprofile`, a speedscope file, o
 - Confirm: `profile_target` shows `start` (or the whole sample) long while steady-state requests
   are fast; startup traces show where the time goes.
 - Evidence by stack: Spring Boot — startup steps from `BufferingApplicationStartup` and the
-  `/actuator/startup` endpoint, class loading with `-Xlog:class+load`; JVM — JFR from launch
-  (`-XX:StartFlightRecording`); Node — the `node-cpu` preset's hot spots over boot; Python —
+  `/actuator/startup` endpoint, class loading with `-Xlog:class+load`; JVM — the `jvm-jfr`
+  preset's hot spots, recorded from launch, with the profiled step `start` or a command that
+  launches the JVM; Node — the `node-cpu` preset's hot spots over boot; Python —
   `python -X importtime`.
 - Cards: `list_techniques` with `bottleneck: startup` (CDS/AOT caches, AOT processing, lazy
   initialization, scanning less, checkpoint/restore, native images).
@@ -80,7 +89,8 @@ Any profiler that writes folded stacks, a V8 `.cpuprofile`, a speedscope file, o
 - Symptom: the work is compute-bound; CPU near a core per worker while the metric is slow.
 - Confirm: hot spots with a few frames holding a large `self` share, in the application's own
   code or a library, and little `(idle)`.
-- Evidence: JVM — the draft's commented async-profiler block, or JFR; Node — the `node-cpu`
+- Evidence: JVM — the `jvm-jfr` preset (Java code only: native and waiting time is not
+  sampled), or the draft's commented async-profiler block; Node — the `node-cpu`
   preset; Python — the draft's commented py-spy wrapper on `start`; Go — the draft's commented
   pprof block (`go test -cpuprofile` or `net/http/pprof`), each inlined call its own frame; Rust —
   a sampling profiler (perf, cargo flamegraph).

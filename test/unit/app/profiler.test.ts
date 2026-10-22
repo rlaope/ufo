@@ -1,18 +1,35 @@
 import { spawn } from "node:child_process";
 import {
+  chmodSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { NODE_EXIT_ON_SIGNAL, profileSettings } from "../../../src/app/profiler.js";
-import { summarizeProfile } from "../../../src/core/profile/index.js";
+import {
+  convertJfr,
+  findJfr,
+  JFR_PRINT_ARGS,
+  NO_JFR,
+  NODE_EXIT_ON_SIGNAL,
+  profileSettings,
+} from "../../../src/app/profiler.js";
+import { createRunState } from "../../../src/core/jobs/index.js";
+import {
+  JFR_LIMITS,
+  type Parsed,
+  summarize,
+  summarizeProfile,
+} from "../../../src/core/profile/index.js";
 
 // M4 E4: the node-cpu preset and its preload, with the real node binary.
 
@@ -228,5 +245,185 @@ describe("profileSettings", () => {
       env: {},
       format: "speedscope",
     });
+  });
+});
+
+// M6: the jvm-jfr preset, its jfr tool, and the conversion, with stand-ins for the JDK's tools.
+describe("the jvm-jfr preset", () => {
+  const flight = (dir: string) =>
+    `"-XX:StartFlightRecording=filename=${dir},dumponexit=true,settings=profile"`;
+
+  it("adds a recording into the directory to JAVA_TOOL_OPTIONS, after the one the run passes", () => {
+    expect(profileSettings({ preset: "jvm-jfr" }, "/runs/a b/p")).toEqual({
+      env: { JAVA_TOOL_OPTIONS: flight("/runs/a b/p") },
+      format: "jfr",
+    });
+    expect(
+      profileSettings({ preset: "jvm-jfr" }, "/p", { JAVA_TOOL_OPTIONS: "-Xmx512m -Dx='a b'" }).env,
+    ).toEqual({ JAVA_TOOL_OPTIONS: `-Xmx512m -Dx='a b' ${flight("/p")}` });
+    expect(profileSettings({ preset: "jvm-jfr" }, "{{profile_dir}}").env).toEqual({
+      JAVA_TOOL_OPTIONS: flight("{{profile_dir}}"),
+    });
+  });
+
+  it.each([",", '"', "'", "%"])("refuses a directory with %s in it", (char) => {
+    expect(() => profileSettings({ preset: "jvm-jfr" }, `/runs/a${char}b/p`)).toThrow(
+      "-XX:StartFlightRecording cannot take",
+    );
+  });
+});
+
+describe("findJfr", () => {
+  /** An executable script at `file`. */
+  function tool(file: string, body = "exit 0"): string {
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, `#!/bin/sh\n${body}\n`);
+    chmodSync(file, 0o755);
+    return file;
+  }
+
+  it("takes $JAVA_HOME/bin/jfr, else the jfr next to the real file of the first java on PATH", async () => {
+    const home = path.join(dir, "jdk-a");
+    tool(path.join(home, "bin", "jfr"));
+    const jdk = path.join(dir, "jdk-b", "bin");
+    tool(path.join(jdk, "java"));
+    tool(path.join(jdk, "jfr"));
+    // /usr/bin/java as an alternatives link into the JDK.
+    mkdirSync(path.join(dir, "usr-bin"));
+    symlinkSync(path.join(jdk, "java"), path.join(dir, "usr-bin", "java"));
+    const PATH = ["relative/bin", path.join(dir, "empty"), path.join(dir, "usr-bin")].join(":");
+    expect(await findJfr({ JAVA_HOME: home, PATH })).toBe(path.join(home, "bin", "jfr"));
+    expect(await findJfr({ PATH })).toBe(path.join(jdk, "jfr"));
+    // A JAVA_HOME without jfr, or not absolute, leaves PATH's.
+    expect(await findJfr({ JAVA_HOME: path.join(dir, "empty"), PATH })).toBe(path.join(jdk, "jfr"));
+    expect(await findJfr({ JAVA_HOME: "jdk-a", PATH })).toBe(path.join(jdk, "jfr"));
+    expect(await findJfr({})).toBeUndefined();
+  });
+
+  it("looks next to the first java only, and skips a jfr it cannot run", async () => {
+    tool(path.join(dir, "first", "java"));
+    tool(path.join(dir, "second", "java"));
+    tool(path.join(dir, "second", "jfr"));
+    const PATH = `${path.join(dir, "first")}:${path.join(dir, "second")}`;
+    expect(await findJfr({ PATH })).toBeUndefined();
+    tool(path.join(dir, "first", "jfr"));
+    expect(await findJfr({ PATH })).toBe(path.join(dir, "first", "jfr"));
+    chmodSync(path.join(dir, "first", "jfr"), 0o644);
+    expect(await findJfr({ PATH })).toBeUndefined();
+  });
+
+  it("never takes a jfr inside the repository or UFO's home", async () => {
+    const repo = path.join(dir, "repo");
+    tool(path.join(repo, "jdk", "bin", "jfr"));
+    tool(path.join(repo, "jdk", "bin", "java"));
+    // A java outside that leads inside.
+    mkdirSync(path.join(dir, "bin"));
+    symlinkSync(path.join(repo, "jdk", "bin", "java"), path.join(dir, "bin", "java"));
+    const env = { JAVA_HOME: path.join(repo, "jdk"), PATH: path.join(dir, "bin") };
+    expect(await findJfr(env)).toBe(path.join(repo, "jdk", "bin", "jfr"));
+    expect(await findJfr(env, [repo])).toBeUndefined();
+  });
+});
+
+describe("convertJfr", () => {
+  const FIXTURE = fileURLToPath(new URL("../../fixtures/profiles/hot.jfr.json", import.meta.url));
+  let runDir: string;
+
+  beforeEach(async () => {
+    ({ runDir } = await createRunState(dir, { runId: "run-jfr", repoId: "repo" }));
+  });
+
+  /** A stand-in for the JDK's jfr: refuses JVM option variables and other arguments, then `body`. */
+  function fakeJfr(body: string): string {
+    const file = path.join(dir, "jdk", "bin", "jfr");
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(
+      file,
+      [
+        "#!/bin/sh",
+        '[ -z "$JAVA_TOOL_OPTIONS$_JAVA_OPTIONS" ] || { echo "a JVM option variable" >&2; exit 3; }',
+        `[ "$1 $2 $3 $4 $5 $6" = "${JFR_PRINT_ARGS.join(" ")}" ] || { echo "arguments: $*" >&2; exit 2; }`,
+        body,
+        "",
+      ].join("\n"),
+    );
+    chmodSync(file, 0o755);
+    return file;
+  }
+
+  const convert = (
+    jfr: string | undefined,
+    extra: Partial<Parameters<typeof convertJfr>[1]> = {},
+  ) =>
+    convertJfr(path.join(dir, "it's a.jfr"), {
+      jfr,
+      env: {
+        PATH: process.env.PATH ?? "",
+        JAVA_TOOL_OPTIONS: "-XX:StartFlightRecording",
+        _JAVA_OPTIONS: "-Xmx1g",
+      },
+      runDir,
+      cwd: dir,
+      ...extra,
+    });
+
+  const summary = (parsed: Parsed) => summarize("x.jfr", parsed);
+
+  it("reads what jfr print writes, without the run's JVM option variables", async () => {
+    writeFileSync(path.join(dir, "it's a.jfr"), readFileSync(FIXTURE));
+    const parsed = await convert(fakeJfr('cat "$7"'));
+    expect(summary(parsed)).toMatchObject({
+      valid: true,
+      weight: 3,
+      self: [{ frame: "Hot.spin", pct: 66.7 }, expect.anything()],
+    });
+  });
+
+  it("reports a recording jfr cannot read, and no jfr at all, as invalid files", async () => {
+    const failed = await convert(fakeJfr('echo "jfr: not a recording" >&2; exit 1'));
+    expect(failed).toEqual({
+      valid: false,
+      reason: "`jfr print` exited with code 1: jfr: not a recording",
+    });
+    expect(await convert(undefined)).toEqual({ valid: false, reason: NO_JFR });
+  });
+
+  it("stops jfr print at the output limit and keeps the samples read", async () => {
+    const event =
+      '{"type": "jdk.ExecutionSample", "values": {"stackTrace": {"truncated": false, "frames": [{"method": {"type": {"name": "app\\/Loop"}, "name": "run"}}]}}}';
+    // Endless output, until UFO stops it.
+    const jfr = fakeJfr(
+      `printf '{"recording": {"events": ['; while :; do printf '%s, ' '${event}'; done`,
+    );
+    const started = performance.now();
+    // Its own timeout, so the endless writer is gone within the test even if the limit failed.
+    const parsed = summary(
+      await convert(jfr, { limits: { ...JFR_LIMITS, outputBytes: 65_536 }, timeoutMs: 3000 }),
+    );
+    // Stopped at the limit, well before its own timeout.
+    expect(performance.now() - started).toBeLessThan(2000);
+    expect(parsed).toMatchObject({ valid: true, self: [{ frame: "app.Loop.run", pct: 100 }] });
+    expect(parsed.valid && parsed.kind === "stacks" && parsed.note).toMatch(
+      /^jfr print wrote more than 0\.0625 MiB: the first \d+ samples are counted$/,
+    );
+  });
+
+  it("keeps what was read when jfr print runs out of time", async () => {
+    const jfr = fakeJfr(
+      `cat <<'EOF'\n{"recording": {"events": [{"type": "jdk.ExecutionSample", "values": {"stackTrace": {"frames": [{"method": {"type": {"name": "A"}, "name": "b"}}]}}}\nEOF\nexec sleep 30`,
+    );
+    // Long enough that the shell has written its event on a loaded machine.
+    const parsed = summary(await convert(jfr, { timeoutMs: 1500 }));
+    expect(parsed).toMatchObject({ valid: true, weight: 1 });
+    expect(parsed.valid && parsed.kind === "stacks" && parsed.note).toBe(
+      "jfr print ran out of its 1.5 s: the first 1 samples are counted",
+    );
+  });
+
+  it("throws when the job is cancelled, rather than reporting the file", async () => {
+    const cancelled = new AbortController();
+    const running = convert(fakeJfr("exec sleep 30"), { signal: cancelled.signal });
+    setTimeout(() => cancelled.abort(new Error("cancelled")), 100);
+    await expect(running).rejects.toThrow("cancelled");
   });
 });

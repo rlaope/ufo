@@ -148,7 +148,7 @@ workload:
   command: node bench/latency.mjs  # required; one sample, prints one JSON line
   teardown: ./scripts/stop.sh      # optional
   profile:                         # optional; only profile_target runs it (see Profiling)
-    preset: node-cpu               # or env (optional) and format: collapsed | cpuprofile | speedscope | pprof | bundle-stats
+    preset: node-cpu               # or jvm-jfr; or env (optional) and format: collapsed | cpuprofile | speedscope | pprof | bundle-stats | jfr
     steps: [start]                 # default: [start] with a start, else [command]
 oracles:
   - name: unit-tests
@@ -218,8 +218,8 @@ Whatever a command leaves running in its process group is killed when it exits.
 `profile_target` (MCP) runs the workload once in arm A. With `workload.profile`, it runs it under
 the profiler this block sets up and reads what the profiler writes:
 
-- `preset`: a profiler UFO sets up itself; with one, `env` and `format` are not allowed. The only
-  one is `node-cpu`: the profiled steps get `NODE_OPTIONS` set to
+- `preset`: a profiler UFO sets up itself; with one, `env` and `format` are not allowed. There
+  are two, `node-cpu` and `jvm-jfr` (below). `node-cpu`: the profiled steps get `NODE_OPTIONS` set to
   `--cpu-prof --cpu-prof-dir="<profile dir>" --require "<UFO's preload>"` (after the value `env:`
   passes, if it lists `NODE_OPTIONS`), and the format is `cpuprofile`. `--cpu-prof` writes only
   when the process exits normally, and Node ends on SIGTERM or SIGINT without writing unless a
@@ -234,6 +234,21 @@ the profiler this block sets up and reads what the profiler writes:
   UFO install that runs the job, so `ufo update` changes it without a new approval; it is UFO's own
   code, like the rest of the install. `NODE_OPTIONS` reaches every Node process the step starts,
   and each writes its own file.
+- `preset: jvm-jfr`: JDK Flight Recorder, built into JDK 11 and later. The profiled steps get
+  `JAVA_TOOL_OPTIONS` set to
+  `"-XX:StartFlightRecording=filename=<profile dir>,dumponexit=true,settings=profile"` (after the
+  value `env:` passes, if it lists `JAVA_TOOL_OPTIONS`), and the format is `jfr`.
+  `JAVA_TOOL_OPTIONS` reaches every JVM the step starts, Maven's and Gradle's and the JVMs they
+  fork too. With a directory as `filename` and `dumponexit=true`, each JVM names its own file
+  there when it exits (`hotspot-pid-<pid>-id-<n>-<time>.jfr`; JDK 11 and later), so no two JVMs
+  write one file; `%p` in a file name needs JDK 18. A JVM writes its recording on a normal exit
+  and on SIGTERM (JFR's shutdown hook), not when it is killed with SIGKILL or crashes. `settings=profile`
+  is the JDK's `profile.jfc` (Java stacks sampled every 10 ms). The profile directory may not
+  hold a comma, a quote, or `%` (the option's own syntax); a job whose directory does fails with
+  that reason. On JDK 17 and later the JVM prints `Started recording 1...` on stdout at start,
+  which turns a profiled `command`'s output into more than one line (the profile job's sample is
+  then invalid; its hot spots are not affected); `-Xlog:jfr+startup=error` in the run's own
+  `JAVA_TOOL_OPTIONS` (listed in `env:`) silences it, and JDK 11 to 16 refuse that option.
 - `env`: at most 16 variables added to the profiled steps of a profile job, and to nothing else.
   Names are uppercase (`[A-Z_][A-Z0-9_]*`); `PATH`, `HOME`, `UFO_*`, and names that look like
   secrets (`TOKEN`, `SECRET`, `PASSWORD`, `API_KEY`, `AWS_*`, and the like) are refused
@@ -253,6 +268,8 @@ the profiler this block sets up and reads what the profiler writes:
   else its last (`cpu`, in `nanoseconds`, for a Go CPU profile). A frame is a function's name as
   Go writes it (`runtime.mallocgc`, `main.(*Server).handle`), and a call inlined into another is a
   frame of its own.
+  `jfr` is a JDK Flight Recorder recording (`.jfr`), as the `jvm-jfr` preset or your own
+  `-XX:StartFlightRecording` writes it (see JFR recordings below); its weights are `samples`.
   `bundle-stats` is a build's bundle analyzer JSON, the tool found per file from
   what it holds: webpack stats (`webpack --json <file>`, `stats.toJson()`), rollup-plugin-visualizer
   `template: "raw-data"`, or source-map-explorer `--json`; its weights are bytes (see Bundle
@@ -362,8 +379,10 @@ killed when it exits, then exits as the load did:
   with `next build --webpack`, the webpack plugin above works too.
 
 The draft `ufo.yaml` (`ufo init`, `inspect_target`) carries the `node-cpu` preset for a Node
-repository and the JVM, Python, Go, and bundle blocks, commented, for those stacks (the bundle one for
-Vite, webpack, and Next.js, to use in place of the preset).
+repository, the `jvm-jfr` preset for a JVM or Spring Boot one (commented, in place of `node-cpu`,
+in a repository that is both), the async-profiler block commented as the JVM's alternative, and
+the Python, Go, and bundle blocks, commented, for those stacks (the bundle one for Vite, webpack,
+and Next.js, to use in place of the preset).
 
 After the job's teardown, UFO reads the directory's regular files (never through a symbolic
 link), the largest first and at most 16 of them, each at most 32 MiB. For each file it sums the
@@ -397,8 +416,34 @@ A file with more than 500 000 entries (modules, module parts, mapped sources, ch
 with its reason, as is one that is none of the three tools' JSON. Bundles come back largest
 first.
 
+JFR recordings (`format: jfr`) are read by the JDK's own `jfr` tool, not by UFO. After the job's
+teardown, for each of the files above (at most 16, the largest first, never through a symbolic
+link), UFO runs
+`jfr print --json --events jdk.ExecutionSample --stack-depth 64 <file>` with its command runner:
+its own process group, stopped after 120 s, with the run's command environment less
+`JAVA_TOOL_OPTIONS` and `_JAVA_OPTIONS` (`jfr` is a JVM, and the preset's option would record it
+too). `jfr` is `$JAVA_HOME/bin/jfr` when `env:` lists `JAVA_HOME`, else the `jfr` next to the
+real file of the first `java` on the run's `PATH` (`/usr/bin/java` followed through its links
+into the JDK); one inside the repository or UFO's home is never run. Its `--events` and
+`--stack-depth` options are in JDK 11.0.6 and later. Without a `jfr`, each file is reported with
+`no jfr tool next to java or in JAVA_HOME` and the job still succeeds; a file `jfr` cannot read
+is reported with the end of its error. The output streams into UFO and is never held whole
+(it runs to about a kilobyte per frame): each event is parsed alone and may be at most 4 MiB,
+and reading stops after 100 000 samples or 512 MiB of output, or when the 120 s run out, keeping
+the samples read and saying so in the file's `note`. Each sample weighs 1 (`samples`). A frame
+is `Class.method` with the package in dots (`com.foo.Bar.baz`), as JFR's own API names it; a
+stack is its innermost 64 frames, and the `note` counts the samples whose stacks were deeper
+(their outermost frames are missing from `total`). JFR samples only threads running Java code:
+time in native code and time spent waiting are not in `jdk.ExecutionSample`.
+
+A JVM in `start` writes its recording when UFO's SIGTERM ends it, within the 2 s UFO gives the
+group (see above); a recording that takes longer to write (a long run, a slow disk) is cut when
+the group is killed and reported as one `jfr` cannot read. There is no setting for the grace: a
+shorter profiled run, or profiling the `command` (which exits on its own), avoids it.
+
 The approval covers `workload.profile` like the rest of `ufo.yaml`; `ufo approve` shows the
-profiled steps, the format, the preset, and each variable JSON-quoted, a preset's as it expands.
+profiled steps, the format, the preset, and each variable JSON-quoted, a preset's as it expands,
+and for `jfr` the `jfr print` line UFO runs on each recording.
 
 ### Workload output: one JSON line
 

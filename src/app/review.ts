@@ -8,7 +8,7 @@ import {
 import type { CardSet } from "./cards.js";
 import { describeDefaultEnv, secretLikeNames } from "./env.js";
 import { hygieneLimitations } from "./jobs/shared.js";
-import { profileSettings } from "./profiler.js";
+import { JFR_PRINT_ARGS, profileSettings } from "./profiler.js";
 
 // What `ufo approve` shows the human before they type `approve`.
 
@@ -57,12 +57,29 @@ function describeProfile(config: UfoConfig): string[] {
   const { profile } = config.workload;
   if (profile === undefined) return [];
   const settings = profileSettings(profile, PROFILE_DIR_PLACEHOLDER);
+  const after = (name: string) =>
+    config.env.includes(name) ? `; ${name} goes after the value env: passes` : "";
   const preset =
-    profile.preset === undefined
-      ? []
-      : [
-          `  preset ${profile.preset}: node --cpu-prof, with UFO's preload so a process stopped by SIGTERM or SIGINT still writes its profile${config.env.includes("NODE_OPTIONS") ? "; NODE_OPTIONS goes after the value env: passes" : ""}`,
-        ];
+    profile.preset === "node-cpu"
+      ? [
+          `  preset node-cpu: node --cpu-prof, with UFO's preload so a process stopped by SIGTERM or SIGINT still writes its profile${after("NODE_OPTIONS")}`,
+        ]
+      : profile.preset === "jvm-jfr"
+        ? [
+            `  preset jvm-jfr: JDK Flight Recorder, built into JDK 11 and later; each JVM a profiled step starts writes its own recording into the directory when it exits, SIGTERM included${after("JAVA_TOOL_OPTIONS")}`,
+          ]
+        : [];
+  // UFO's own command on what the profiler wrote, after teardown.
+  const convert =
+    settings.format === "jfr"
+      ? [
+          "  each recording is read after teardown with $JAVA_HOME/bin/jfr, else the jfr next to the java on PATH, in the run's environment without JAVA_TOOL_OPTIONS and _JAVA_OPTIONS:",
+          describeCommand(
+            "profile convert",
+            `jfr ${JFR_PRINT_ARGS.join(" ")} ${PROFILE_DIR_PLACEHOLDER}/<file>`,
+          ),
+        ]
+      : [];
   return [
     "",
     "Profiling, for profile_target only (baselines, samples, oracles, and the final check run without it):",
@@ -72,6 +89,7 @@ function describeProfile(config: UfoConfig): string[] {
     ...Object.entries(settings.env).map(([name, value]) =>
       describeCommand(`profile env ${name}`, value),
     ),
+    ...convert,
   ];
 }
 

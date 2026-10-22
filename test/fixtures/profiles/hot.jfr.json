@@ -1,0 +1,241 @@
+{
+  "recording": {
+    "events": [
+      {
+        "type": "jdk.ExecutionSample",
+        "values": {
+          "startTime": "2026-10-22T14:00:00.010+09:00",
+          "sampledThread": {
+            "osName": "main {[\"]}",
+            "osThreadId": 8963,
+            "javaName": "main",
+            "javaThreadId": 1,
+            "group": {
+              "parent": {
+                "parent": null,
+                "name": "system"
+              },
+              "name": "main"
+            },
+            "virtual": false
+          },
+          "state": "STATE_RUNNABLE",
+          "stackTrace": {
+            "truncated": false,
+            "frames": [
+              {
+                "method": {
+                  "type": {
+                    "classLoader": {
+                      "type": {
+                        "classLoader": null,
+                        "name": "com\/sun\/tools\/javac\/launcher\/Main$MemoryClassLoader",
+                        "package": {
+                          "name": "com\/sun\/tools\/javac\/launcher",
+                          "module": {
+                            "name": "jdk.compiler",
+                            "version": "21.0.5",
+                            "location": "jrt:\/jdk.compiler",
+                            "classLoader": null
+                          },
+                          "exported": false
+                        },
+                        "modifiers": 24,
+                        "hidden": false
+                      },
+                      "name": null
+                    },
+                    "name": "Hot",
+                    "package": {
+                      "name": "",
+                      "module": null,
+                      "exported": true
+                    },
+                    "modifiers": 1,
+                    "hidden": false
+                  },
+                  "name": "spin",
+                  "descriptor": "(J)J",
+                  "modifiers": 8,
+                  "hidden": false
+                },
+                "lineNumber": 7,
+                "bytecodeIndex": 21,
+                "type": "JIT compiled"
+              },
+              {
+                "method": {
+                  "type": {
+                    "classLoader": null,
+                    "name": "Hot",
+                    "package": null,
+                    "modifiers": 1,
+                    "hidden": false
+                  },
+                  "name": "parentWork",
+                  "descriptor": "(J)J",
+                  "modifiers": 8,
+                  "hidden": false
+                },
+                "lineNumber": 12,
+                "bytecodeIndex": 1,
+                "type": "Interpreted"
+              },
+              {
+                "method": {
+                  "type": {
+                    "classLoader": null,
+                    "name": "Hot",
+                    "package": null,
+                    "modifiers": 1,
+                    "hidden": false
+                  },
+                  "name": "main",
+                  "descriptor": "([Ljava\/lang\/String;)V",
+                  "modifiers": 9,
+                  "hidden": false
+                },
+                "lineNumber": 20,
+                "bytecodeIndex": 30,
+                "type": "Interpreted"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "type": "jdk.ExecutionSample",
+        "values": {
+          "startTime": "2026-10-22T14:00:00.020+09:00",
+          "sampledThread": {
+            "osName": "main",
+            "osThreadId": 8963,
+            "javaName": "main",
+            "javaThreadId": 1,
+            "group": null,
+            "virtual": false
+          },
+          "state": "STATE_RUNNABLE",
+          "stackTrace": {
+            "truncated": false,
+            "frames": [
+              {
+                "method": {
+                  "type": {
+                    "classLoader": null,
+                    "name": "com\/fasterxml\/jackson\/databind\/ObjectMapper",
+                    "package": null,
+                    "modifiers": 1,
+                    "hidden": false
+                  },
+                  "name": "<init>",
+                  "descriptor": "()V",
+                  "modifiers": 1,
+                  "hidden": false
+                },
+                "lineNumber": 600,
+                "bytecodeIndex": 4,
+                "type": "Interpreted"
+              },
+              {
+                "method": {
+                  "type": {
+                    "classLoader": null,
+                    "name": "Hot",
+                    "package": null,
+                    "modifiers": 1,
+                    "hidden": false
+                  },
+                  "name": "main",
+                  "descriptor": "([Ljava\/lang\/String;)V",
+                  "modifiers": 9,
+                  "hidden": false
+                },
+                "lineNumber": 21,
+                "bytecodeIndex": 40,
+                "type": "Interpreted"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "type": "jdk.ThreadSleep",
+        "values": {
+          "startTime": "2026-10-22T14:00:00.030+09:00",
+          "duration": "PT0.01S",
+          "eventThread": null,
+          "stackTrace": null,
+          "time": "PT0.01S"
+        }
+      },
+      {
+        "type": "jdk.ExecutionSample",
+        "values": {
+          "startTime": "2026-10-22T14:00:00.040+09:00",
+          "sampledThread": null,
+          "state": "STATE_RUNNABLE",
+          "stackTrace": {
+            "truncated": false,
+            "frames": [
+              {
+                "method": {
+                  "type": {
+                    "classLoader": null,
+                    "name": "Hot",
+                    "package": null,
+                    "modifiers": 1,
+                    "hidden": false
+                  },
+                  "name": "spin",
+                  "descriptor": "(J)J",
+                  "modifiers": 8,
+                  "hidden": false
+                },
+                "lineNumber": 7,
+                "bytecodeIndex": 21,
+                "type": "JIT compiled"
+              },
+              {
+                "method": {
+                  "type": {
+                    "classLoader": null,
+                    "name": "Hot",
+                    "package": null,
+                    "modifiers": 1,
+                    "hidden": false
+                  },
+                  "name": "parentWork",
+                  "descriptor": "(J)J",
+                  "modifiers": 8,
+                  "hidden": false
+                },
+                "lineNumber": 12,
+                "bytecodeIndex": 1,
+                "type": "Interpreted"
+              },
+              {
+                "method": {
+                  "type": {
+                    "classLoader": null,
+                    "name": "Hot",
+                    "package": null,
+                    "modifiers": 1,
+                    "hidden": false
+                  },
+                  "name": "main",
+                  "descriptor": "([Ljava\/lang\/String;)V",
+                  "modifiers": 9,
+                  "hidden": false
+                },
+                "lineNumber": 20,
+                "bytecodeIndex": 30,
+                "type": "Interpreted"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}
