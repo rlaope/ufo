@@ -29,6 +29,7 @@ export const ProfileFormatSchema = z.enum([
   "cpuprofile",
   "speedscope",
   "bundle-stats",
+  "pprof",
 ]);
 export type ProfileFormat = z.infer<typeof ProfileFormatSchema>;
 

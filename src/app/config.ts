@@ -155,6 +155,21 @@ export const WEBPACK_PROFILED_STATS =
 export const NEXT_PROFILED_STATS =
   '{ [ -z "$UFO_PROFILE_DIR" ] || npx source-map-explorer \'.next/static/chunks/**/*.js\' --json "$UFO_PROFILE_DIR/client.json"; }';
 
+/**
+ * The flags a Go benchmark's `go test` gets in a profile job only: a CPU profile into
+ * `UFO_PROFILE_DIR`, and the test binary, which `-cpuprofile` would leave in the arm, nowhere.
+ */
+export const GO_PROFILED_TEST =
+  // biome-ignore lint/suspicious/noTemplateCurlyInString: a shell expansion, not a JS template.
+  "go test -run '^$' -bench . ${UFO_PROFILE_DIR:+-cpuprofile \"$UFO_PROFILE_DIR/cpu.pprof\" -o /dev/null} ./bench";
+
+/**
+ * A server's command that, in a profile job only, fetches a CPU profile from `net/http/pprof`
+ * while `./bench.sh` drives the load, then waits for it and exits as `./bench.sh` did.
+ */
+export const GO_PROFILE_FETCH =
+  'if [ -n "$UFO_PROFILE_DIR" ]; then curl -fso "$UFO_PROFILE_DIR/cpu.pprof" "http://127.0.0.1:$UFO_PORT/debug/pprof/profile?seconds=10" & fi; ./bench.sh; s=$?; wait; exit $s';
+
 /** The `profile` block of the draft for the detected stacks: Node's preset, others commented. */
 function profileNotes(stacks: readonly DetectedStack[]): string {
   const has = (...ids: string[]) => stacks.some((stack) => ids.includes(stack.id));
@@ -187,6 +202,19 @@ function profileNotes(stacks: readonly DetectedStack[]): string {
   # start: ${PYTHON_PROFILED_START}
   # profile:
   #   format: collapsed
+`;
+  }
+  if (has("go")) {
+    notes += `  # Go: no environment variable turns profiling on, so the command writes a pprof file into
+  # UFO_PROFILE_DIR, which only a profile job sets (measured runs stay unprofiled). A benchmark: give
+  # its go test line (one package) these flags; -o /dev/null keeps the test binary out of the arm:
+  #   ${GO_PROFILED_TEST}
+  # A server that imports net/http/pprof (handlers on http.DefaultServeMux, served on $UFO_PORT):
+  # fetch the profile while the load runs; the command waits for it, keeping the load's exit status:
+  #   ${GO_PROFILE_FETCH}
+  # Then uncomment:
+  # profile:
+  #   format: pprof
 `;
   }
   if (has("vite", "webpack", "nextjs")) {
@@ -273,9 +301,9 @@ export const DRAFT_CONFIG = renderDraft("", `oracles: []\n${DRAFT_ORACLE_EXAMPLE
 
 /**
  * The draft for the stacks found in the repository: their measuring hints, a profile block for
- * profile_target (Node's preset, the JVM's and Python's commented), the detected test command as
- * a commented-out oracle, and the stacks whose cards to enable. `DRAFT_CONFIG` when nothing was
- * detected. It is valid as written; only the workload command is left to fill in.
+ * profile_target (Node's preset, the JVM's, Python's, Go's, and the bundle analyzers' commented),
+ * the detected test command as a commented-out oracle, and the stacks whose cards to enable. `DRAFT_CONFIG` when
+ * nothing was detected. It is valid as written; only the workload command is left to fill in.
  */
 export function draftConfigFor(stacks: readonly DetectedStack[]): string {
   if (stacks.length === 0) return DRAFT_CONFIG;

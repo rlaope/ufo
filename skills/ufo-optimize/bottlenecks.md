@@ -25,7 +25,12 @@ unprofiled. The draft `ufo.yaml` from `inspect_target` carries the block for the
 - Python: py-spy as a wrapper on `start` that only a profile job expands
   (`${UFO_PROFILE_DIR:+py-spy record -f raw -o "$UFO_PROFILE_DIR/py.txt" -s --} python app.py`),
   commented in the draft; py-spy needs root on macOS.
-- Go and Rust: no block yet; read the code and the phase times.
+- Go: `profile: { format: pprof }`, commented in the draft. No variable turns profiling on, so the
+  command writes the file itself where only a profile job sets `UFO_PROFILE_DIR`: a benchmark's
+  `go test` gets `${UFO_PROFILE_DIR:+-cpuprofile "$UFO_PROFILE_DIR/cpu.pprof" -o /dev/null}`,
+  and a server that imports `net/http/pprof` has its profile fetched from
+  `/debug/pprof/profile?seconds=N` while the load runs.
+- Rust: no block yet; read the code and the phase times.
 - Bundle (Vite, webpack, Next.js): `format: bundle-stats`, commented in the draft. The build
   writes a bundle analyzer's JSON into `$UFO_PROFILE_DIR` in a profile job only:
   rollup-plugin-visualizer `template: "raw-data"` for Vite, `webpack --json <file>` or
@@ -33,7 +38,7 @@ unprofiled. The draft `ufo.yaml` from `inspect_target` carries the block for the
   client chunks (with `productionBrowserSourceMaps`) for Next.js. Use it when bytes are the
   metric, in place of the Node preset.
 
-Any profiler that writes folded stacks, a V8 `.cpuprofile`, or a speedscope file into
+Any profiler that writes folded stacks, a V8 `.cpuprofile`, a speedscope file, or a pprof file into
 `$UFO_PROFILE_DIR` works the same way. Format and limits: docs/cli.md, "Profiling".
 
 ## Reading hot spots
@@ -72,7 +77,8 @@ Any profiler that writes folded stacks, a V8 `.cpuprofile`, or a speedscope file
 - Confirm: hot spots with a few frames holding a large `self` share, in the application's own
   code or a library, and little `(idle)`.
 - Evidence: JVM — the draft's commented async-profiler block, or JFR; Node — the `node-cpu`
-  preset; Python — the draft's commented py-spy wrapper on `start`; Go — pprof CPU profile; Rust —
+  preset; Python — the draft's commented py-spy wrapper on `start`; Go — the draft's commented
+  pprof block (`go test -cpuprofile` or `net/http/pprof`), each inlined call its own frame; Rust —
   a sampling profiler (perf, cargo flamegraph).
 - Cards: `bottleneck: cpu`, and `generic.code-change` for a hot loop the profile names.
 
@@ -81,7 +87,9 @@ Any profiler that writes folded stacks, a V8 `.cpuprofile`, or a speedscope file
 - Confirm: GC logs or allocation profiles show time in GC or allocation-heavy frames; in V8 hot
   spots, a large `(garbage collector)` share.
 - Evidence: JVM — `-Xlog:gc*`, JFR allocation events; Node — `--trace-gc`, heap profiles; Go —
-  `GODEBUG=gctrace=1`, pprof `alloc_space`; Python — `tracemalloc`.
+  `runtime.mallocgc`, `runtime.growslice`, or `runtime.gcBgMarkWorker` among the CPU profile's
+  hot frames (frame hints of the Go allocation and GC cards), `GODEBUG=gctrace=1`, pprof
+  `alloc_space`; Python — `tracemalloc`.
 - Cards: `bottleneck: allocation` (GC choice and heap sizing, reuse and pooling, fewer copies).
 
 ## io

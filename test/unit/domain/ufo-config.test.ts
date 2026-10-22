@@ -109,6 +109,8 @@ describe("UfoConfigSchema workload.profile", () => {
   it("profiles start by default, else the command, and takes no variables unless listed", () => {
     const parsed = expectAccepts(UfoConfigSchema, withProfile({ format: "cpuprofile" }));
     expect(parsed.workload.profile).toEqual({ format: "cpuprofile" });
+    expectAccepts(UfoConfigSchema, withProfile({ format: "pprof" }));
+    expectAccepts(UfoConfigSchema, withProfile({ format: "bundle-stats" }));
     expect(profiledSteps(parsed.workload)).toEqual(["start"]);
     expect(profiledSteps({ command: "node bench.mjs" })).toEqual(["command"]);
     const listed = expectAccepts(
@@ -141,7 +143,7 @@ describe("UfoConfigSchema workload.profile", () => {
 
   it.each([
     ["no format", { env: {} }],
-    ["an unknown format", { format: "pprof" }],
+    ["an unknown format", { format: "flamegraph-svg" }],
     ["an unknown preset", { preset: "jvm-cpu" }],
     ["a preset with variables", { preset: "node-cpu", env: { X: "y" } }],
     ["a preset with a format", { preset: "node-cpu", format: "cpuprofile" }],

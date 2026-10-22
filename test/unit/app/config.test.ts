@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -6,6 +6,8 @@ import { describe, expect, it } from "vitest";
 import {
   DRAFT_CONFIG,
   draftConfigFor,
+  GO_PROFILE_FETCH,
+  GO_PROFILED_TEST,
   isDraftConfig,
   NEXT_PROFILED_STATS,
   PYTHON_PROFILED_START,
@@ -217,6 +219,50 @@ describe("the draft's profile block", () => {
     } finally {
       rmSync(bin, { recursive: true, force: true });
     }
+  });
+});
+
+// M5 V3: Go has no variable that turns profiling on, so its command writes the pprof file.
+describe("the draft's Go profile block", () => {
+  const GO: DetectedStack = { id: "go", evidence: ["go.mod"], suggestions: {} };
+  const sh = (line: string, env: NodeJS.ProcessEnv) =>
+    spawnSync("/bin/sh", ["-c", line], { env, encoding: "utf8", timeout: 10_000 });
+  const { UFO_PROFILE_DIR: _, ...measured } = process.env;
+
+  it("is commented, names format pprof, and is valid once uncommented", () => {
+    const draft = draftConfigFor([GO]);
+    expect(parseConfigText(draft).workload).not.toHaveProperty("profile");
+    expect(draft).toContain(`  #   ${GO_PROFILED_TEST}\n`);
+    expect(draft).toContain(`  #   ${GO_PROFILE_FETCH}\n`);
+    expect(draft).toContain("/debug/pprof/profile?seconds=10");
+    const lines = draft.split("\n");
+    const at = lines.indexOf("  # profile:");
+    lines[at] = "  profile:";
+    lines[at + 1] = "    format: pprof";
+    expect(parseConfigText(lines.join("\n")).workload.profile).toEqual({ format: "pprof" });
+    expect(isDraftConfig(draft, [GO])).toBe(true);
+  });
+
+  it("profiles the benchmark only where UFO_PROFILE_DIR is set", () => {
+    const words = (env: NodeJS.ProcessEnv) =>
+      execFileSync("/bin/sh", ["-c", `set -- ${GO_PROFILED_TEST}; printf '[%s]' "$@"`], {
+        env,
+        encoding: "utf8",
+      });
+    expect(words(measured)).toBe("[go][test][-run][^$][-bench][.][./bench]");
+    expect(words({ ...measured, UFO_PROFILE_DIR: "/runs/a b/p" })).toBe(
+      "[go][test][-run][^$][-bench][.][-cpuprofile][/runs/a b/p/cpu.pprof][-o][/dev/null][./bench]",
+    );
+  });
+
+  it("fetches from the server only in a profile job, and exits as the load did", () => {
+    const line = GO_PROFILE_FETCH.replace("./bench.sh", "echo '{}'; (exit 3)");
+    expect(line).not.toBe(GO_PROFILE_FETCH);
+    const fetchless = sh(line, { ...measured, PATH: "/nonexistent" });
+    expect([fetchless.status, fetchless.stdout, fetchless.stderr]).toEqual([3, "{}\n", ""]);
+    // A port nothing listens on: curl fails, quietly, and the status stays the load's.
+    const failed = sh(line, { ...measured, UFO_PROFILE_DIR: "/nonexistent", UFO_PORT: "1" });
+    expect([failed.status, failed.stdout]).toEqual([3, "{}\n"]);
   });
 });
 
