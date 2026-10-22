@@ -6,6 +6,7 @@ import { createTextRedactor } from "../evidence/index.js";
 import { assertRealDir, isErrno } from "../jobs/index.js";
 import { parseCollapsed } from "./collapsed.js";
 import { parseCpuprofile } from "./cpuprofile.js";
+import { parsePprof } from "./pprof.js";
 import { parseSpeedscope } from "./speedscope.js";
 import {
   type FileHotspots,
@@ -21,26 +22,34 @@ export const MAX_PROFILE_BYTES = 32 * 1024 * 1024;
 /** Files read of one profile directory, the largest first; the others are counted unread. */
 export const MAX_PROFILE_FILES_READ = 16;
 
-const PARSERS: Record<ProfileFormat, (text: string) => Parsed> = {
+const PARSERS: Record<Exclude<ProfileFormat, "pprof">, (text: string) => Parsed> = {
   collapsed: parseCollapsed,
   cpuprofile: parseCpuprofile,
   speedscope: parseSpeedscope,
 };
 
-/** The hot spots of one file's text in `format`; never throws for what the text holds. */
+/**
+ * The hot spots of one file in `format`, from its bytes or its text; never throws for what the
+ * file holds. `pprof` is binary; the other formats are UTF-8 text.
+ */
 export function summarizeProfile(
   file: string,
-  text: string,
+  content: string | Buffer,
   format: ProfileFormat,
   prefixes: readonly string[] = [],
   redact?: NameRedactor,
 ): FileHotspots {
+  if (format === "pprof") {
+    const bytes = typeof content === "string" ? Buffer.from(content, "utf8") : content;
+    return summarize(file, parsePprof(bytes), prefixes, redact);
+  }
+  const text = typeof content === "string" ? content : content.toString("utf8");
   // Without a byte order mark.
   const body = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
   return summarize(file, PARSERS[format](body), prefixes, redact);
 }
 
-async function readCapped(file: string): Promise<string | Parsed> {
+async function readCapped(file: string): Promise<Buffer | Parsed> {
   let handle: Awaited<ReturnType<typeof open>>;
   try {
     // Non-blocking, so a FIFO that took the file's place since its lstat never blocks the open;
@@ -59,7 +68,7 @@ async function readCapped(file: string): Promise<string | Parsed> {
     if (info.size > MAX_PROFILE_BYTES) {
       return invalid(`larger than ${MAX_PROFILE_BYTES / 1024 / 1024} MiB`);
     }
-    return (await handle.readFile()).toString("utf8");
+    return await handle.readFile();
   } finally {
     await handle.close();
   }
@@ -105,7 +114,7 @@ export async function readProfileDir(
             ? invalid("not a regular file")
             : await readCapped(path.join(dir, name));
     files.push(
-      typeof read === "string"
+      Buffer.isBuffer(read)
         ? summarizeProfile(name, read, format, prefixes, redact)
         : summarize(name, read, prefixes, redact),
     );

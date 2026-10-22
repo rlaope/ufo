@@ -20,7 +20,7 @@ const MAX_PROFILE_ENV = 16;
 export const PROFILE_DIR_PLACEHOLDER = "{{profile_dir}}";
 
 /** File formats `profile_target` reads hot spots from. */
-export const ProfileFormatSchema = z.enum(["collapsed", "cpuprofile", "speedscope"]);
+export const ProfileFormatSchema = z.enum(["collapsed", "cpuprofile", "speedscope", "pprof"]);
 export type ProfileFormat = z.infer<typeof ProfileFormatSchema>;
 
 /**

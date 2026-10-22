@@ -148,7 +148,7 @@ workload:
   command: node bench/latency.mjs  # required; one sample, prints one JSON line
   teardown: ./scripts/stop.sh      # optional
   profile:                         # optional; only profile_target runs it (see Profiling)
-    preset: node-cpu               # or env (optional) and format: collapsed | cpuprofile | speedscope
+    preset: node-cpu               # or env (optional) and format: collapsed | cpuprofile | speedscope | pprof
     steps: [start]                 # default: [start] with a start, else [command]
 oracles:
   - name: unit-tests
@@ -248,7 +248,11 @@ the profiler this block sets up and reads what the profiler writes:
   weights are `samples`. `cpuprofile` is V8's `.cpuprofile` (`node --cpu-prof`), weighed in
   microseconds, each sample until the next one. `speedscope` is the speedscope JSON format,
   `sampled` or `evented`, in its own unit; profiles in a unit other than the first one's are left
-  out and noted.
+  out and noted. `pprof` is Go's pprof profile (`runtime/pprof`, `go test -cpuprofile`,
+  `net/http/pprof`), gzip-compressed or not, weighed by the values of its default sample type,
+  else its last (`cpu`, in `nanoseconds`, for a Go CPU profile). A frame is a function's name as
+  Go writes it (`runtime.mallocgc`, `main.(*Server).handle`), and a call inlined into another is a
+  frame of its own.
 
 Each profile job gets a new, empty directory, `artifacts/profile-<job-id>/` in the run state,
 outside both arms, so nothing the profiler writes reaches a diff. Every step of the job gets it as
@@ -288,9 +292,31 @@ through `JAVA_TOOL_OPTIONS`:
 ```
 
 `JAVA_TOOL_OPTIONS` also reaches the JVMs Maven and Gradle start, each writing its own `%p` file;
-whether the agent writes its file when the JVM is stopped with SIGTERM is unverified. The draft
-`ufo.yaml` (`ufo init`, `inspect_target`) carries the `node-cpu` preset for a Node repository and
-these two blocks, commented, for JVM and Python ones.
+whether the agent writes its file when the JVM is stopped with SIGTERM is unverified.
+
+Go has no environment variable that turns profiling on, so the command writes the pprof file. A
+benchmark's `go test` (one package: `go test` refuses profile flags for several) gets the flags in
+a profile job only; `-o /dev/null` keeps the test binary, which `-cpuprofile` would leave in the
+current directory, out of the arm:
+
+```yaml
+workload:
+  command: ./bench.sh   # runs: go test -run '^$' -bench . ${UFO_PROFILE_DIR:+-cpuprofile "$UFO_PROFILE_DIR/cpu.pprof" -o /dev/null} ./bench
+  profile:
+    format: pprof
+```
+
+A server that imports `net/http/pprof` (its handlers are on `http.DefaultServeMux`; another mux
+registers them itself) serves a CPU profile of `seconds` (default 30) at `/debug/pprof/profile`.
+The command fetches it while the load runs and waits for it, since whatever it leaves running is
+killed when it exits, then exits as the load did:
+
+```yaml
+  command: 'if [ -n "$UFO_PROFILE_DIR" ]; then curl -fso "$UFO_PROFILE_DIR/cpu.pprof" "http://127.0.0.1:$UFO_PORT/debug/pprof/profile?seconds=10" & fi; ./bench.sh; s=$?; wait; exit $s'
+```
+
+The draft `ufo.yaml` (`ufo init`, `inspect_target`) carries the `node-cpu` preset for a Node
+repository and these blocks, commented, for JVM, Python, and Go ones.
 
 After the job's teardown, UFO reads the directory's regular files (never through a symbolic
 link), the largest first and at most 16 of them, each at most 32 MiB. For each file it sums the
@@ -301,7 +327,10 @@ calling itself shown once, so deep recursion still shows its caller. Frame and f
 names are one line of at most 80 bytes, the middle cut out of a longer one, and paths inside arm A
 are named relative to the repository. A file that is not the configured format, holds no
 samples, is too large, or has more than 1 000 000 folded lines or 500 000 call-tree nodes is
-reported with its reason, never failing the job. A V8 file also gives `idle`, the part of its
+reported with its reason, never failing the job. A pprof file is refused when it inflates past
+64 MiB, has more than 1 000 000 entries in one table (samples, locations, lines, functions,
+strings), more than 16 000 000 frames over all its samples' stacks, or an id a sample or line
+names that is not defined exactly once. A V8 file also gives `idle`, the part of its
 weight spent in `(idle)`. Several files (one per process, as when `NODE_OPTIONS` reaches child
 processes) come back busiest first (weight less `idle`, so a wrapper that only waits on the app
 comes after it), then those with a reason; the first 4 are summarized and the others counted in
