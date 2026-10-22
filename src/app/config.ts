@@ -140,6 +140,21 @@ export const PYTHON_PROFILED_START =
   // biome-ignore lint/suspicious/noTemplateCurlyInString: a shell expansion, not a JS template.
   '${UFO_PROFILE_DIR:+py-spy record -f raw -o "$UFO_PROFILE_DIR/py.txt" -s --} python app.py';
 
+/**
+ * webpack-cli's `--json <file>` (https://webpack.js.org/api/cli/), into the profile directory in a
+ * profile job only; in every measured run `/bin/sh` expands it to nothing.
+ */
+export const WEBPACK_PROFILED_STATS =
+  // biome-ignore lint/suspicious/noTemplateCurlyInString: a shell expansion, not a JS template.
+  '${UFO_PROFILE_DIR:+--json "$UFO_PROFILE_DIR/stats.json"}';
+
+/**
+ * source-map-explorer's JSON of the Next.js client chunks (it expands the quoted glob itself),
+ * into the profile directory in a profile job only; a measured run skips it.
+ */
+export const NEXT_PROFILED_STATS =
+  '{ [ -z "$UFO_PROFILE_DIR" ] || npx source-map-explorer \'.next/static/chunks/**/*.js\' --json "$UFO_PROFILE_DIR/client.json"; }';
+
 /** The `profile` block of the draft for the detected stacks: Node's preset, others commented. */
 function profileNotes(stacks: readonly DetectedStack[]): string {
   const has = (...ids: string[]) => stacks.some((stack) => ids.includes(stack.id));
@@ -172,6 +187,39 @@ function profileNotes(stacks: readonly DetectedStack[]): string {
   # start: ${PYTHON_PROFILED_START}
   # profile:
   #   format: collapsed
+`;
+  }
+  if (has("vite", "webpack", "nextjs")) {
+    notes += `  # Bundle: the build leaves a bundle analyzer's JSON in $UFO_PROFILE_DIR, which every step of a
+  # profile job gets and no measured run does, so the step that builds (setup or command) writes
+  # it there. The default steps ([command] without a start) only choose who gets env; this block
+  # has none.
+`;
+    if (has("vite")) {
+      notes += `  # Vite: rollup-plugin-visualizer (https://github.com/btd/rollup-plugin-visualizer, installed
+  # separately) last in the config's plugins, in a profile job only:
+  #   ...(process.env.UFO_PROFILE_DIR ? [visualizer({ filename: \`\${process.env.UFO_PROFILE_DIR}/stats.json\`,
+  #     template: "raw-data", gzipSize: true, brotliSize: true })] : [])
+`;
+    }
+    if (has("webpack")) {
+      notes += `  # webpack: webpack-cli writes the stats JSON with --json <file>, in a profile job only:
+  #   webpack ${WEBPACK_PROFILED_STATS}
+  # or webpack-bundle-analyzer's BundleAnalyzerPlugin with analyzerMode: "disabled",
+  # generateStatsFile: true, statsFilename: path.join(process.env.UFO_PROFILE_DIR, "stats.json").
+`;
+    }
+    if (has("nextjs")) {
+      notes += `  # Next.js: with productionBrowserSourceMaps: true in next.config, source-map-explorer
+  # (https://github.com/danvk/source-map-explorer) maps the client chunks after next build:
+  #   next build && ${NEXT_PROFILED_STATS}
+  # next analyze writes a format UFO does not read; with next build --webpack, the
+  # BundleAnalyzerPlugin above works too.
+`;
+    }
+    notes += `  # To read the bundle${has("node") ? " in place of the node-cpu profile above" : ""}, adapt the build and uncomment:
+  # profile:
+  #   format: bundle-stats
 `;
   }
   return notes;

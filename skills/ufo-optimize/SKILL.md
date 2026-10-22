@@ -27,8 +27,8 @@ The tools are `inspect_target`, `check_capabilities`, `list_techniques`, `get_te
    a commented draft: write it to `ufo.yaml` at the repository root. Fill in the objective, the
    workload command, the oracles (the test suite whose passing set must not shrink), the cards
    to enable (`list_techniques` indexes them), and the `workload.profile` block for the stack's
-   profiler, so step 6 gets hot spots: the draft has it active for Node and commented for the JVM
-   and Python ([bottlenecks.md](bottlenecks.md), "Profiling"). The full
+   profiler, so step 6 gets hot spots: the draft has it active for Node and commented for the JVM,
+   Python, and bundles ([bottlenecks.md](bottlenecks.md), "Profiling"). The full
    format is in https://github.com/rlaope/ufo/blob/main/docs/cli.md#ufoyaml-reference. Done when
    `inspect_target` reports the configuration valid.
 
@@ -50,6 +50,9 @@ The tools are `inspect_target`, `check_capabilities`, `list_techniques`, `get_te
      is spent, its top `total` frames the code paths that hold it, and its `stacks` who calls the
      hot frames. Read those frames' code in arm A (`arms.a` from `get_run`; paths in frames are
      relative to the repository).
+   - A file with `kind: "bundle"` (`format: bundle-stats`) has no frames: its `modules` and
+     `packages` are where the bytes are, the largest share first, and `chunks` splits initial from
+     async bytes when the tool says. Find who imports the largest ones in arm A.
    - Without `hotspots`, `ufo.yaml` has no `workload.profile`: ask the user to add one
      ([bottlenecks.md](bottlenecks.md), "Profiling") and to approve it, which takes a new run. If
      they decline, go on from the phase times and the code.
@@ -57,12 +60,13 @@ The tools are `inspect_target`, `check_capabilities`, `list_techniques`, `get_te
      nothing, so check the block against bottlenecks.md.
 
    Name the bottleneck with [bottlenecks.md](bottlenecks.md): its category, and the evidence that
-   shows it (the frames and their shares). Then call `list_techniques` with the stack
-   `inspect_target` detected, that `bottleneck`, and `profile_job_id` (the profile's job id). The
-   cards whose frame hints the hot frames show come first, each with `evidence` (the hint, the
-   frame, its share, and `self` or `total`). Evidence is a lead, not proof: open each candidate
-   with `get_technique` and check its `signals` and `preconditions` against the evidence, and
-   read the cards without evidence too when the bottleneck points at them. Done when you have the
+   shows it (the frames, or a bundle's modules and packages, and their shares). Then call
+   `list_techniques` with the stack `inspect_target` detected, that `bottleneck`, and
+   `profile_job_id` (the profile's job id). The cards whose frame hints the hot frames show come
+   first, each with `evidence` (the hint, the frame, its share, and `self` or `total`, or a
+   bundle's `module` or `package`). Evidence is a lead, not proof: open each candidate with
+   `get_technique` and check its `signals` and `preconditions` against the evidence, and read the
+   cards without evidence too when the bottleneck points at them. Done when you have the
    bottleneck, its evidence, and the cards whose signals the evidence matches, in the order
    bottlenecks.md gives.
 

@@ -1,0 +1,29 @@
+{
+  "results": [
+    {
+      "bundleName": ".next/static/chunks/main-4c1f2e.js",
+      "totalBytes": 6000,
+      "mappedBytes": 5800,
+      "unmappedBytes": 149,
+      "eolBytes": 1,
+      "sourceMapCommentBytes": 50,
+      "files": {
+        "node_modules/next/dist/client/index.js": { "size": 3000 },
+        "src/pages/index.tsx": { "size": 2800 },
+        "[sourceMappingURL]": { "size": 50 },
+        "[unmapped]": { "size": 149 },
+        "[EOLs]": { "size": 1 }
+      }
+    },
+    {
+      "bundleName": ".next/static/chunks/framework-9a0b7d.js",
+      "totalBytes": 4000,
+      "mappedBytes": 4000,
+      "eolBytes": 0,
+      "sourceMapCommentBytes": 0,
+      "files": {
+        "node_modules/react-dom/cjs/react-dom.production.min.js": { "size": 4000 }
+      }
+    }
+  ]
+}

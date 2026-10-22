@@ -13,6 +13,8 @@ stacks:
   - typescript
 bottlenecks:
   - bundle
+frameHints:
+  - "node_modules/lodash/"
 signals:
   - Bundle analyzer shows whole libraries or barrel-file re-exports in the bundle although only a few exports are imported
   - Webpack stats or analyzer show modules present only because a barrel index file has no sideEffects flag

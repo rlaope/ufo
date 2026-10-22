@@ -1,4 +1,5 @@
 import { oneLine } from "../text.js";
+import type { BundleHotspots } from "./bundle.js";
 
 // Hot spots of one profile file: shares of the total weight, small enough that the summaries of
 // several files fit in one tool result with room to spare.
@@ -47,6 +48,7 @@ export type FileHotspots =
   | {
       file: string;
       valid: true;
+      kind: "stacks";
       /** What the weights count: `samples`, `microseconds`, or a speedscope unit. */
       unit: string;
       /** The file's total weight, in `unit`. */
@@ -61,6 +63,7 @@ export type FileHotspots =
       stacks: StackShare[];
       note?: string;
     }
+  | BundleHotspots
   | { file: string; valid: false; reason: string };
 
 /**
@@ -127,7 +130,7 @@ export type Parsed =
   | { valid: true; tally: Tally; unit: string; idle?: number; note?: string }
   | { valid: false; reason: string };
 
-export function invalid(reason: string): Parsed {
+export function invalid(reason: string): { valid: false; reason: string } {
   return { valid: false, reason: oneLine(reason, MAX_REASON_LENGTH, "invalid profile") };
 }
 
@@ -184,11 +187,15 @@ export function displayName(
   return fitBytes(name === "" ? "(unnamed)" : name, MAX_NAME_BYTES);
 }
 
-function pct(weight: number, total: number): number {
+export function pct(weight: number, total: number): number {
   return Math.round((weight / total) * 1000) / 10;
 }
 
-function heaviest<T>(entries: Iterable<[string, T]>, weight: (value: T) => number, count: number) {
+export function heaviest<T>(
+  entries: Iterable<[string, T]>,
+  weight: (value: T) => number,
+  count: number,
+) {
   return [...entries]
     .filter(([, value]) => weight(value) > 0)
     .sort(([ka, a], [kb, b]) => weight(b) - weight(a) || (ka < kb ? -1 : ka > kb ? 1 : 0))
@@ -225,6 +232,7 @@ export function summarize(
   return {
     file: name,
     valid: true,
+    kind: "stacks",
     unit: parsed.unit,
     weight: Math.round(tally.weight * 1000) / 1000,
     ...(parsed.idle === undefined || parsed.idle === 0
@@ -245,14 +253,16 @@ export const MAX_FILES_SUMMARIZED = 4;
 
 /**
  * Several files (one per process the profiler reached): the busiest first (weight less idle, so
- * a wrapper process that waits on the app sorts below it), then the ones that could not be read,
- * the first `MAX_FILES_SUMMARIZED` kept and the rest counted in `omitted`.
+ * a wrapper process that waits on the app sorts below it; a bundle by its bytes), then the ones
+ * that could not be read, the first `MAX_FILES_SUMMARIZED` kept and the rest counted in
+ * `omitted`.
  */
 export function heaviestFiles(
   files: readonly FileHotspots[],
   unread = 0,
 ): { files: FileHotspots[]; omitted: number } {
-  const weight = (file: FileHotspots) => (file.valid ? file.weight - (file.idle ?? 0) : -1);
+  const weight = (file: FileHotspots) =>
+    !file.valid ? -1 : file.kind === "bundle" ? file.bytes : file.weight - (file.idle ?? 0);
   const sorted = [...files].sort(
     (a, b) => weight(b) - weight(a) || (a.file < b.file ? -1 : a.file > b.file ? 1 : 0),
   );

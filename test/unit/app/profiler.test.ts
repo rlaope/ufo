@@ -182,6 +182,7 @@ ${WAITS}`;
     );
     expect(summary).toMatchObject({ valid: true, unit: "microseconds" });
     if (!summary.valid) throw new Error(summary.reason);
+    if (summary.kind !== "stacks") throw new Error("a bundle");
     expect(summary.self.map((s) => s.frame)).toContain("spin (app.mjs:1)");
     // Without the preload, the same stop writes nothing.
     rmSync(out, { recursive: true });

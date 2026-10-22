@@ -191,6 +191,7 @@ describe("profiling a server under workload.profile", { timeout: TIMEOUT_MS }, (
         files: [50, 40, 30, 20].map((weight) => ({
           file: `toy-${weight}.collapsed`,
           valid: true,
+          kind: "stacks",
           unit: "samples",
           weight,
           // Paths in arm A are named relative to the repository.
@@ -388,6 +389,7 @@ function nodeWorkload(start: string): string[] {
 function hotFrames(file: FileHotspots | undefined): string[] {
   if (file === undefined) throw new Error("no such file");
   if (!file.valid) throw new Error(file.reason);
+  if (file.kind !== "stacks") throw new Error(`${file.file} is a bundle`);
   return file.self.map((s) => s.frame);
 }
 

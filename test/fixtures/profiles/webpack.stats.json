@@ -1,0 +1,165 @@
+{
+  "hash": "4f2a9c1e7b3d5a6c8e0f",
+  "version": "5.97.1",
+  "time": 1840,
+  "publicPath": "auto",
+  "outputPath": "/app/dist",
+  "assetsByChunkName": { "main": ["main.js"], "chart": ["chart.js"] },
+  "assets": [
+    {
+      "type": "asset",
+      "name": "main.js",
+      "size": 5200,
+      "emitted": true,
+      "chunkNames": ["main"],
+      "chunks": [792],
+      "info": { "javascriptModule": false, "minimized": true }
+    },
+    {
+      "type": "asset",
+      "name": "chart.js",
+      "size": 3100,
+      "emitted": true,
+      "chunkNames": ["chart"],
+      "chunks": [421],
+      "info": { "javascriptModule": false, "minimized": true }
+    }
+  ],
+  "chunks": [
+    {
+      "rendered": true,
+      "initial": true,
+      "entry": true,
+      "size": 6000,
+      "names": ["main"],
+      "files": ["main.js"],
+      "id": 792,
+      "parents": [],
+      "children": [421]
+    },
+    {
+      "rendered": true,
+      "initial": false,
+      "entry": false,
+      "size": 4000,
+      "names": ["chart"],
+      "files": ["chart.js"],
+      "id": 421,
+      "parents": [792],
+      "children": []
+    }
+  ],
+  "modules": [
+    {
+      "type": "module",
+      "moduleType": "javascript/esm",
+      "identifier": "/app/node_modules/babel-loader/lib/index.js!/app/src/index.js|0969a1c6e2d6c7f4",
+      "name": "./src/index.js + 1 modules",
+      "size": 1500,
+      "chunks": [792],
+      "orphan": false,
+      "modules": [
+        {
+          "type": "module",
+          "moduleType": "javascript/esm",
+          "name": "./src/index.js",
+          "size": 500,
+          "chunks": [],
+          "orphan": true
+        },
+        {
+          "type": "module",
+          "moduleType": "javascript/esm",
+          "name": "./src/app.js",
+          "size": 1000,
+          "chunks": [],
+          "orphan": true
+        }
+      ]
+    },
+    {
+      "type": "module",
+      "moduleType": "javascript/dynamic",
+      "name": "./node_modules/react-dom/cjs/react-dom.production.js",
+      "size": 3000,
+      "chunks": [792],
+      "orphan": false
+    },
+    {
+      "type": "module",
+      "moduleType": "javascript/dynamic",
+      "name": "./node_modules/react/index.js",
+      "size": 200,
+      "chunks": [792],
+      "orphan": false
+    },
+    {
+      "type": "module",
+      "moduleType": "javascript/esm",
+      "name": "./node_modules/@acme/ui/dist/button.js",
+      "size": 1300,
+      "chunks": [792],
+      "orphan": false
+    },
+    {
+      "type": "module",
+      "moduleType": "javascript/esm",
+      "name": "./node_modules/chart.js/dist/chart.js",
+      "size": 3500,
+      "chunks": [421],
+      "orphan": false
+    },
+    {
+      "type": "module",
+      "moduleType": "javascript/esm",
+      "name": "./src/chart.js",
+      "size": 500,
+      "chunks": [421],
+      "orphan": false
+    },
+    {
+      "type": "module",
+      "moduleType": "javascript/esm",
+      "name": "./src/index.js",
+      "size": 500,
+      "chunks": [],
+      "orphan": true
+    },
+    {
+      "type": "module",
+      "moduleType": "javascript/esm",
+      "name": "./src/app.js",
+      "size": 1000,
+      "chunks": [],
+      "orphan": true
+    }
+  ],
+  "errors": [],
+  "errorsCount": 0,
+  "warnings": [],
+  "warningsCount": 0,
+  "children": [
+    {
+      "name": "HtmlWebpackCompiler",
+      "chunks": [
+        {
+          "rendered": true,
+          "initial": true,
+          "entry": true,
+          "size": 9999,
+          "names": ["HtmlWebpackPlugin_0"],
+          "files": [],
+          "id": 0
+        }
+      ],
+      "modules": [
+        {
+          "type": "module",
+          "name": "./node_modules/html-webpack-plugin/lib/loader.js!./src/index.html",
+          "size": 9999,
+          "chunks": [0]
+        }
+      ]
+    }
+  ]
+}

@@ -4,6 +4,7 @@ import path from "node:path";
 import type { ProfileFormat } from "../../domain/index.js";
 import { createTextRedactor } from "../evidence/index.js";
 import { assertRealDir, isErrno } from "../jobs/index.js";
+import { summarizeBundle } from "./bundle.js";
 import { parseCollapsed } from "./collapsed.js";
 import { parseCpuprofile } from "./cpuprofile.js";
 import { parseSpeedscope } from "./speedscope.js";
@@ -21,7 +22,7 @@ export const MAX_PROFILE_BYTES = 32 * 1024 * 1024;
 /** Files read of one profile directory, the largest first; the others are counted unread. */
 export const MAX_PROFILE_FILES_READ = 16;
 
-const PARSERS: Record<ProfileFormat, (text: string) => Parsed> = {
+const PARSERS: Record<Exclude<ProfileFormat, "bundle-stats">, (text: string) => Parsed> = {
   collapsed: parseCollapsed,
   cpuprofile: parseCpuprofile,
   speedscope: parseSpeedscope,
@@ -37,6 +38,7 @@ export function summarizeProfile(
 ): FileHotspots {
   // Without a byte order mark.
   const body = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+  if (format === "bundle-stats") return summarizeBundle(file, body, prefixes, redact);
   return summarize(file, PARSERS[format](body), prefixes, redact);
 }
 

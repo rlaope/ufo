@@ -148,7 +148,7 @@ workload:
   command: node bench/latency.mjs  # required; one sample, prints one JSON line
   teardown: ./scripts/stop.sh      # optional
   profile:                         # optional; only profile_target runs it (see Profiling)
-    preset: node-cpu               # or env (optional) and format: collapsed | cpuprofile | speedscope
+    preset: node-cpu               # or env (optional) and format: collapsed | cpuprofile | speedscope | bundle-stats
     steps: [start]                 # default: [start] with a start, else [command]
 oracles:
   - name: unit-tests
@@ -248,7 +248,10 @@ the profiler this block sets up and reads what the profiler writes:
   weights are `samples`. `cpuprofile` is V8's `.cpuprofile` (`node --cpu-prof`), weighed in
   microseconds, each sample until the next one. `speedscope` is the speedscope JSON format,
   `sampled` or `evented`, in its own unit; profiles in a unit other than the first one's are left
-  out and noted.
+  out and noted. `bundle-stats` is a build's bundle analyzer JSON, the tool found per file from
+  what it holds: webpack stats (`webpack --json <file>`, `stats.toJson()`), rollup-plugin-visualizer
+  `template: "raw-data"`, or source-map-explorer `--json`; its weights are bytes (see Bundle
+  stats below).
 
 Each profile job gets a new, empty directory, `artifacts/profile-<job-id>/` in the run state,
 outside both arms, so nothing the profiler writes reaches a diff. Every step of the job gets it as
@@ -288,9 +291,41 @@ through `JAVA_TOOL_OPTIONS`:
 ```
 
 `JAVA_TOOL_OPTIONS` also reaches the JVMs Maven and Gradle start, each writing its own `%p` file;
-whether the agent writes its file when the JVM is stopped with SIGTERM is unverified. The draft
-`ufo.yaml` (`ufo init`, `inspect_target`) carries the `node-cpu` preset for a Node repository and
-these two blocks, commented, for JVM and Python ones.
+whether the agent writes its file when the JVM is stopped with SIGTERM is unverified.
+
+**Bundle stats.** With `format: bundle-stats`, the build leaves its analyzer's JSON in
+`$UFO_PROFILE_DIR`, which every step of a profile job gets, so whichever step builds (`setup` or
+`command`) can write it; `steps` only chooses who gets `env`, and the block needs none:
+
+```yaml
+  profile:
+    format: bundle-stats
+```
+
+- Vite: rollup-plugin-visualizer (https://github.com/btd/rollup-plugin-visualizer) last in the
+  config's plugins, in a profile job only:
+
+  ```js
+  ...(process.env.UFO_PROFILE_DIR
+    ? [visualizer({ filename: `${process.env.UFO_PROFILE_DIR}/stats.json`, template: "raw-data", gzipSize: true, brotliSize: true })]
+    : [])
+  ```
+
+  Its sizes are rollup's rendered lengths, before minification; with `sourcemap: true`, read from
+  the source maps (and then without gzip or brotli sizes).
+- webpack: `webpack ${UFO_PROFILE_DIR:+--json "$UFO_PROFILE_DIR/stats.json"}`, or
+  webpack-bundle-analyzer's `BundleAnalyzerPlugin` with `analyzerMode: "disabled"`,
+  `generateStatsFile: true`, and `statsFilename: path.join(process.env.UFO_PROFILE_DIR,
+  "stats.json")`. Module sizes are webpack's estimates before minification.
+- Next.js: with `productionBrowserSourceMaps: true` in `next.config`, after `next build`,
+  `{ [ -z "$UFO_PROFILE_DIR" ] || npx source-map-explorer '.next/static/chunks/**/*.js' --json "$UFO_PROFILE_DIR/client.json"; }`
+  (https://github.com/danvk/source-map-explorer). Its sizes are the built files' bytes mapped to
+  each source (gzip estimates with `--gzip`). `next analyze` writes a format UFO does not read;
+  with `next build --webpack`, the webpack plugin above works too.
+
+The draft `ufo.yaml` (`ufo init`, `inspect_target`) carries the `node-cpu` preset for a Node
+repository and the JVM, Python, and bundle blocks, commented, for those stacks (the bundle one for
+Vite, webpack, and Next.js, to use in place of the preset).
 
 After the job's teardown, UFO reads the directory's regular files (never through a symbolic
 link), the largest first and at most 16 of them, each at most 32 MiB. For each file it sums the
@@ -309,6 +344,17 @@ comes after it), then those with a reason; the first 4 are summarized and the ot
 has no `hotspots` and the job creates no directory. A FIFO or other non-regular entry is reported,
 never opened. If the workload replaced the directory (never followed) or made it unreadable,
 `hotspots` has no files and a `reason`; the phases and the sample stay.
+
+A bundle stats file is summarized by bytes instead: `bytes` (every module the file lists, each
+byte once: webpack's orphan modules are left out and a concatenated module counts the modules
+inside it; a multi-compiler build's compilers are added up, a compiler's child compilations left
+out), `gzip` and `brotli` when rollup-plugin-visualizer computed them, `chunks` (`initial` and
+`async` bytes, from webpack's chunks), the 20 largest `modules` and the 10 largest `packages`
+with their share. A package is what a module path names after its last `node_modules/`
+(`name` or `@scope/name`, pnpm's `.pnpm/<name>@<version>/node_modules/<name>` as the inner one).
+A file with more than 500 000 entries (modules, module parts, mapped sources, chunks) is refused
+with its reason, as is one that is none of the three tools' JSON. Bundles come back largest
+first.
 
 The approval covers `workload.profile` like the rest of `ufo.yaml`; `ufo approve` shows the
 profiled steps, the format, the preset, and each variable JSON-quoted, a preset's as it expands.

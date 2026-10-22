@@ -19,8 +19,17 @@ const MAX_PROFILE_ENV = 16;
 /** The one placeholder of `workload.profile.env`: the profile job's own directory. */
 export const PROFILE_DIR_PLACEHOLDER = "{{profile_dir}}";
 
-/** File formats `profile_target` reads hot spots from. */
-export const ProfileFormatSchema = z.enum(["collapsed", "cpuprofile", "speedscope"]);
+/**
+ * File formats `profile_target` reads hot spots from. `bundle-stats` is a build's bundle
+ * analyzer JSON (webpack stats, rollup-plugin-visualizer raw-data, source-map-explorer), each
+ * file's tool found from what it holds.
+ */
+export const ProfileFormatSchema = z.enum([
+  "collapsed",
+  "cpuprofile",
+  "speedscope",
+  "bundle-stats",
+]);
 export type ProfileFormat = z.infer<typeof ProfileFormatSchema>;
 
 /**

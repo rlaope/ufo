@@ -10,11 +10,14 @@ import {
 import { LockTimeoutError } from "../../../src/core/jobs/index.js";
 import { PolicyError, violation } from "../../../src/core/policy/index.js";
 import {
+  type FileHotspots,
   heaviestFiles,
   MAX_FILES_SUMMARIZED,
   STACK_FRAMES,
   summarizeProfile,
   TOP_FRAMES,
+  TOP_MODULES,
+  TOP_PACKAGES,
   TOP_STACKS,
 } from "../../../src/core/profile/index.js";
 import {
@@ -170,6 +173,41 @@ describe("withinBudget", () => {
 
 // M4 E3: a profile job with hot spots at every cap still fits in one result, nothing cut.
 describe("a profile job's result", () => {
+  /** A succeeded profile job with `hotspots`, every other field at its longest. */
+  const profileJob = (hotspots: unknown) => {
+    const at = "2026-10-21T00:00:00.000Z";
+    return {
+      jobId: "job-000002",
+      seq: 2,
+      kind: "profile",
+      input: {},
+      status: "succeeded",
+      progress: { done: 2, total: 3, message: "sample" },
+      result: {
+        sha: "0".repeat(40),
+        phases: (["setup", "start", "sample", "teardown"] as const).map((phase) => ({
+          phase,
+          ms: 1_234_567_890,
+        })),
+        // The primary metric, error_rate, rss_bytes, and 16 reported-only metrics.
+        sample: {
+          valid: true,
+          values: Array.from({ length: 19 }, (_, i) => ({
+            name: `m${i}_${"x".repeat(60)}`,
+            value: 1.2345678901234568e21,
+          })),
+        },
+        artifact: "artifacts/profile-job-000002.json",
+        hotspots,
+      },
+      workerPid: 4_194_304,
+      createdAt: at,
+      updatedAt: at,
+      startedAt: at,
+      finishedAt: at,
+    };
+  };
+
   it("fits within the budget with every list full and every name at its longest", () => {
     // Every frame its own, three bytes a character, so each name is cut to its longest.
     const name = (file: number, line: number, depth: number) =>
@@ -200,46 +238,55 @@ describe("a profile job's result", () => {
     };
     for (const file of hotspots.files) {
       if (!file.valid) throw new Error(file.reason);
+      if (file.kind !== "stacks") throw new Error("a bundle");
       expect(file.self).toHaveLength(TOP_FRAMES);
       expect(file.total).toHaveLength(TOP_FRAMES);
       expect(file.stacks).toHaveLength(TOP_STACKS);
       expect(file.stacks.every((stack) => stack.frames.length === STACK_FRAMES)).toBe(true);
     }
     expect(hotspots.files).toHaveLength(MAX_FILES_SUMMARIZED);
-    const at = "2026-10-21T00:00:00.000Z";
-    const job = {
-      jobId: "job-000002",
-      seq: 2,
-      kind: "profile",
-      input: {},
-      status: "succeeded",
-      progress: { done: 2, total: 3, message: "sample" },
-      result: {
-        sha: "0".repeat(40),
-        phases: (["setup", "start", "sample", "teardown"] as const).map((phase) => ({
-          phase,
-          ms: 1_234_567_890,
-        })),
-        // The primary metric, error_rate, rss_bytes, and 16 reported-only metrics.
-        sample: {
-          valid: true,
-          values: Array.from({ length: 19 }, (_, i) => ({
-            name: `m${i}_${"x".repeat(60)}`,
-            value: 1.2345678901234568e21,
-          })),
-        },
-        artifact: "artifacts/profile-job-000002.json",
-        hotspots,
-      },
-      workerPid: 4_194_304,
-      createdAt: at,
-      updatedAt: at,
-      startedAt: at,
-      finishedAt: at,
-    };
+    const job = profileJob(hotspots);
     const shown = body(success(job));
     const size = Buffer.byteLength(JSON.stringify(shown));
     expect(size).toBeLessThanOrEqual(MAX_RESULT_BYTES);
+    expect(shown).not.toHaveProperty("truncated");
+    expect(shown).toEqual(job);
+  });
+
+  // M5 V2: bundle stats at every cap, as large as the stacks' or smaller.
+  it("fits within the budget with bundle stats at every cap", () => {
+    const files = Array.from({ length: MAX_FILES_SUMMARIZED + 2 }, (_, file) => {
+      // A scoped package and module of its own each, every name cut to its longest.
+      const modules = Array.from({ length: TOP_MODULES + TOP_PACKAGES }, (_, i) => ({
+        name: `./node_modules/@${"語".repeat(60)}${file}.${i}/${"語".repeat(60)}/m.js`,
+        size: 1.2345678901234568e15 + i,
+        chunks: [i],
+      }));
+      const summary = summarizeProfile(
+        `${"語".repeat(200)}.${file}`,
+        JSON.stringify({ modules, chunks: [{ initial: true, size: 1.2345678901234568e21 }] }),
+        "bundle-stats",
+      );
+      return {
+        ...summary,
+        gzip: 1.2345678901234568e21,
+        brotli: 1.2345678901234568e21,
+        chunks: { initial: 1.2345678901234568e21, async: 1.2345678901234568e21 },
+      };
+    });
+    const hotspots = {
+      format: "bundle-stats",
+      dir: "artifacts/profile-job-000002",
+      ...heaviestFiles(files as FileHotspots[], 99),
+    };
+    for (const file of hotspots.files) {
+      if (!file.valid || file.kind !== "bundle") throw new Error("not a bundle");
+      expect(file.modules).toHaveLength(TOP_MODULES);
+      expect(file.packages).toHaveLength(TOP_PACKAGES);
+    }
+    const job = profileJob(hotspots);
+    const shown = body(success(job));
+    expect(Buffer.byteLength(JSON.stringify(shown))).toBeLessThanOrEqual(MAX_RESULT_BYTES);
     expect(shown).not.toHaveProperty("truncated");
     expect(shown).toEqual(job);
   });

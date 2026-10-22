@@ -55,6 +55,7 @@ describe("collapsed stacks", () => {
     expect(summarizeProfile("toy.collapsed", fixture("toy.collapsed"), "collapsed")).toEqual({
       file: "toy.collapsed",
       valid: true,
+      kind: "stacks",
       unit: "samples",
       weight: 100,
       self: [
@@ -126,6 +127,7 @@ describe("a V8 .cpuprofile", () => {
     expect(summary).toEqual({
       file: "toy.cpuprofile",
       valid: true,
+      kind: "stacks",
       unit: "microseconds",
       weight: 100,
       idle: 10,
@@ -288,6 +290,7 @@ describe("a speedscope file", () => {
     expect(summarizeProfile("s.json", fixture("sampled.speedscope.json"), "speedscope")).toEqual({
       file: "s.json",
       valid: true,
+      kind: "stacks",
       unit: "seconds",
       weight: 14,
       self: [
@@ -313,6 +316,7 @@ describe("a speedscope file", () => {
     expect(summarizeProfile("e.json", fixture("evented.speedscope.json"), "speedscope")).toEqual({
       file: "e.json",
       valid: true,
+      kind: "stacks",
       unit: "milliseconds",
       weight: 14,
       self: [
@@ -420,6 +424,7 @@ describe("a frame name", () => {
     ].join("\n");
     const summary = summarizeProfile("names", text, "collapsed");
     if (!summary.valid) throw new Error(summary.reason);
+    if (summary.kind !== "stacks") throw new Error("a bundle");
     const names = summary.self.map((s) => s.frame);
     for (const name of names) expect(jsonBytes(name)).toBeLessThanOrEqual(MAX_NAME_BYTES);
     expect(names[0]).toMatch(/^com\/example\/Start\.x+…x+\.end \(Handler\.java:42\)$/);
@@ -543,6 +548,7 @@ describe("several profile files", () => {
   const valid = (file: string, weight: number): FileHotspots => ({
     file,
     valid: true,
+    kind: "stacks",
     unit: "samples",
     weight,
     self: [],
@@ -596,7 +602,12 @@ describe("reading a profile directory", () => {
     writeFileSync(path.join(dir, "huge.collapsed"), "");
     truncateSync(path.join(dir, "huge.collapsed"), MAX_PROFILE_BYTES + 1);
     const read = await readProfileDir(dir, "collapsed");
-    expect(read.files.map((f) => [f.file, f.valid ? f.weight : f.reason])).toEqual([
+    expect(
+      read.files.map((f) => [
+        f.file,
+        !f.valid ? f.reason : f.kind === "stacks" ? f.weight : f.bytes,
+      ]),
+    ).toEqual([
       ["two.collapsed", 300],
       ["one.collapsed", 100],
       ["broken.collapsed", "line 1 is not `frame;frame;... count`"],
@@ -634,7 +645,12 @@ describe("reading a profile directory", () => {
     execFileSync("mkfifo", [path.join(dir, "pipe")]);
     writeFileSync(path.join(dir, "p.collapsed"), "main;f 1\n");
     const read = await readProfileDir(dir, "collapsed");
-    expect(read.files.map((f) => [f.file, f.valid ? f.weight : f.reason])).toEqual([
+    expect(
+      read.files.map((f) => [
+        f.file,
+        !f.valid ? f.reason : f.kind === "stacks" ? f.weight : f.bytes,
+      ]),
+    ).toEqual([
       ["p.collapsed", 1],
       ["pipe", "not a regular file"],
     ]);

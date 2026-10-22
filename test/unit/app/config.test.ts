@@ -1,12 +1,16 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   DRAFT_CONFIG,
   draftConfigFor,
   isDraftConfig,
+  NEXT_PROFILED_STATS,
   PYTHON_PROFILED_START,
   parseConfigText,
+  WEBPACK_PROFILED_STATS,
 } from "../../../src/app/config.js";
 import type { DetectedStack } from "../../../src/app/detect.js";
 
@@ -160,6 +164,59 @@ describe("the draft's profile block", () => {
     expect(words({ ...measured, UFO_PROFILE_DIR: "/runs/a b/p" })).toBe(
       "[py-spy][record][-f][raw][-o][/runs/a b/p/py.txt][-s][--][python][app.py]",
     );
+  });
+
+  // M5 V2: bundle analyzer JSON for format bundle-stats.
+  it("offers the bundle analyzers of Vite, webpack, and Next.js commented, valid once uncommented", () => {
+    for (const id of ["vite", "webpack", "nextjs"] as const) {
+      const draft = draftConfigFor([stack(id)]);
+      expect(parseConfigText(draft).workload).not.toHaveProperty("profile");
+      expect(draft.match(/# Bundle: /g)).toHaveLength(1);
+      expect(draft).not.toContain("in place of the node-cpu profile");
+      expect(parseConfigText(uncommented(draft, "# Bundle: ")).workload.profile).toEqual({
+        format: "bundle-stats",
+      });
+    }
+    const all = draftConfigFor([stack("vite"), stack("webpack"), stack("nextjs")]);
+    expect(all.match(/# {3}format: bundle-stats/g)).toHaveLength(1);
+    expect(all).toContain('template: "raw-data", gzipSize: true, brotliSize: true');
+    expect(all).toContain(`#   webpack ${WEBPACK_PROFILED_STATS}`);
+    expect(all).toContain(`#   next build && ${NEXT_PROFILED_STATS}`);
+    // A frontend repository is a Node one too: the bundle block replaces the preset.
+    const withNode = draftConfigFor([NODE, stack("vite")]);
+    expect(parseConfigText(withNode).workload.profile).toEqual({ preset: "node-cpu" });
+    expect(withNode).toContain("in place of the node-cpu profile above");
+    const replaced = uncommented(withNode, "# Bundle: ").replace(
+      /^ {2}profile:\n {4}preset: node-cpu\n/m,
+      "",
+    );
+    expect(parseConfigText(replaced).workload.profile).toEqual({ format: "bundle-stats" });
+  });
+
+  it("writes the bundle stats in a profile job only", () => {
+    const bin = mkdtempSync(path.join(tmpdir(), "ufo-bin-"));
+    try {
+      // npx as a stand-in that prints the words it gets.
+      writeFileSync(path.join(bin, "npx"), "#!/bin/sh\nprintf '[%s]' \"$@\"\n");
+      chmodSync(path.join(bin, "npx"), 0o755);
+      const { UFO_PROFILE_DIR: _, ...measured } = process.env;
+      const run = (line: string, env: NodeJS.ProcessEnv) =>
+        execFileSync("/bin/sh", ["-c", line], {
+          env: { ...env, PATH: `${bin}:${process.env.PATH ?? ""}` },
+          encoding: "utf8",
+        });
+      const webpack = `set -- webpack ${WEBPACK_PROFILED_STATS}; printf '[%s]' "$@"`;
+      expect(run(webpack, measured)).toBe("[webpack]");
+      expect(run(webpack, { ...measured, UFO_PROFILE_DIR: "/runs/a b/p" })).toBe(
+        "[webpack][--json][/runs/a b/p/stats.json]",
+      );
+      expect(run(`${NEXT_PROFILED_STATS} && echo built`, measured)).toBe("built\n");
+      expect(run(NEXT_PROFILED_STATS, { ...measured, UFO_PROFILE_DIR: "/runs/a b/p" })).toBe(
+        "[source-map-explorer][.next/static/chunks/**/*.js][--json][/runs/a b/p/client.json]",
+      );
+    } finally {
+      rmSync(bin, { recursive: true, force: true });
+    }
   });
 });
 

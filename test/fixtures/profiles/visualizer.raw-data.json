@@ -1,0 +1,66 @@
+{
+  "version": 2,
+  "tree": {
+    "name": "root",
+    "children": [
+      {
+        "name": "assets/index-B3kd9a1f.js",
+        "children": [
+          { "name": "src", "children": [{ "uid": "7d1e0c4a-1", "name": "main.ts" }] },
+          {
+            "name": "node_modules/.pnpm/lodash-es@4.17.21/node_modules/lodash-es",
+            "children": [{ "uid": "7d1e0c4a-3", "name": "debounce.js" }]
+          }
+        ]
+      },
+      {
+        "name": "assets/vendor-Ce81xq0b.js/node_modules/.pnpm/@vue+runtime-core@3.5.13/node_modules/@vue/runtime-core/dist/runtime-core.esm-bundler.js",
+        "uid": "7d1e0c4a-5"
+      }
+    ],
+    "isRoot": true
+  },
+  "nodeParts": {
+    "7d1e0c4a-1": {
+      "renderedLength": 1000,
+      "gzipLength": 400,
+      "brotliLength": 350,
+      "metaUid": "7d1e0c4a-0"
+    },
+    "7d1e0c4a-3": {
+      "renderedLength": 2000,
+      "gzipLength": 800,
+      "brotliLength": 700,
+      "metaUid": "7d1e0c4a-2"
+    },
+    "7d1e0c4a-5": {
+      "renderedLength": 7000,
+      "gzipLength": 2500,
+      "brotliLength": 2200,
+      "metaUid": "7d1e0c4a-4"
+    }
+  },
+  "nodeMetas": {
+    "7d1e0c4a-0": {
+      "id": "/src/main.ts",
+      "moduleParts": { "assets/index-B3kd9a1f.js": "7d1e0c4a-1" },
+      "imported": [{ "uid": "7d1e0c4a-2" }, { "uid": "7d1e0c4a-4", "dynamic": true }],
+      "importedBy": [],
+      "isEntry": true
+    },
+    "7d1e0c4a-2": {
+      "id": "/node_modules/.pnpm/lodash-es@4.17.21/node_modules/lodash-es/debounce.js",
+      "moduleParts": { "assets/index-B3kd9a1f.js": "7d1e0c4a-3" },
+      "imported": [],
+      "importedBy": [{ "uid": "7d1e0c4a-0" }]
+    },
+    "7d1e0c4a-4": {
+      "id": "/node_modules/.pnpm/@vue+runtime-core@3.5.13/node_modules/@vue/runtime-core/dist/runtime-core.esm-bundler.js",
+      "moduleParts": { "assets/vendor-Ce81xq0b.js": "7d1e0c4a-5" },
+      "imported": [],
+      "importedBy": [{ "uid": "7d1e0c4a-0", "dynamic": true }]
+    }
+  },
+  "env": { "rollup": "4.30.1" },
+  "options": { "gzip": true, "brotli": true, "sourcemap": false }
+}

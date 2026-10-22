@@ -22,6 +22,8 @@ import {
   MAX_NAME_BYTES,
   matchHints,
   TOP_FRAMES,
+  TOP_MODULES,
+  TOP_PACKAGES,
 } from "../core/profile/index.js";
 import type { Bottleneck, Objective, StackId, TechniqueCard, UfoConfig } from "../domain/index.js";
 import type { Exec } from "../worker/index.js";
@@ -454,13 +456,12 @@ export function indexEntries(
   return { cards: entries, ...(omitted > 0 ? { evidenceOmitted: omitted } : {}) };
 }
 
-/** A listed frame as a summary writes it: at most `MAX_NAME_BYTES` of JSON. */
-const ArtifactFrameSchema = z.object({
-  frame: z
-    .string()
-    .refine((frame) => Buffer.byteLength(JSON.stringify(frame)) - 2 <= MAX_NAME_BYTES),
-  pct: z.number().min(0).max(100),
-});
+/** A listed name as a summary writes it: at most `MAX_NAME_BYTES` of JSON. */
+const ArtifactNameSchema = z
+  .string()
+  .refine((name) => Buffer.byteLength(JSON.stringify(name)) - 2 <= MAX_NAME_BYTES);
+const ArtifactPctSchema = z.number().min(0).max(100);
+const ArtifactFrameSchema = z.object({ frame: ArtifactNameSchema, pct: ArtifactPctSchema });
 
 /** The part of a `profile_target` artifact the index reads, bounded as a summary writes it. */
 const ProfileArtifactSchema = z.object({
@@ -471,6 +472,17 @@ const ProfileArtifactSchema = z.object({
           z.union([
             z.object({
               valid: z.literal(true),
+              kind: z.literal("bundle"),
+              modules: z
+                .array(z.object({ module: ArtifactNameSchema, pct: ArtifactPctSchema }))
+                .max(TOP_MODULES),
+              packages: z
+                .array(z.object({ package: ArtifactNameSchema, pct: ArtifactPctSchema }))
+                .max(TOP_PACKAGES),
+            }),
+            z.object({
+              valid: z.literal(true),
+              kind: z.literal("stacks"),
               self: z.array(ArtifactFrameSchema).max(TOP_FRAMES),
               total: z.array(ArtifactFrameSchema).max(TOP_FRAMES),
             }),

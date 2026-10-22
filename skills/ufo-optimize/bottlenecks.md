@@ -26,6 +26,12 @@ unprofiled. The draft `ufo.yaml` from `inspect_target` carries the block for the
   (`${UFO_PROFILE_DIR:+py-spy record -f raw -o "$UFO_PROFILE_DIR/py.txt" -s --} python app.py`),
   commented in the draft; py-spy needs root on macOS.
 - Go and Rust: no block yet; read the code and the phase times.
+- Bundle (Vite, webpack, Next.js): `format: bundle-stats`, commented in the draft. The build
+  writes a bundle analyzer's JSON into `$UFO_PROFILE_DIR` in a profile job only:
+  rollup-plugin-visualizer `template: "raw-data"` for Vite, `webpack --json <file>` or
+  BundleAnalyzerPlugin `generateStatsFile` for webpack, source-map-explorer `--json` over the
+  client chunks (with `productionBrowserSourceMaps`) for Next.js. Use it when bytes are the
+  metric, in place of the Node preset.
 
 Any profiler that writes folded stacks, a V8 `.cpuprofile`, or a speedscope file into
 `$UFO_PROFILE_DIR` works the same way. Format and limits: docs/cli.md, "Profiling".
@@ -120,8 +126,13 @@ Any profiler that writes folded stacks, a V8 `.cpuprofile`, or a speedscope file
 
 ## bundle
 - Symptom: initial-route JavaScript or asset bytes are the metric.
-- Confirm: a bundle analyzer (webpack-bundle-analyzer, rollup-plugin-visualizer,
-  source-map-explorer, `@next/bundle-analyzer`) shows large modules on the initial route.
+- Confirm: with `format: bundle-stats`, the profile's file (`kind: "bundle"`) lists `modules` and
+  `packages` by bytes with their share, and for webpack `chunks.initial` against `chunks.async`.
+  A package with a large share on the initial chunks is the lead; `note` says whether the sizes
+  are before minification (webpack, rollup) or the built bytes (source-map-explorer, or the
+  visualizer with `sourcemap`). Compare `gzip` or `brotli` where given, not only raw bytes.
+  Without the block, a bundle analyzer run by hand (webpack-bundle-analyzer,
+  rollup-plugin-visualizer, source-map-explorer, `@next/bundle-analyzer`) shows the same.
 - Cards: `bottleneck: bundle` (route splitting, dynamic imports, tree shaking, compression,
   image and font weight).
 

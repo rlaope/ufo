@@ -9,7 +9,7 @@ import {
   startRun,
 } from "../../src/app/index.js";
 import { writeJob } from "../../src/core/jobs/index.js";
-import { displayName } from "../../src/core/profile/index.js";
+import { displayName, summarizeProfile } from "../../src/core/profile/index.js";
 import { approveToy, lightWorkload, makeToy, TIMEOUT_MS, type Toy, waitDone } from "./helpers.js";
 
 // M5 V1: list_techniques ranked by a profile job of the active run. The toy has no
@@ -80,6 +80,7 @@ describe("listing techniques by a profile", { timeout: TIMEOUT_MS }, () => {
       const hotspot = (self: [string, number][], total: [string, number][]) => ({
         file: "app.collapsed",
         valid: true as const,
+        kind: "stacks" as const,
         unit: "samples",
         weight: 1000,
         self: self.map(([frame, pct]) => ({ frame, pct })),
@@ -157,6 +158,48 @@ describe("listing techniques by a profile", { timeout: TIMEOUT_MS }, () => {
       // An artifact that is not what a summary writes ranks nothing.
       const long = artifact.hotspots?.files[0] as { self: { frame: string; pct: number }[] };
       long.self.push({ frame: "x".repeat(81), pct: 1 });
+      writeFileSync(file, JSON.stringify(artifact));
+      expect(await listTechniques(toy.context, { profileJobId: queued.jobId })).toEqual({
+        cards: plain.cards,
+        note: `the artifact of profile ${queued.jobId} cannot be read; the listing is not ranked`,
+      });
+      // M5 V2: a bundle's modules and packages, as a bundle-stats summary writes them.
+      const lodash = summarizeProfile(
+        "stats.json",
+        JSON.stringify({
+          modules: [
+            { name: "./node_modules/lodash/lodash.js", size: 300, chunks: [1] },
+            { name: "./src/index.js", size: 700, chunks: [1] },
+          ],
+        }),
+        "bundle-stats",
+      );
+      artifact.hotspots = {
+        format: "bundle-stats",
+        dir: "artifacts/profile",
+        files: [lodash],
+        omitted: 0,
+      };
+      writeFileSync(file, JSON.stringify(artifact));
+      const bundled = await listTechniques(toy.context, { profileJobId: queued.jobId });
+      expect(bundled.note).toBeUndefined();
+      expect(bundled.cards[0]).toMatchObject({
+        id: "frontend.tree-shaking-sideeffects",
+        evidence: [
+          {
+            hint: "node_modules/lodash/",
+            frame: "./node_modules/lodash/lodash.js",
+            share: 0.3,
+            kind: "module",
+          },
+          { hint: "node_modules/lodash/", frame: "lodash", share: 0.3, kind: "package" },
+        ],
+      });
+      expect(bundled.cards.filter((entry) => entry.evidence !== undefined)).toHaveLength(1);
+      // A bundle summary longer than a summary writes ranks nothing.
+      (lodash as { modules: unknown[] }).modules.push(
+        ...Array.from({ length: 20 }, () => ({ module: "a", bytes: 1, pct: 0 })),
+      );
       writeFileSync(file, JSON.stringify(artifact));
       expect(await listTechniques(toy.context, { profileJobId: queued.jobId })).toEqual({
         cards: plain.cards,

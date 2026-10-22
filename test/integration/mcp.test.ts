@@ -360,6 +360,7 @@ describe("a run through the tools", { timeout: TIMEOUT_MS }, () => {
             {
               file: "app.collapsed",
               valid: true,
+              kind: "stacks",
               unit: "samples",
               weight: 100,
               self: [{ frame, pct: 18 }],

@@ -1,3 +1,4 @@
+export * from "./bundle.js";
 export * from "./collapsed.js";
 export * from "./cpuprofile.js";
 export * from "./hints.js";
