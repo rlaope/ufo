@@ -9,6 +9,7 @@ import {
   JFR_STACK_DEPTH,
   type JfrLimits,
   JfrReader,
+  type NameRedactor,
   type Parsed,
 } from "../core/profile/index.js";
 import {
@@ -16,7 +17,7 @@ import {
   type ProfileFormat,
   type WorkloadProfile,
 } from "../domain/index.js";
-import { describeResult, runCommand, succeeded } from "./commands.js";
+import { runCommand, succeeded } from "./commands.js";
 import { inside } from "./env.js";
 
 /** The preload of the `node-cpu` preset, as this UFO ships it. */
@@ -101,6 +102,8 @@ export const JFR_PRINT_TIMEOUT_MS = 120_000;
 /** Variables `jfr print`, itself a JVM, does not get: they would start a recording in it too. */
 const JVM_OPTION_VARIABLES = ["JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS"];
 export const NO_JFR = "no jfr tool next to java or in JAVA_HOME";
+/** Characters kept of the end of jfr's error, so a file's reason stays within its limit. */
+const MAX_JFR_ERROR = 150;
 
 async function executable(file: string): Promise<boolean> {
   try {
@@ -156,6 +159,8 @@ export interface JfrConversion {
   readonly runDir: string;
   readonly cwd: string;
   readonly signal?: AbortSignal;
+  /** The job's text redactor: `jfr`'s error can name the file, whose name is the workload's. */
+  readonly redact: NameRedactor;
   readonly limits?: JfrLimits;
   readonly timeoutMs?: number;
 }
@@ -195,7 +200,19 @@ export async function convertJfr(file: string, options: JfrConversion): Promise<
     if (result.timedOut) reader.stop(`jfr print ran out of its ${timeoutMs / 1000} s`);
     // Stopped by the reader itself: what it read is the answer.
     else if (!result.aborted && !succeeded(result)) {
-      return invalid(describeResult({ ...result, command: "jfr print" }));
+      // The end of jfr's error, which can name the file: the directory left out, then redacted
+      // whole before it is cut, since a cut secret no longer matches.
+      const status =
+        result.exitCode === null ? "was killed" : `exited with code ${result.exitCode}`;
+      const message = options
+        .redact(result.stderr.replaceAll(`${path.dirname(file)}${path.sep}`, ""))
+        .replace(/\p{Cc}+/gu, " ")
+        .trim();
+      return invalid(
+        message === ""
+          ? `jfr print ${status}`
+          : `jfr print ${status}: ${message.slice(-MAX_JFR_ERROR)}`,
+      );
     }
     return reader.finish();
   } finally {

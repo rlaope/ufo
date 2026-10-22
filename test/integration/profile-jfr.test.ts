@@ -59,6 +59,9 @@ function selfFrames(file: FileHotspots | undefined): string[] {
   return file.self.map((share) => share.frame);
 }
 
+/** A secret the workload names a file with; the run passes it as a listed variable. */
+const SECRET = "s3cr3t-0123456789abcdef";
+
 const flight = (dir: string) =>
   `"-XX:StartFlightRecording=filename=${dir},dumponexit=true,settings=profile"`;
 
@@ -70,7 +73,8 @@ const env = process.env;
 writeFileSync(path.join(env.TOY_LOG_DIR, \`options-\${env.UFO_PHASE}\`), env.JAVA_TOOL_OPTIONS ?? "");
 if (env.UFO_PROFILE_DIR !== undefined) {
   copyFileSync(env.TOY_FIXTURE, path.join(env.UFO_PROFILE_DIR, "hotspot-pid-1-id-1.jfr"));
-  writeFileSync(path.join(env.UFO_PROFILE_DIR, "broken.jfr"), "not a recording");
+  // Named with a secret, which jfr's error repeats.
+  writeFileSync(path.join(env.UFO_PROFILE_DIR, \`broken-\${env.TOY_API_TOKEN}.jfr\`), "not a recording");
 }
 console.log(JSON.stringify({ latency_ms: 1, error_rate: 0 }));
 `;
@@ -89,7 +93,7 @@ function standInJdk(withJfr: boolean): string {
       [
         '[ -z "$JAVA_TOOL_OPTIONS" ] || { echo "got JAVA_TOOL_OPTIONS" >&2; exit 3; }',
         `[ "$1 $2 $3 $4 $5 $6" = "${JFR_PRINT_ARGS.join(" ")}" ] || { echo "arguments: $*" >&2; exit 2; }`,
-        'case "$7" in *broken.jfr) echo "Not a Flight Recorder file" >&2; exit 1;; esac',
+        'case "$7" in *broken-*) echo "$7: not a Flight Recorder file" >&2; exit 1;; esac',
         'cat "$7"',
       ].join("\n"),
     );
@@ -107,6 +111,7 @@ describe("the jvm-jfr preset, with stand-ins for the JDK's tools", { timeout: TI
         PATH: `${bin}:${process.env.PATH ?? ""}`,
         JAVA_TOOL_OPTIONS: "-Xmx64m",
         TOY_FIXTURE: FIXTURE,
+        TOY_API_TOKEN: SECRET,
       },
     );
     try {
@@ -131,11 +136,15 @@ describe("the jvm-jfr preset, with stand-ins for the JDK's tools", { timeout: TI
       const [recording, broken] = profile.hotspots?.files ?? [];
       expect(recording).toMatchObject({ file: "hotspot-pid-1-id-1.jfr", unit: "samples" });
       expect(selfFrames(recording)[0]).toBe("Hot.spin");
-      expect(broken).toEqual({
-        file: "broken.jfr",
+      // jfr's error repeats the file's name: redacted whole before it was cut.
+      expect(broken).toMatchObject({
         valid: false,
-        reason: "`jfr print` exited with code 1: Not a Flight Recorder file",
+        file: expect.stringMatching(/^broken-<redacted:/),
       });
+      expect(JSON.stringify(profile.hotspots)).not.toContain(SECRET);
+      expect(broken?.valid === false && broken.reason).toMatch(
+        /^jfr print exited with code 1: broken-<redacted:[a-z-]+>\.jfr: not a Flight Recorder file$/,
+      );
       await cancelRun(toy.context, { runId: run.runId });
     } finally {
       await toy.cleanup();
@@ -149,14 +158,14 @@ describe("the jvm-jfr preset, with stand-ins for the JDK's tools", { timeout: TI
     const { toy, logDir } = jvmToy(
       ["command: node bench.mjs", "profile:", "  preset: jvm-jfr"],
       { "bench.mjs": BENCH },
-      { PATH: `${bin}:${process.env.PATH ?? ""}`, TOY_FIXTURE: FIXTURE },
+      { PATH: `${bin}:${process.env.PATH ?? ""}`, TOY_FIXTURE: FIXTURE, TOY_API_TOKEN: SECRET },
     );
     try {
       await approveToy(toy);
       const { run, profile } = await profileOnce(toy);
       expect(profile.sample.valid).toBe(true);
       expect(profile.hotspots?.files).toEqual([
-        { file: "broken.jfr", valid: false, reason: NO_JFR },
+        { file: expect.stringMatching(/^broken-<redacted:/), valid: false, reason: NO_JFR },
         { file: "hotspot-pid-1-id-1.jfr", valid: false, reason: NO_JFR },
       ]);
       await cancelRun(toy.context, { runId: run.runId });

@@ -137,6 +137,8 @@ export async function handleProfile(
   const artifact = path.join(ARTIFACTS_DIR, `profile-${job.jobId}.json`);
   const result: ProfileResult = { sha, phases, sample, artifact };
   if (settings !== undefined) {
+    // Names are redacted whole before they are cut, with the run's command environment too.
+    const redact = createTextRedactor({ env: { ...process.env, ...open.state.env } });
     // A JFR recording is read by the JDK's jfr tool, with the run's command environment.
     let convert: ((file: string) => Promise<Parsed>) | undefined;
     if (settings.format === "jfr") {
@@ -148,6 +150,7 @@ export async function handleProfile(
           runDir: context.runDir,
           cwd: dir,
           signal: context.signal,
+          redact,
         });
     }
     result.hotspots = {
@@ -155,12 +158,11 @@ export async function handleProfile(
       dir: profileDir,
       // Paths in arm A are named relative to the repository. A directory the workload made
       // unreadable or replaced (never followed) costs the hot spots, not the phases and sample.
-      // Names are redacted whole before they are cut, with the run's command environment too.
       ...(await readProfileDir(
         dir,
         settings.format,
         [`file://${arm.dir}/`, `${arm.dir}/`],
-        createTextRedactor({ env: { ...process.env, ...open.state.env } }),
+        redact,
         convert,
       ).catch((error: unknown) => {
         // A cancelled job stops here, not with a reason.

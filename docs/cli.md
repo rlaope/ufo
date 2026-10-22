@@ -427,7 +427,8 @@ real file of the first `java` on the run's `PATH` (`/usr/bin/java` followed thro
 into the JDK); one inside the repository or UFO's home is never run. Its `--events` and
 `--stack-depth` options are in JDK 11.0.6 and later. Without a `jfr`, each file is reported with
 `no jfr tool next to java or in JAVA_HOME` and the job still succeeds; a file `jfr` cannot read
-is reported with the end of its error. The output streams into UFO and is never held whole
+is reported with the end of its error, redacted whole before it is cut (the error can repeat
+the file's name, which the workload chose). The output streams into UFO and is never held whole
 (it runs to about a kilobyte per frame): each event is parsed alone and may be at most 4 MiB,
 and reading stops after 100 000 samples or 512 MiB of output, or when the 120 s run out, keeping
 the samples read and saying so in the file's `note`. Each sample weighs 1 (`samples`). A frame

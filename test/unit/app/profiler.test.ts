@@ -23,6 +23,7 @@ import {
   NODE_EXIT_ON_SIGNAL,
   profileSettings,
 } from "../../../src/app/profiler.js";
+import { createTextRedactor } from "../../../src/core/evidence/index.js";
 import { createRunState } from "../../../src/core/jobs/index.js";
 import {
   JFR_LIMITS,
@@ -364,6 +365,7 @@ describe("convertJfr", () => {
       },
       runDir,
       cwd: dir,
+      redact: (text) => text,
       ...extra,
     });
 
@@ -383,9 +385,29 @@ describe("convertJfr", () => {
     const failed = await convert(fakeJfr('echo "jfr: not a recording" >&2; exit 1'));
     expect(failed).toEqual({
       valid: false,
-      reason: "`jfr print` exited with code 1: jfr: not a recording",
+      reason: "jfr print exited with code 1: jfr: not a recording",
     });
     expect(await convert(undefined)).toEqual({ valid: false, reason: NO_JFR });
+  });
+
+  it("redacts jfr's error whole before cutting it: the file's name is the workload's", async () => {
+    const secret = "s3cr3t-0123456789abcdef";
+    const file = path.join(dir, `${"x".repeat(400)}-${secret}.jfr`);
+    const jfr = fakeJfr('echo "jfr: could not read $7, not a recording" >&2; exit 1');
+    const parsed = await convertJfr(file, {
+      jfr,
+      env: { PATH: process.env.PATH ?? "" },
+      runDir,
+      cwd: dir,
+      redact: createTextRedactor({ env: { UFO_TEST_API_TOKEN: secret } }),
+    });
+    if (parsed.valid) throw new Error("valid");
+    expect(parsed.reason).not.toContain(secret);
+    // Unredacted, the cut would keep only the secret's end.
+    expect(parsed.reason).not.toContain(secret.slice(-8));
+    expect(parsed.reason).toMatch(
+      /^jfr print exited with code 1: x+-<redacted:[a-z-]+>\.jfr, not a recording$/,
+    );
   });
 
   it("stops jfr print at the output limit and keeps the samples read", async () => {
