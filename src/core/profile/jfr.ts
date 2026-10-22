@@ -138,7 +138,13 @@ export class JfrReader {
     if (this.stopped === undefined && !this.ended) {
       return invalid("the jfr print output ends before its last event");
     }
-    if (this.samples === 0) return invalid(`the recording holds no ${JFR_EVENT} events`);
+    if (this.samples === 0) {
+      return invalid(
+        this.stopped === undefined
+          ? `the recording holds no ${JFR_EVENT} events`
+          : `${this.stopped} before a sample was read`,
+      );
+    }
     const notes: string[] = [];
     if (this.stopped !== undefined) {
       notes.push(`${this.stopped}: the first ${this.samples} samples are counted`);

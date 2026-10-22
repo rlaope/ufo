@@ -19,6 +19,9 @@ import {
   convertJfr,
   findJfr,
   JFR_PRINT_ARGS,
+  JFR_PRINT_BUDGET_MS,
+  type JfrDeadline,
+  jfrDeadline,
   NO_JFR,
   NODE_EXIT_ON_SIGNAL,
   profileSettings,
@@ -399,10 +402,16 @@ describe("convertJfr", () => {
       runDir,
       cwd: dir,
       redact: (text) => text,
+      deadline: within(60_000),
       ...extra,
     });
 
   const summary = (parsed: Parsed) => summarize("x.jfr", parsed);
+
+  /** A deadline `ms` from now. */
+  function within(ms: number): JfrDeadline {
+    return { at: Date.now() + ms, why: `the test's ${ms / 1000} s ran out` };
+  }
 
   it("reads what jfr print writes, without the run's JVM option variables", async () => {
     writeFileSync(path.join(dir, "it's a.jfr"), readFileSync(FIXTURE));
@@ -433,6 +442,7 @@ describe("convertJfr", () => {
       runDir,
       cwd: dir,
       redact: createTextRedactor({ env: { UFO_TEST_API_TOKEN: secret } }),
+      deadline: within(60_000),
     });
     if (parsed.valid) throw new Error("valid");
     expect(parsed.reason).not.toContain(secret);
@@ -451,9 +461,12 @@ describe("convertJfr", () => {
       `printf '{"recording": {"events": ['; while :; do printf '%s, ' '${event}'; done`,
     );
     const started = performance.now();
-    // Its own timeout, so the endless writer is gone within the test even if the limit failed.
+    // Its own deadline, so the endless writer is gone within the test even if the limit failed.
     const parsed = summary(
-      await convert(jfr, { limits: { ...JFR_LIMITS, outputBytes: 65_536 }, timeoutMs: 3000 }),
+      await convert(jfr, {
+        limits: { ...JFR_LIMITS, outputBytes: 65_536 },
+        deadline: within(3000),
+      }),
     );
     // Stopped at the limit, well before its own timeout.
     expect(performance.now() - started).toBeLessThan(2000);
@@ -463,16 +476,47 @@ describe("convertJfr", () => {
     );
   });
 
-  it("keeps what was read when jfr print runs out of time", async () => {
+  it("keeps what was read at the deadline, and reads no recording after it", async () => {
     const jfr = fakeJfr(
       `cat <<'EOF'\n{"recording": {"events": [{"type": "jdk.ExecutionSample", "values": {"stackTrace": {"frames": [{"method": {"type": {"name": "A"}, "name": "b"}}]}}}\nEOF\nexec sleep 30`,
     );
     // Long enough that the shell has written its event on a loaded machine.
-    const parsed = summary(await convert(jfr, { timeoutMs: 1500 }));
-    expect(parsed).toMatchObject({ valid: true, weight: 1 });
-    expect(parsed.valid && parsed.kind === "stacks" && parsed.note).toBe(
-      "jfr print ran out of its 1.5 s: the first 1 samples are counted",
+    const deadline = within(1500);
+    const first = summary(await convert(jfr, { deadline }));
+    expect(first).toMatchObject({ valid: true, weight: 1 });
+    expect(first.valid && first.kind === "stacks" && first.note).toBe(
+      "the test's 1.5 s ran out: the first 1 samples are counted",
     );
+    // The next recording shares the deadline: not read, at once.
+    const started = performance.now();
+    expect(await convert(jfr, { deadline })).toEqual({
+      valid: false,
+      reason: "not read: the test's 1.5 s ran out",
+    });
+    expect(performance.now() - started).toBeLessThan(100);
+  });
+
+  it("stops a jfr print that writes nothing at the deadline", async () => {
+    // As jfr on a FIFO that took a file's place: it waits for a writer that never comes.
+    const started = performance.now();
+    expect(await convert(fakeJfr("exec sleep 30"), { deadline: within(500) })).toEqual({
+      valid: false,
+      reason: "the test's 0.5 s ran out before a sample was read",
+    });
+    expect(performance.now() - started).toBeLessThan(3000);
+  });
+
+  it("gives the job's recordings 120 s together, or the run's wall clock left if less", () => {
+    expect(jfrDeadline(1000, 3_600_000)).toEqual({
+      at: 1000 + JFR_PRINT_BUDGET_MS,
+      why: "the 120 s for reading the job's recordings ran out",
+    });
+    expect(JFR_PRINT_BUDGET_MS).toBe(120_000);
+    expect(jfrDeadline(1000, 30_000)).toEqual({
+      at: 31_000,
+      why: "the run's wall-clock budget ran out",
+    });
+    expect(jfrDeadline(1000, -5).at).toBe(1000);
   });
 
   it("throws when the job is cancelled, rather than reporting the file", async () => {

@@ -97,8 +97,31 @@ export const JFR_PRINT_ARGS = [
   "--stack-depth",
   String(JFR_STACK_DEPTH),
 ] as const;
-/** How long one recording's `jfr print` may run before it is stopped. */
-export const JFR_PRINT_TIMEOUT_MS = 120_000;
+/**
+ * How long `jfr print` may run over all of a profile job's recordings together: they are read
+ * one after another, and each only until this runs out.
+ */
+export const JFR_PRINT_BUDGET_MS = 120_000;
+
+export interface JfrDeadline {
+  /** The `Date.now()` past which no recording is read. */
+  readonly at: number;
+  /** Why there is no more time, for the reason or note of a file it cuts. */
+  readonly why: string;
+}
+
+/**
+ * The deadline of a profile job's recordings from `now`: `JFR_PRINT_BUDGET_MS`, or the run's
+ * wall-clock budget left when that is less.
+ */
+export function jfrDeadline(now: number, wallClockLeftMs: number): JfrDeadline {
+  return wallClockLeftMs < JFR_PRINT_BUDGET_MS
+    ? { at: now + Math.max(0, wallClockLeftMs), why: "the run's wall-clock budget ran out" }
+    : {
+        at: now + JFR_PRINT_BUDGET_MS,
+        why: `the ${JFR_PRINT_BUDGET_MS / 1000} s for reading the job's recordings ran out`,
+      };
+}
 /** Variables `jfr print`, itself a JVM, does not get: they would start a recording in it too. */
 const JVM_OPTION_VARIABLES = ["JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS"];
 export const NO_JFR = "no jfr tool next to java or in JAVA_HOME";
@@ -166,23 +189,26 @@ export interface JfrConversion {
   /** The job's text redactor: `jfr`'s error can name the file, whose name is the workload's. */
   readonly redact: NameRedactor;
   readonly limits?: JfrLimits;
-  readonly timeoutMs?: number;
+  /** Shared by the job's recordings: one past it is not read. */
+  readonly deadline: JfrDeadline;
 }
 
 /**
  * The execution samples of one JFR recording, read from `jfr print --json` as it streams, with
- * UFO's command runner (its own process group, a timeout, killed with its group). Reading stops
- * at the output's limits, and a timeout keeps what was read; a recording `jfr` cannot read is
- * invalid with its reason, never a failed job. Throws only when `signal` (the job) is aborted.
+ * UFO's command runner (its own process group, stopped at the deadline, killed with its group).
+ * Reading stops at the output's limits, and the deadline keeps what was read; a recording past
+ * the deadline is not read, and one `jfr` cannot read is invalid with its reason, never a failed
+ * job. Throws only when `signal` (the job) is aborted.
  */
 export async function convertJfr(file: string, options: JfrConversion): Promise<Parsed> {
   if (options.jfr === undefined) return invalid(NO_JFR);
+  const timeoutMs = Math.ceil(options.deadline.at - Date.now());
+  if (timeoutMs <= 0) return invalid(`not read: ${options.deadline.why}`);
   const reader = new JfrReader(options.limits ?? JFR_LIMITS);
   const enough = new AbortController();
   const cancel = () => enough.abort();
   if (options.signal?.aborted) cancel();
   options.signal?.addEventListener("abort", cancel, { once: true });
-  const timeoutMs = options.timeoutMs ?? JFR_PRINT_TIMEOUT_MS;
   try {
     const result = await runCommand(
       [shellWord(options.jfr), ...JFR_PRINT_ARGS, shellWord(file)].join(" "),
@@ -201,7 +227,7 @@ export async function convertJfr(file: string, options: JfrConversion): Promise<
       },
     );
     options.signal?.throwIfAborted();
-    if (result.timedOut) reader.stop(`jfr print ran out of its ${timeoutMs / 1000} s`);
+    if (result.timedOut) reader.stop(options.deadline.why);
     // Stopped by the reader itself: what it read is the answer.
     else if (!result.aborted && !succeeded(result)) {
       // The end of jfr's error, which can name the file: the directory left out, then redacted

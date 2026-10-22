@@ -132,6 +132,8 @@ describe("the jvm-jfr preset, with stand-ins for the JDK's tools", { timeout: TI
         readFileSync(path.join(logDir, `options-${phase}`), "utf8");
       expect(options("baseline")).toBe("-Xmx64m");
       expect(options("profile")).toBe(`-Xmx64m ${flight(dir)}`);
+      // Reading the recordings is a timed step of its own, after teardown.
+      expect(profile.phases.map((p) => p.phase)).toEqual(["sample", "teardown", "convert"]);
       expect(profile.hotspots).toMatchObject({ format: "jfr", omitted: 0 });
       const [recording, broken] = profile.hotspots?.files ?? [];
       expect(recording).toMatchObject({ file: "hotspot-pid-1-id-1.jfr", unit: "samples" });

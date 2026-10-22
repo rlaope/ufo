@@ -420,7 +420,7 @@ JFR recordings (`format: jfr`) are read by the JDK's own `jfr` tool, not by UFO.
 teardown, for each of the files above (at most 16, the largest first, never through a symbolic
 link), UFO runs
 `jfr print --json --events jdk.ExecutionSample --stack-depth 64 <file>` with its command runner:
-its own process group, stopped after 120 s, with the run's command environment less
+its own process group, one file after another, with the run's command environment less
 `JAVA_TOOL_OPTIONS` and `_JAVA_OPTIONS` (`jfr` is a JVM, and the preset's option would record it
 too). `jfr` is `$JAVA_HOME/bin/jfr` when `env:` lists `JAVA_HOME`, else the `jfr` next to the
 real file of the first `java` on the run's `PATH` (`/usr/bin/java` followed through its links
@@ -432,8 +432,11 @@ run. Its `--events` and
 is reported with the end of its error, redacted whole before it is cut (the error can repeat
 the file's name, which the workload chose). The output streams into UFO and is never held whole
 (it runs to about a kilobyte per frame): each event is parsed alone and may be at most 4 MiB,
-and reading stops after 100 000 samples or 512 MiB of output, or when the 120 s run out, keeping
-the samples read and saying so in the file's `note`. Each sample weighs 1 (`samples`). A frame
+and reading stops after 100 000 samples or 512 MiB of output, keeping the samples read and saying
+so in the file's `note`. All of a job's recordings together get 120 s, or what is left of the
+run's wall-clock budget if that is less: the file being read when it runs out keeps its samples
+(a `note` says why), and the files after it are reported `not read:` with the reason. This time
+is the job's `convert` phase. Each sample weighs 1 (`samples`). A frame
 is `Class.method` with the package in dots (`com.foo.Bar.baz`), as JFR's own API names it; a
 stack is its innermost 64 frames, and the `note` counts the samples whose stacks were deeper
 (their outermost frames are missing from `total`). JFR samples only threads running Java code:

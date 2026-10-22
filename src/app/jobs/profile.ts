@@ -16,15 +16,18 @@ import type { JobContext } from "../../worker/index.js";
 import { describeResult, succeeded } from "../commands.js";
 import { resolveRepo } from "../context.js";
 import { budgetStatus, wallClockViolation } from "../events.js";
-import { convertJfr, findJfr, profileSettings } from "../profiler.js";
+import { convertJfr, findJfr, jfrDeadline, profileSettings } from "../profiler.js";
 import { approvalViolation, openRun, toJson } from "../state.js";
 import { type HandlerOptions, newSession } from "./shared.js";
 
 export interface ProfileResult {
   /** Arm A's commit, which the workload ran at. */
   sha: string;
-  /** Wall time of each workload step UFO ran, in order: setup, start, sample, teardown. */
-  phases: { phase: "setup" | "start" | "sample" | "teardown"; ms: number }[];
+  /**
+   * Wall time of each workload step UFO ran, in order: setup, start, sample, teardown; then, for
+   * JFR recordings, convert (UFO's jfr print on each).
+   */
+  phases: { phase: "setup" | "start" | "sample" | "teardown" | "convert"; ms: number }[];
   /**
    * The workload's JSON line as UFO read it, the primary metric first, as name and value pairs
    * (the names are the repository's, so they are values, never keys); or why it is not valid.
@@ -69,9 +72,9 @@ export async function handleProfile(
   if (unapproved !== undefined) throw new PolicyError(unapproved);
   // A profile queued before the wall clock ran out does not run after it (security S2-4).
   const { createdAt } = await readRun(context.runDir);
-  const spent = wallClockViolation(
-    budgetStatus(await readLedger(context.runDir), open.config.objective.budget, createdAt),
-  );
+  const budget = async () =>
+    budgetStatus(await readLedger(context.runDir), open.config.objective.budget, createdAt);
+  const spent = wallClockViolation(await budget());
   if (spent !== undefined) throw new PolicyError(spent);
   // As every job: A is measured exactly at its commit (security F11).
   const sha = await resetArms(open.git);
@@ -151,6 +154,12 @@ export async function handleProfile(
         repo.commonDir,
         options.home,
       ]);
+      // One deadline for all of them, within what is left of the run's wall clock.
+      const { limits, counter } = await budget();
+      const deadline = jfrDeadline(
+        Date.now(),
+        limits.wallClockMinutes * 60_000 - counter.wallClockMs,
+      );
       convert = (file) =>
         convertJfr(file, {
           jfr,
@@ -159,14 +168,13 @@ export async function handleProfile(
           cwd: dir,
           signal: context.signal,
           redact,
+          deadline,
         });
     }
-    result.hotspots = {
-      format: settings.format,
-      dir: profileDir,
-      // Paths in arm A are named relative to the repository. A directory the workload made
-      // unreadable or replaced (never followed) costs the hot spots, not the phases and sample.
-      ...(await readProfileDir(
+    // Paths in arm A are named relative to the repository. A directory the workload made
+    // unreadable or replaced (never followed) costs the hot spots, not the phases and sample.
+    const read = () =>
+      readProfileDir(
         dir,
         settings.format,
         [`file://${arm.dir}/`, `${arm.dir}/`],
@@ -184,7 +192,12 @@ export async function handleProfile(
               ? "the workload replaced the profile directory; UFO does not follow it"
               : `the profile directory cannot be read (${typeof code === "string" ? code : "error"})`,
         };
-      })),
+      });
+    result.hotspots = {
+      format: settings.format,
+      dir: profileDir,
+      // Running jfr print is a step of the job, timed as one.
+      ...(convert === undefined ? await read() : await timed("convert", read)),
     };
   }
   const json = toJson(result);
