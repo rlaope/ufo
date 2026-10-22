@@ -11,7 +11,21 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 /** Advisories reviewed and accepted, by id, each with why it does not reach UFO. */
-const ACCEPTED = {};
+// fast-uri@3.1.0 in @modelcontextprotocol/server 2.3.1 (the latest release, 2026-10-22) is only
+// Ajv's $id/$ref resolver for the SDK's own fixed schemas. UFO validates tool input with Zod,
+// uses neither elicitation nor fromJsonSchema, and serves over stdio only, so no untrusted URI
+// reaches it. Review again on the SDK's next release.
+const ACCEPTED = {
+  "GHSA-q3j6-qgpj-74h6": "fast-uri path normalize: only SDK-fixed schema ids reach it",
+  "GHSA-v39h-62p7-jpjc": "fast-uri host userinfo decode: only SDK-fixed schema ids reach it",
+  "GHSA-4c8g-83qw-93j6": "fast-uri IDN host: only SDK-fixed schema ids reach it",
+  "GHSA-v2hh-gcrm-f6hx": "fast-uri backslash in authority: only SDK-fixed schema ids reach it",
+  "GHSA-7p8r-x3mc-p8w7": "fast-uri backslash authority: only SDK-fixed schema ids reach it",
+  "GHSA-f65p-4m7j-42xc": "fast-uri IPv6 normalize: only SDK-fixed schema ids reach it",
+  "GHSA-jqff-g426-hqxp": "fast-uri encoded scheme resolve: only SDK-fixed schema ids reach it",
+  "GHSA-qw65-cvwx-89v3": "fast-uri port serialize: only SDK-fixed schema ids reach it",
+  "GHSA-hrr3-gc8f-f4qj": "fast-uri host case folding: only SDK-fixed schema ids reach it",
+};
 
 const COPY = /node_modules\/\.pnpm\/((?:@[^/+]+\+)?[^/@]+)@(\d[^/_]*)/;
 
