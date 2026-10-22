@@ -340,12 +340,24 @@ killed when it exits, then exits as the load did:
   Its sizes are rollup's rendered lengths, before minification; with `sourcemap: true`, read from
   the source maps (and then without gzip or brotli sizes).
 - webpack: `webpack ${UFO_PROFILE_DIR:+--json "$UFO_PROFILE_DIR/stats.json"}`, or
-  webpack-bundle-analyzer's `BundleAnalyzerPlugin` with `analyzerMode: "disabled"`,
-  `generateStatsFile: true`, and `statsFilename: path.join(process.env.UFO_PROFILE_DIR,
-  "stats.json")`. Module sizes are webpack's estimates before minification.
-- Next.js: with `productionBrowserSourceMaps: true` in `next.config`, after `next build`,
-  `{ [ -z "$UFO_PROFILE_DIR" ] || npx source-map-explorer '.next/static/chunks/**/*.js' --json "$UFO_PROFILE_DIR/client.json"; }`
-  (https://github.com/danvk/source-map-explorer). Its sizes are the built files' bytes mapped to
+  webpack-bundle-analyzer's `BundleAnalyzerPlugin` last in the config's plugins, in a profile job
+  only (unguarded, `path.join` throws on the unset variable when a measured run loads the config):
+
+  ```js
+  ...(process.env.UFO_PROFILE_DIR
+    ? [new BundleAnalyzerPlugin({ analyzerMode: "disabled", generateStatsFile: true, statsFilename: path.join(process.env.UFO_PROFILE_DIR, "stats.json") })]
+    : [])
+  ```
+
+  Module sizes are webpack's estimates before minification.
+- Next.js: source-map-explorer (https://github.com/danvk/source-map-explorer), added to the
+  repository as a devDependency, maps the client chunks. Source maps are written in a profile job
+  only, so no measured build or deploy ships `.map` files:
+  `productionBrowserSourceMaps: Boolean(process.env.UFO_PROFILE_DIR)` in `next.config`; then,
+  after `next build`,
+  `{ [ -z "$UFO_PROFILE_DIR" ] || npx --no source-map-explorer '.next/static/chunks/**/*.js' --json "$UFO_PROFILE_DIR/client.json"; }`.
+  `npx --no` never installs: without the devDependency the step fails instead of running whatever
+  the registry serves with the run's environment. Its sizes are the built files' bytes mapped to
   each source (gzip estimates with `--gzip`). `next analyze` writes a format UFO does not read;
   with `next build --webpack`, the webpack plugin above works too.
 

@@ -150,10 +150,26 @@ export const WEBPACK_PROFILED_STATS =
 
 /**
  * source-map-explorer's JSON of the Next.js client chunks (it expands the quoted glob itself),
- * into the profile directory in a profile job only; a measured run skips it.
+ * into the profile directory in a profile job only; a measured run skips it. `npx --no` (what npm
+ * converts the deprecated `--no-install` to, https://docs.npmjs.com/cli/v11/commands/npx) never
+ * installs: a repository without it as a dependency fails here rather than running whatever the
+ * registry serves, with the run's environment.
  */
 export const NEXT_PROFILED_STATS =
-  '{ [ -z "$UFO_PROFILE_DIR" ] || npx source-map-explorer \'.next/static/chunks/**/*.js\' --json "$UFO_PROFILE_DIR/client.json"; }';
+  '{ [ -z "$UFO_PROFILE_DIR" ] || npx --no source-map-explorer \'.next/static/chunks/**/*.js\' --json "$UFO_PROFILE_DIR/client.json"; }';
+
+/**
+ * The JavaScript the draft gives for a bundler config: each adds its plugin in a profile job only,
+ * so a measured run's config loads without `UFO_PROFILE_DIR`, and Next.js writes source maps
+ * (which a deploy would serve) only then.
+ */
+export const VITE_PROFILED_PLUGIN =
+  // biome-ignore lint/suspicious/noTemplateCurlyInString: JavaScript for the user's config.
+  '...(process.env.UFO_PROFILE_DIR ? [visualizer({ filename: `${process.env.UFO_PROFILE_DIR}/stats.json`, template: "raw-data", gzipSize: true, brotliSize: true })] : [])';
+export const WEBPACK_PROFILED_PLUGIN =
+  '...(process.env.UFO_PROFILE_DIR ? [new BundleAnalyzerPlugin({ analyzerMode: "disabled", generateStatsFile: true, statsFilename: path.join(process.env.UFO_PROFILE_DIR, "stats.json") })] : [])';
+export const NEXT_PROFILED_SOURCE_MAPS =
+  "productionBrowserSourceMaps: Boolean(process.env.UFO_PROFILE_DIR)";
 
 /**
  * The flags a Go benchmark's `go test` gets in a profile job only: a CPU profile into
@@ -226,23 +242,24 @@ function profileNotes(stacks: readonly DetectedStack[]): string {
     if (has("vite")) {
       notes += `  # Vite: rollup-plugin-visualizer (https://github.com/btd/rollup-plugin-visualizer, installed
   # separately) last in the config's plugins, in a profile job only:
-  #   ...(process.env.UFO_PROFILE_DIR ? [visualizer({ filename: \`\${process.env.UFO_PROFILE_DIR}/stats.json\`,
-  #     template: "raw-data", gzipSize: true, brotliSize: true })] : [])
+  #   ${VITE_PROFILED_PLUGIN}
 `;
     }
     if (has("webpack")) {
       notes += `  # webpack: webpack-cli writes the stats JSON with --json <file>, in a profile job only:
   #   webpack ${WEBPACK_PROFILED_STATS}
-  # or webpack-bundle-analyzer's BundleAnalyzerPlugin with analyzerMode: "disabled",
-  # generateStatsFile: true, statsFilename: path.join(process.env.UFO_PROFILE_DIR, "stats.json").
+  # or webpack-bundle-analyzer's BundleAnalyzerPlugin last in the config's plugins:
+  #   ${WEBPACK_PROFILED_PLUGIN}
 `;
     }
     if (has("nextjs")) {
-      notes += `  # Next.js: with productionBrowserSourceMaps: true in next.config, source-map-explorer
-  # (https://github.com/danvk/source-map-explorer) maps the client chunks after next build:
+      notes += `  # Next.js: source-map-explorer (https://github.com/danvk/source-map-explorer), a devDependency
+  # of the repository, maps the client chunks after next build, with source maps in a profile job
+  # only (a measured build, and a deploy, has none) from next.config's
+  #   ${NEXT_PROFILED_SOURCE_MAPS}
+  # and then:
   #   next build && ${NEXT_PROFILED_STATS}
-  # next analyze writes a format UFO does not read; with next build --webpack, the
-  # BundleAnalyzerPlugin above works too.
+  # next analyze writes a format UFO does not read.
 `;
     }
     notes += `  # To read the bundle${has("node") ? " in place of the node-cpu profile above" : ""}, adapt the build and uncomment:

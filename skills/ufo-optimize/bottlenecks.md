@@ -35,8 +35,12 @@ unprofiled. The draft `ufo.yaml` from `inspect_target` carries the block for the
   writes a bundle analyzer's JSON into `$UFO_PROFILE_DIR` in a profile job only:
   rollup-plugin-visualizer `template: "raw-data"` for Vite, `webpack --json <file>` or
   BundleAnalyzerPlugin `generateStatsFile` for webpack, source-map-explorer `--json` over the
-  client chunks (with `productionBrowserSourceMaps`) for Next.js. Use it when bytes are the
-  metric, in place of the Node preset.
+  client chunks for Next.js. Each is guarded by `UFO_PROFILE_DIR`, so a measured build is
+  unchanged: the plugins are added and Next.js writes source maps
+  (`productionBrowserSourceMaps: Boolean(process.env.UFO_PROFILE_DIR)`) in a profile job only.
+  source-map-explorer runs as `npx --no` and must be a devDependency; ask the user to add it
+  rather than letting npx fetch it. Use it when bytes are the metric, in place of the Node
+  preset.
 
 Any profiler that writes folded stacks, a V8 `.cpuprofile`, a speedscope file, or a pprof file into
 `$UFO_PROFILE_DIR` works the same way. Format and limits: docs/cli.md, "Profiling".

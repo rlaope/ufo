@@ -9,9 +9,12 @@ import {
   GO_PROFILE_FETCH,
   GO_PROFILED_TEST,
   isDraftConfig,
+  NEXT_PROFILED_SOURCE_MAPS,
   NEXT_PROFILED_STATS,
   PYTHON_PROFILED_START,
   parseConfigText,
+  VITE_PROFILED_PLUGIN,
+  WEBPACK_PROFILED_PLUGIN,
   WEBPACK_PROFILED_STATS,
 } from "../../../src/app/config.js";
 import type { DetectedStack } from "../../../src/app/detect.js";
@@ -181,7 +184,9 @@ describe("the draft's profile block", () => {
     }
     const all = draftConfigFor([stack("vite"), stack("webpack"), stack("nextjs")]);
     expect(all.match(/# {3}format: bundle-stats/g)).toHaveLength(1);
-    expect(all).toContain('template: "raw-data", gzipSize: true, brotliSize: true');
+    expect(all).toContain(`#   ${VITE_PROFILED_PLUGIN}\n`);
+    expect(all).toContain(`#   ${WEBPACK_PROFILED_PLUGIN}\n`);
+    expect(all).toContain(`#   ${NEXT_PROFILED_SOURCE_MAPS}\n`);
     expect(all).toContain(`#   webpack ${WEBPACK_PROFILED_STATS}`);
     expect(all).toContain(`#   next build && ${NEXT_PROFILED_STATS}`);
     // A frontend repository is a Node one too: the bundle block replaces the preset.
@@ -214,11 +219,52 @@ describe("the draft's profile block", () => {
       );
       expect(run(`${NEXT_PROFILED_STATS} && echo built`, measured)).toBe("built\n");
       expect(run(NEXT_PROFILED_STATS, { ...measured, UFO_PROFILE_DIR: "/runs/a b/p" })).toBe(
-        "[source-map-explorer][.next/static/chunks/**/*.js][--json][/runs/a b/p/client.json]",
+        "[--no][source-map-explorer][.next/static/chunks/**/*.js][--json][/runs/a b/p/client.json]",
       );
     } finally {
       rmSync(bin, { recursive: true, force: true });
     }
+  });
+
+  it("adds the bundler plugins and Next.js source maps in a profile job only", () => {
+    // Each snippet as the user's config runs it, with stand-ins for the plugins it names.
+    const plugins = (snippet: string, env: Record<string, string>) =>
+      new Function("process", "path", "visualizer", "BundleAnalyzerPlugin", `return [${snippet}];`)(
+        { env },
+        path,
+        (options: unknown) => ({ visualizer: options }),
+        function BundleAnalyzerPlugin(this: Record<string, unknown>, options: unknown) {
+          this.analyzer = options;
+        },
+      );
+    for (const snippet of [VITE_PROFILED_PLUGIN, WEBPACK_PROFILED_PLUGIN]) {
+      expect(plugins(snippet, {})).toEqual([]);
+      expect(plugins(snippet, { UFO_PROFILE_DIR: "" })).toEqual([]);
+    }
+    const dir = { UFO_PROFILE_DIR: "/runs/a b/p" };
+    expect(plugins(VITE_PROFILED_PLUGIN, dir)).toEqual([
+      {
+        visualizer: {
+          filename: "/runs/a b/p/stats.json",
+          template: "raw-data",
+          gzipSize: true,
+          brotliSize: true,
+        },
+      },
+    ]);
+    expect(plugins(WEBPACK_PROFILED_PLUGIN, dir)).toMatchObject([
+      {
+        analyzer: {
+          analyzerMode: "disabled",
+          generateStatsFile: true,
+          statsFilename: "/runs/a b/p/stats.json",
+        },
+      },
+    ]);
+    const nextConfig = (env: Record<string, string>) =>
+      new Function("process", `return { ${NEXT_PROFILED_SOURCE_MAPS} };`)({ env });
+    expect(nextConfig({})).toEqual({ productionBrowserSourceMaps: false });
+    expect(nextConfig(dir)).toEqual({ productionBrowserSourceMaps: true });
   });
 });
 
