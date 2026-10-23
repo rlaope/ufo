@@ -35,7 +35,7 @@ The first release.
 
 ### Doctor
 
-- `ufo doctor` reports the tools the repository needs and lacks (git and Node, then the runtimes and profilers its stacks and `ufo.yaml` use), each with an install hint, and exits non-zero when there is a gap.
+- `ufo doctor [--json]` checks git, the Node.js UFO needs, and `$UFO_HOME`, then the runtimes and profilers the repository's stacks, `ufo.yaml` (or the draft `ufo init` writes), and `workload.profile` use: the JDK's `jfr`, Go for pprof, py-spy, the bundle analyzer, an async-profiler library. Each gap names what is missing, why, and an install hint; it exits 0 with no gap and 4 with one (`--json`: `ok: true`, gaps in `result.gaps`). It never runs a repository command, and its version probes are bounded by a timeout.
 
 ### Supply chain
 
