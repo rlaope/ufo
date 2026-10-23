@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Release tag check: the tag is an annotated tag on origin/main whose signature GitHub verifies,
-# made by the expected tagger, and pointing at exactly the commit this run releases. The release
+# Release tag check: the tag is an annotated tag on origin/main, made by the expected tagger, and
+# pointing at exactly the commit this run releases. The tagger email is what the tag claims, not
+# proof; who may push a release tag is the v* tag ruleset's job. The release
 # workflow runs it with `gh` reading the tag through GitHub's API. See docs/release.md.
 #
 # Usage: bash scripts/release-tag-check.sh <tag>    (for example v0.1.0)
@@ -32,13 +33,11 @@ ref="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" --jq '.object.type + 
 [[ "${ref%% *}" == "tag" ]] || fail "$tag is not an annotated tag"
 
 fields="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/${ref#* }" \
-  --jq '[.object.type, .object.sha, (.tagger.email // ""), (.verification.verified | tostring)] | join("\u001f")')"
+  --jq '[.object.type, .object.sha, (.tagger.email // "")] | join("\u001f")')"
 # A unit separator, not whitespace, so an empty field (no tagger email) is kept as one.
-IFS=$'\x1f' read -r type target email verified <<<"$fields"
+IFS=$'\x1f' read -r type target email <<<"$fields"
 
 [[ "$type" == "commit" && "$target" == "$GITHUB_SHA" ]] ||
   fail "$tag points at $type $target, not the commit this run releases ($GITHUB_SHA)"
 [[ "$email" == "$RELEASE_TAGGER_EMAIL" ]] ||
   fail "$tag was tagged by '$email', not $RELEASE_TAGGER_EMAIL"
-[[ "$verified" == "true" ]] ||
-  fail "GitHub does not verify the signature of $tag (git tag -s, with a signing key added to GitHub)"

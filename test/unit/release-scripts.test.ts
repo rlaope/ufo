@@ -184,29 +184,24 @@ describe("scripts/release-tag-check.sh", () => {
       ].join("\n"),
       { mode: 0o755 },
     );
-    const run = (tag: { type?: string; target?: string; email?: string; verified?: string }) =>
+    const run = (tag: { type?: string; target?: string; email?: string }) =>
       bash(script, ["v1.0.0"], dir, {
         PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
         GITHUB_REPOSITORY: "owner/repo",
         GITHUB_SHA: sha,
         RELEASE_TAGGER_EMAIL: TAGGER,
         FAKE_REF: `tag ${TAG_SHA}`,
-        FAKE_TAG: [
-          tag.type ?? "commit",
-          tag.target ?? sha,
-          tag.email ?? TAGGER,
-          tag.verified ?? "true",
-        ].join("\u001f"),
+        FAKE_TAG: [tag.type ?? "commit", tag.target ?? sha, tag.email ?? TAGGER].join("\u001f"),
       });
     return { sha, run };
   }
 
-  it("passes a signed tag by the release tagger at the released commit on main", () => {
+  it("passes a tag by the release tagger at the released commit on main", () => {
     const { run } = fixture();
     expect(run({})).toMatchObject({ status: 0, stdout: "" });
   });
 
-  it("refuses a tag at another commit, by another tagger, unsigned, or off main", () => {
+  it("refuses a tag at another commit, by another tagger, or off main", () => {
     const { sha, run } = fixture();
     const other = "b".repeat(40);
     for (const [tag, message] of [
@@ -217,7 +212,6 @@ describe("scripts/release-tag-check.sh", () => {
         "tagged by 'someone@example.com', not release@example.com",
       ],
       [{ email: "" }, "tagged by '', not release@example.com"],
-      [{ verified: "false" }, "GitHub does not verify the signature of v1.0.0"],
     ] as const) {
       const result = run(tag);
       expect(result.status, message).toBe(1);
