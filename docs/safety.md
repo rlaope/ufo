@@ -97,9 +97,12 @@ every action by commit, and checks out without persisting credentials. The ident
 own workflow: on pull requests it runs as `pull_request_target`, so its workflow file and script
 come from `main` and the pull request is fetched only as data. A collaborator who can push a
 branch with a new workflow can still reach repository secrets; the repository has no other
-collaborators. The npm name `ufo-agents` is being reserved and nothing is published under it yet;
-until it is, `ufo setup` refuses to install from the registry and takes a tarball you built
-(`--package`).
+collaborators. `ufo-agents` is published to npm only from the release workflow
+(`.github/workflows/release.yml`, [release.md](release.md)) on a version tag, through npm trusted
+publishing: no npm token is stored anywhere, and each version carries a provenance attestation
+linking it to the workflow run and commit that built it (`npm audit signatures` verifies it).
+`ufo setup` installs that exact version from the registry and checks it against the registry's
+integrity; `--package` installs a tarball you built (`npm pack`) instead, checked by its sha512.
 
 ## What UFO cannot prevent
 

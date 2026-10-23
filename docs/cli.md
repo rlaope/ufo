@@ -888,9 +888,11 @@ the registry's own tarball of its name and version,
 or a URL to another package's tarball, must not swap a dependency); `integrity_mismatch`
 otherwise, and nothing is set up. It refuses (`package_unavailable`) to
 install `0.0.0` (an unreleased checkout), a version that is not exact, or one the registry does
-not have. The name `ufo-agents` is not published yet, so until it is, install a tarball:
-`--package <file.tgz>` (from `npm pack`) installs that file instead, and setup records its
-sha512 and checks the lockfile against it. The installed copy is placed only once it checks out
+not have. Released versions, from 0.1.0 on, are published by the release workflow with npm
+trusted publishing and provenance ([release.md](release.md)). To install a local tarball (a
+checkout's own build, or a version before it is released), `--package <file.tgz>` (from
+`npm pack`) installs that file instead, and setup records its sha512 and checks the lockfile
+against it. The installed copy is placed only once it checks out
 (a copy it replaces is put back if that fails), and leftovers of an interrupted install
 (`pkg/.install-*` and `pkg/.old-*`, never a version's own directory) are swept at the next setup or
 uninstall. A copy already installed with the integrity the
