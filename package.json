@@ -1,6 +1,6 @@
 {
   "name": "ufo-agents",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Make anything faster with agents, from p99 latency down to tokens per second.",
   "license": "MIT",
   "author": "rlaope",
