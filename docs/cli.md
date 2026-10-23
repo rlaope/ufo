@@ -816,7 +816,10 @@ documentation. It exits 0 when nothing is missing and 4 when something is (see
 Programs are looked up on the `PATH` the approved commands get (the run's captured environment:
 no entry inside the repository, its git directories, or UFO's home), without running them. Only
 `git`, `java` (`-version`), `python3` or `python`, and `py-spy` (`--version`) found there are run
-to read their version, each in its own process group, killed after 5 s: a program that fails or
+to read their version, each in its own process group, killed after 5 s, from an empty directory
+of its own (so a version manager's shim, such as pyenv, asdf, or mise, does not pick a binary from
+the repository's `.python-version` or `.tool-versions`) and with only `PATH`, `HOME`, and `LANG`
+(no `JAVA_TOOL_OPTIONS` or `PYTHON*` setting of yours reaches it): a program that fails or
 hangs is a gap with what it printed, as the `/usr/bin/java` of a Mac without a JDK does. Build
 tools (`mvn`, `gradle`, `go`) are never run, since they read the repository's own files. No
 repository command and no line of `ufo.yaml` runs, and Docker is never checked or suggested.

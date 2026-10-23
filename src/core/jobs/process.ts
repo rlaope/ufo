@@ -18,16 +18,23 @@ const MAX_OUTPUT_CHARS = 1024 * 1024;
  * once it exits 0. Rejects like `execFile` when it cannot start (`code` ENOENT) or exits non-zero
  * (`code`, `stderr`, and a `Command failed: …` message). After `timeoutMs` it kills the whole
  * group and rejects at once (`code` ETIMEDOUT), so a helper the program started cannot keep it
- * running or holding its output open.
+ * running or holding its output open. `options` sets its working directory and its whole
+ * environment (`PATH` among them, which also finds a bare `file`); by default, this process's.
  */
 export function execBounded(
   file: string,
   args: readonly string[],
   timeoutMs: number,
+  options: { readonly cwd?: string; readonly env?: NodeJS.ProcessEnv } = {},
 ): Promise<{ stdout: string; stderr: string }> {
   const command = [file, ...args].join(" ");
   return new Promise((resolve, reject) => {
-    const child = spawn(file, [...args], { detached: true, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(file, [...args], {
+      detached: true,
+      stdio: ["ignore", "pipe", "pipe"],
+      ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+      ...(options.env === undefined ? {} : { env: options.env }),
+    });
     let stdout = "";
     let stderr = "";
     child.stdout.setEncoding("utf8").on("data", (chunk: string) => {

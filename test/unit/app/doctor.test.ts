@@ -1,5 +1,14 @@
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -38,7 +47,15 @@ function box(files: Record<string, string>): Box {
     writeFileSync(path.join(repo, name), text);
   }
   execFileSync("git", ["init", "--quiet", repo]);
-  return { repo, bin, home: path.join(root, "ufo-home"), env: { PATH: bin, HOME: os.homedir() } };
+  const made = {
+    repo,
+    bin,
+    home: path.join(root, "ufo-home"),
+    env: { PATH: bin, HOME: os.homedir() },
+  };
+  // doctor's git probe finds git on this PATH too.
+  fake(made, "git", "echo git version 2.50.1");
+  return made;
 }
 
 /** A fake program on the box's PATH that runs `script` (by default, exits 0). */
@@ -251,6 +268,35 @@ describe("ufo doctor", () => {
         hint: expect.stringContaining("https://adoptium.net"),
       },
     ]);
+  });
+
+  // Security review M7: a version manager's shim on PATH (pyenv, asdf, mise) picks its binary from
+  // the directory it runs in and its parents, and the launcher's JAVA_TOOL_OPTIONS or PYTHON*
+  // would reach the probed program; a probe gets neither.
+  it("probes outside the repository with only PATH, HOME, and LANG", async () => {
+    const b = box({ "requirements.txt": "flask\n", ".python-version": "3.99.0\n" });
+    const record = path.join(path.dirname(b.repo), "probe.txt");
+    fake(b, "python3", `{ pwd; /usr/bin/env; } > '${record}'; echo Python 3.12.1`);
+    const env = {
+      ...b.env,
+      LANG: "en_US.UTF-8",
+      JAVA_TOOL_OPTIONS: "-javaagent:/x.jar",
+      PYTHONPATH: "/elsewhere",
+      PYENV_VERSION: "3.99.0",
+    };
+    const report = await doctor({ cwd: b.repo, home: b.home }, { env });
+    expect(found(report, "python3")[0]?.version).toBe("Python 3.12.1");
+    const [cwd = "", ...lines] = readFileSync(record, "utf8").trim().split("\n");
+    expect(cwd.startsWith(b.repo)).toBe(false);
+    expect(path.basename(cwd)).toMatch(/^ufo-doctor-/);
+    // The shell adds its own PWD, SHLVL, and _.
+    const names = lines
+      .map((line) => line.split("=")[0])
+      .filter((name) => !/^(PWD|OLDPWD|SHLVL|_)$/.test(name ?? ""));
+    expect(names.sort()).toEqual(["HOME", "LANG", "PATH"]);
+    expect(lines).toContain(`PATH=${b.bin}`);
+    // The probe's directory is removed afterwards.
+    expect(existsSync(cwd)).toBe(false);
   });
 
   it("reports a program that fails its probe with the first line it printed", async () => {

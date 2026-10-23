@@ -1,10 +1,14 @@
 // `ufo doctor`: whether this machine has what the repository's runs need, and how to get each
 // thing it lacks. Programs are looked up on the PATH the approved commands get, without running
 // them; only git and a few programs found there (java, python, py-spy) are asked their version,
-// each bounded by a timeout. No repository command and no shell line of ufo.yaml runs.
+// each bounded by a timeout, in an empty directory of its own with only PATH, HOME, and LANG, so
+// neither the repository's files (a version manager's .python-version, .tool-versions) nor the
+// launcher's JAVA_TOOL_OPTIONS or PYTHON* settings reach them. No repository command and no
+// shell line of ufo.yaml runs.
 
 import { readFileSync } from "node:fs";
-import { access, constants, lstat } from "node:fs/promises";
+import { access, constants, lstat, mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { redact } from "../core/evidence/index.js";
 import { execBounded, readTextNoFollow } from "../core/jobs/index.js";
@@ -192,9 +196,9 @@ class Findings {
   }
 }
 
-async function checkGit(timeoutMs: number, findings: Findings): Promise<void> {
+async function checkGit(prober: Prober, findings: Findings): Promise<void> {
   const why = "UFO (arms, run branches, diffs)";
-  const answer = await probe("git", "git", timeoutMs);
+  const answer = await probe("git", "git", prober);
   if ("problem" in answer) findings.gap("git", why, answer.problem, HINTS.git ?? "");
   else findings.ok("git", why, { version: answer.version.replace(/^git version /, "") });
 }
@@ -273,16 +277,38 @@ async function readNeeds(
   return { config, commands: approvedCommands(config, cards), source: "ufo.yaml" };
 }
 
+/** Where and with what a version probe runs. */
+interface Prober {
+  /** An empty directory of doctor's own, outside the repository. */
+  readonly cwd: string;
+  /** `PATH`, `HOME`, and `LANG` only. */
+  readonly env: NodeJS.ProcessEnv;
+  readonly timeoutMs: number;
+}
+
+/** The environment of a probe: `PATH` as given, and `HOME` and `LANG` of `env`, nothing else. */
+function probeEnv(env: NodeJS.ProcessEnv, searchPath: string): NodeJS.ProcessEnv {
+  return Object.fromEntries(
+    Object.entries({ PATH: searchPath, HOME: env.HOME, LANG: env.LANG }).filter(
+      ([, value]) => value !== undefined,
+    ),
+  );
+}
+
 /** Asks a program found on PATH its version; a probe that fails or hangs is a gap. */
 async function probe(
   program: string,
   file: string,
-  timeoutMs: number,
+  prober: Prober,
 ): Promise<{ version: string } | { problem: string }> {
   const args = PROBES[program];
   if (args === undefined) return { version: "" };
+  const { timeoutMs } = prober;
   try {
-    const { stdout, stderr } = await execBounded(file, args, timeoutMs);
+    const { stdout, stderr } = await execBounded(file, args, timeoutMs, {
+      cwd: prober.cwd,
+      env: prober.env,
+    });
     return { version: firstLine(stdout) ?? firstLine(stderr) ?? "" };
   } catch (error) {
     const failed = error as { code?: unknown; stderr?: unknown };
@@ -300,7 +326,7 @@ async function checkPrograms(
   needs: readonly Need[],
   repo: Repo,
   searchPath: string,
-  timeoutMs: number,
+  prober: Prober,
   findings: Findings,
 ): Promise<void> {
   const merged = new Map<string, { programs: readonly string[]; neededBy: string[] }>();
@@ -335,7 +361,7 @@ async function checkPrograms(
       continue;
     }
     const answer =
-      check.path === undefined ? { version: "" } : await probe(program, check.path, timeoutMs);
+      check.path === undefined ? { version: "" } : await probe(program, check.path, prober);
     if ("problem" in answer) {
       findings.gap(
         program,
@@ -452,8 +478,21 @@ export async function doctor(
 ): Promise<DoctorReport> {
   const env = options.env ?? process.env;
   const timeoutMs = options.probeTimeoutMs ?? DOCTOR_PROBE_TIMEOUT_MS;
+  const cwd = await mkdtemp(path.join(os.tmpdir(), "ufo-doctor-"));
+  try {
+    return await diagnose(context, env, { cwd, env: probeEnv(env, env.PATH ?? ""), timeoutMs });
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+}
+
+async function diagnose(
+  context: AppContext,
+  env: NodeJS.ProcessEnv,
+  prober: Prober,
+): Promise<DoctorReport> {
   const findings = new Findings();
-  await checkGit(timeoutMs, findings);
+  await checkGit(prober, findings);
   checkNode(findings);
   const repo = await repoOf(context).catch((error: unknown) => {
     findings.gap(
@@ -480,7 +519,14 @@ export async function doctor(
     }),
     ...profileNeeds(config),
   ];
-  await checkPrograms(needs, repo, captured.PATH ?? "", timeoutMs, findings);
+  const searchPath = captured.PATH ?? "";
+  await checkPrograms(
+    needs,
+    repo,
+    searchPath,
+    { ...prober, env: probeEnv(env, searchPath) },
+    findings,
+  );
   const profile = config.workload.profile;
   if (profile?.preset === "jvm-jfr" || profile?.format === "jfr") {
     const why = `workload.profile ${profile.preset === undefined ? "format jfr" : "preset jvm-jfr"} (UFO reads each recording with jfr print)`;
