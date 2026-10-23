@@ -31,7 +31,7 @@ permissions:
   contents: read
 
 env:
-  # The only tagger a release tag may have; the tag check also needs its signature verified.
+  # The only tagger a release tag may have.
   RELEASE_TAGGER_EMAIL: rlaope@users.noreply.github.com
 
 concurrency:
@@ -60,7 +60,7 @@ jobs:
         env:
           TAG: ${{ github.ref_name }}
         run: bash scripts/release-check.sh "$TAG" >/dev/null
-      - name: Check that the tag is signed by the release tagger, on main, at this commit
+      - name: Check that the tag is by the release tagger, on main, at this commit
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}

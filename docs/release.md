@@ -1,6 +1,6 @@
 # Releasing UFO
 
-A release is a signed version tag on `main`. Pushing it runs [`.github/workflows/release.yml`](../.github/workflows/release.yml), which checks the tag, publishes `ufo-agents` to npm with [trusted publishing](https://docs.npmjs.com/trusted-publishers) and provenance, and creates the GitHub release. No npm token is stored anywhere.
+A release is an annotated version tag on `main`. Pushing it runs [`.github/workflows/release.yml`](../.github/workflows/release.yml), which checks the tag, publishes `ufo-agents` to npm with [trusted publishing](https://docs.npmjs.com/trusted-publishers) and provenance, and creates the GitHub release. No npm token is stored anywhere.
 
 ## One-time setup
 
@@ -19,8 +19,7 @@ These steps are done once, by a maintainer of the `ufo-agents` package on npmjs.
 2. **GitHub environment.** In `rlaope/ufo` → **Settings** → **Environments**, create `npm-release`. Under **Deployment branches and tags**, choose **Selected branches and tags** and add only the tag rule `v*`, so no branch can deploy to it. Optionally add `rlaope` as a **required reviewer**, so each publish waits for an approval on the run's page.
 3. **Tag ruleset.** In **Settings** → **Rules** → **Rulesets**, add a tag ruleset targeting `v*` with **Restrict creations**, **Restrict updates**, and **Restrict deletions**, and only the **Repository admin** role in its bypass list. Then only the admin (or a token of the admin's) can push, move, or delete a release tag. The checks the workflow runs live in the tagged commit's own `release.yml`, so this ruleset and the environment, which are set outside the repository, are what keep a changed workflow from publishing.
 4. **Disallow tokens.** On npmjs.com, after the first release through the workflow succeeds, set **Settings** → **Publishing access** to "Require two-factor authentication and disallow tokens". Trusted publishing still works, since it does not use a token. Revoke any npm automation or publish tokens you created for this package.
-5. **Tag signing.** The workflow refuses a tag that GitHub does not show as verified, or whose tagger email is not the `RELEASE_TAGGER_EMAIL` at the top of `release.yml`. Configure git to sign tags (`git config --global gpg.format ssh` and `user.signingkey`, or a GPG key), and add the same key to your GitHub account as a **signing** key.
-6. **Repository secret.** `IDENTITY_PATTERN` must be set (it already is for the identity-gate workflow). The release fails without it.
+5. **Repository secret.** `IDENTITY_PATTERN` must be set (it already is for the identity-gate workflow). The release fails without it.
 
 ## Release checklist
 
@@ -39,7 +38,7 @@ These steps are done once, by a maintainer of the `ufo-agents` package on npmjs.
 
    ```sh
    git switch main && git pull --ff-only
-   git tag -s vx.y.z -m "vx.y.z"
+   git tag -a vx.y.z -m "vx.y.z"
    git push origin vx.y.z
    ```
 
@@ -50,7 +49,7 @@ A version with a prerelease part (`0.2.0-rc.1`) is published under the npm dist-
 The `check` job runs on the tagged commit, with read-only access and no OIDC token:
 
 - the tag is `v` plus the `package.json` version, and `CHANGELOG.md` has a section for it (`scripts/release-check.sh`)
-- the tag is annotated, signed with a signature GitHub verifies, by the tagger `RELEASE_TAGGER_EMAIL` names, points at exactly the commit the run releases (`$GITHUB_SHA`), and is on `main` (`scripts/release-tag-check.sh`)
+- the tag is annotated, by the tagger `RELEASE_TAGGER_EMAIL` names (the email the tag claims; the tag ruleset decides who can push it), points at exactly the commit the run releases (`$GITHUB_SHA`), and is on `main` (`scripts/release-tag-check.sh`)
 - `npm ci --ignore-scripts`, lint, typecheck, the full test suite, and the build
 - the identity gate over the repository: paths, file contents, every commit's contents and metadata, tags, and pull requests
 - `npm run audit:deps`: the runtime dependencies and the copies they bundle
