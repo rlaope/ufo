@@ -17,12 +17,22 @@ name: Release
 # runs the repository's code with the identity pattern and no OIDC token; `publish` gets the
 # OIDC token and runs no repository code (publishing a tarball runs none of its scripts); the
 # GitHub release is the only job that can write to the repository.
+#
+# The checks below run in the tagged commit's own copy of this file, so a branch with a changed
+# release.yml could skip them. What stops that is outside the file (docs/release.md, one-time
+# setup): the `npm-release` environment of the publish job, which npm's trusted publisher
+# requires and which only `v*` tags may deploy to, and a tag ruleset that lets only the
+# repository admin create, move, or delete `v*` tags.
 on:
   push:
     tags: ["v*.*.*"]
 
 permissions:
   contents: read
+
+env:
+  # The only tagger a release tag may have; the tag check also needs its signature verified.
+  RELEASE_TAGGER_EMAIL: rlaope@users.noreply.github.com
 
 concurrency:
   group: ${{ github.workflow }}
@@ -50,18 +60,11 @@ jobs:
         env:
           TAG: ${{ github.ref_name }}
         run: bash scripts/release-check.sh "$TAG" >/dev/null
-      - name: Check that the tag is signed and on main
+      - name: Check that the tag is signed by the release tagger, on main, at this commit
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
-        run: |
-          git merge-base --is-ancestor "$GITHUB_SHA" origin/main ||
-            { echo "::error::$TAG is not on main"; exit 1; }
-          object="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq '.object.type + " " + .object.sha')"
-          [ "${object%% *}" = "tag" ] || { echo "::error::$TAG is not an annotated tag"; exit 1; }
-          verified="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/${object#* }" --jq '.verification.verified')"
-          [ "$verified" = "true" ] ||
-            { echo "::error::GitHub does not verify the signature of $TAG (git tag -s, with a signing key added to GitHub)"; exit 1; }
+        run: bash scripts/release-tag-check.sh "$TAG"
       # Dependencies' install scripts do not run (only fsevents has one, macOS-only).
       - run: npm ci --ignore-scripts
       - run: npm run lint
@@ -101,6 +104,9 @@ jobs:
     name: Publish to npm
     needs: check
     runs-on: ubuntu-latest
+    # npm's trusted publisher names this environment, so an OIDC token from any other job is
+    # refused; its deployment rule admits only v* tags (docs/release.md).
+    environment: npm-release
     permissions:
       # The OIDC token npm exchanges for a short-lived publish credential.
       id-token: write

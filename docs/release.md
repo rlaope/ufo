@@ -13,12 +13,14 @@ These steps are done once, by a maintainer of the `ufo-agents` package on npmjs.
    | Organization or user | `rlaope` |
    | Repository | `ufo` |
    | Workflow filename | `release.yml` (the file name only, not `.github/workflows/release.yml`) |
-   | Environment name | leave empty: the workflow uses no GitHub environment |
+   | Environment name | `npm-release` (the publish job's GitHub environment, step 2) |
 
-   Every field is case-sensitive. npm expects a new trusted publisher configuration to complete its first publish within 2 days; if it does not, add it again before you tag.
-2. **Disallow tokens.** After the first release through the workflow succeeds, set **Settings** → **Publishing access** to "Require two-factor authentication and disallow tokens". Trusted publishing still works, since it does not use a token. Revoke any npm automation or publish tokens you created for this package.
-3. **Tag signing.** The workflow refuses a tag that GitHub does not show as verified. Configure git to sign tags (`git config --global gpg.format ssh` and `user.signingkey`, or a GPG key), and add the same key to your GitHub account as a **signing** key.
-4. **Repository secret.** `IDENTITY_PATTERN` must be set (it already is for the identity-gate workflow). The release fails without it.
+   Every field is case-sensitive. npm expects a new trusted publisher configuration to complete its first publish within 2 days; if it does not, add it again before you tag. Without the environment name, npm would accept an OIDC token from any job of any `release.yml` in the repository, including one on a pushed branch that skips the checks.
+2. **GitHub environment.** In `rlaope/ufo` → **Settings** → **Environments**, create `npm-release`. Under **Deployment branches and tags**, choose **Selected branches and tags** and add only the tag rule `v*`, so no branch can deploy to it. Optionally add `rlaope` as a **required reviewer**, so each publish waits for an approval on the run's page.
+3. **Tag ruleset.** In **Settings** → **Rules** → **Rulesets**, add a tag ruleset targeting `v*` with **Restrict creations**, **Restrict updates**, and **Restrict deletions**, and only the **Repository admin** role in its bypass list. Then only the admin (or a token of the admin's) can push, move, or delete a release tag. The checks the workflow runs live in the tagged commit's own `release.yml`, so this ruleset and the environment, which are set outside the repository, are what keep a changed workflow from publishing.
+4. **Disallow tokens.** On npmjs.com, after the first release through the workflow succeeds, set **Settings** → **Publishing access** to "Require two-factor authentication and disallow tokens". Trusted publishing still works, since it does not use a token. Revoke any npm automation or publish tokens you created for this package.
+5. **Tag signing.** The workflow refuses a tag that GitHub does not show as verified, or whose tagger email is not the `RELEASE_TAGGER_EMAIL` at the top of `release.yml`. Configure git to sign tags (`git config --global gpg.format ssh` and `user.signingkey`, or a GPG key), and add the same key to your GitHub account as a **signing** key.
+6. **Repository secret.** `IDENTITY_PATTERN` must be set (it already is for the identity-gate workflow). The release fails without it.
 
 ## Release checklist
 
@@ -48,13 +50,13 @@ A version with a prerelease part (`0.2.0-rc.1`) is published under the npm dist-
 The `check` job runs on the tagged commit, with read-only access and no OIDC token:
 
 - the tag is `v` plus the `package.json` version, and `CHANGELOG.md` has a section for it (`scripts/release-check.sh`)
-- the tag is annotated, signed with a signature GitHub verifies, and on `main`
+- the tag is annotated, signed with a signature GitHub verifies, by the tagger `RELEASE_TAGGER_EMAIL` names, points at exactly the commit the run releases (`$GITHUB_SHA`), and is on `main` (`scripts/release-tag-check.sh`)
 - `npm ci --ignore-scripts`, lint, typecheck, the full test suite, and the build
 - the identity gate over the repository: paths, file contents, every commit's contents and metadata, tags, and pull requests
 - `npm run audit:deps`: the runtime dependencies and the copies they bundle
 - `npm pack`, then the identity gate over the extracted tarball (`scripts/identity-gate.sh --dir`), since the tarball holds the build rather than the repository's files
 
-The `publish` job downloads that tarball and publishes it with `npm publish --provenance --access public`. It is the only job with `id-token: write`, and it runs none of the repository's code. Its npm is upgraded to a pinned 11.x, because trusted publishing needs npm 11.5.1 or later and Node 22 bundles npm 10. The `github-release` job, the only one that can write to the repository, then creates the release from the `CHANGELOG.md` section.
+The `publish` job runs in the `npm-release` environment, downloads that tarball, and publishes it with `npm publish --provenance --access public`. It is the only job with `id-token: write`, and it runs none of the repository's code. Its npm is upgraded to a pinned 11.x, because trusted publishing needs npm 11.5.1 or later and Node 22 bundles npm 10. The `github-release` job, the only one that can write to the repository, then creates the release from the `CHANGELOG.md` section.
 
 If a job fails, nothing after it runs. A failure before `publish` leaves npm untouched: fix the cause, delete the tag (`git push origin :refs/tags/vx.y.z` and `git tag -d vx.y.z`), and tag again. If `publish` succeeded and only `github-release` failed, re-run that job from the Actions page.
 

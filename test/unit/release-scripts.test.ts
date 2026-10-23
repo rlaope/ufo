@@ -141,3 +141,97 @@ describe("scripts/identity-gate.sh --dir", () => {
     expect(bash(gate, ["--dir", dir, "more"], dir, env).status).toBe(2);
   });
 });
+
+describe("scripts/release-tag-check.sh", () => {
+  const script = path.join(ROOT, "scripts", "release-tag-check.sh");
+  const TAGGER = "release@example.com";
+  const TAG_SHA = "a".repeat(40);
+
+  /**
+   * A repository whose HEAD is on origin/main, and a fake `gh` that answers the tag ref and the
+   * tag object as GitHub's API would after `--jq`, for the tag object `TAG_SHA` only.
+   */
+  function fixture(onMain = true) {
+    const dir = tempDir();
+    const git = (...args: string[]) =>
+      spawnSync("git", args, { cwd: dir, encoding: "utf8" }).stdout.trim();
+    git("init", "--quiet");
+    git(
+      "-c",
+      "user.name=t",
+      "-c",
+      "user.email=t@example.com",
+      "commit",
+      "--quiet",
+      "--allow-empty",
+      "-m",
+      "x",
+    );
+    const sha = git("rev-parse", "HEAD");
+    if (onMain) git("update-ref", "refs/remotes/origin/main", sha);
+    const bin = path.join(dir, ".bin");
+    mkdirSync(bin);
+    writeFileSync(
+      path.join(bin, "gh"),
+      [
+        "#!/bin/sh",
+        'case "$2" in',
+        '  */git/ref/tags/v1.0.0) printf "%s\\n" "$FAKE_REF" ;;',
+        `  */git/tags/${TAG_SHA}) printf "%s\\n" "$FAKE_TAG" ;;`,
+        '  *) echo "gh: unexpected $2" >&2; exit 1 ;;',
+        "esac",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    const run = (tag: { type?: string; target?: string; email?: string; verified?: string }) =>
+      bash(script, ["v1.0.0"], dir, {
+        PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
+        GITHUB_REPOSITORY: "owner/repo",
+        GITHUB_SHA: sha,
+        RELEASE_TAGGER_EMAIL: TAGGER,
+        FAKE_REF: `tag ${TAG_SHA}`,
+        FAKE_TAG: [
+          tag.type ?? "commit",
+          tag.target ?? sha,
+          tag.email ?? TAGGER,
+          tag.verified ?? "true",
+        ].join("\u001f"),
+      });
+    return { sha, run };
+  }
+
+  it("passes a signed tag by the release tagger at the released commit on main", () => {
+    const { run } = fixture();
+    expect(run({})).toMatchObject({ status: 0, stdout: "" });
+  });
+
+  it("refuses a tag at another commit, by another tagger, unsigned, or off main", () => {
+    const { sha, run } = fixture();
+    const other = "b".repeat(40);
+    for (const [tag, message] of [
+      [{ target: other }, `points at commit ${other}, not the commit this run releases (${sha})`],
+      [{ type: "tree" }, "points at tree"],
+      [
+        { email: "someone@example.com" },
+        "tagged by 'someone@example.com', not release@example.com",
+      ],
+      [{ email: "" }, "tagged by '', not release@example.com"],
+      [{ verified: "false" }, "GitHub does not verify the signature of v1.0.0"],
+    ] as const) {
+      const result = run(tag);
+      expect(result.status, message).toBe(1);
+      expect(result.stdout, message).toContain(message);
+    }
+    expect(fixture(false).run({})).toMatchObject({
+      status: 1,
+      stdout: "::error::v1.0.0 is not on main\n",
+    });
+  });
+
+  it("needs exactly one tag and the release environment", () => {
+    const dir = tempDir();
+    expect(bash(script, [], dir).status).toBe(2);
+    expect(bash(script, ["v1.0.0"], dir, { RELEASE_TAGGER_EMAIL: "" }).status).toBe(2);
+  });
+});
