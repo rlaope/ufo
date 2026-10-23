@@ -218,6 +218,22 @@ describe("checking capabilities", { timeout: TIMEOUT_MS }, () => {
       } finally {
         await missing.cleanup();
       }
+
+      // M7: a line that starts with a shell expansion or keyword names no program to look up.
+      for (const setup of [
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: a shell expansion in ufo.yaml.
+        '${UFO_PROFILE_DIR:+py-spy record -o "$UFO_PROFILE_DIR/py.txt" --} node -e 1',
+        "if true; then node -e 1; fi",
+      ]) {
+        const shell = makeToy({ config: lightWorkload(setup) });
+        try {
+          const { programs } = await checkCapabilities(shell.context);
+          expect(programs.map((entry) => entry.program), setup).toEqual(["node"]);
+          expect(programs[0]?.usedBy, setup).not.toContain("workload setup");
+        } finally {
+          await shell.cleanup();
+        }
+      }
     } finally {
       await other.cleanup();
     }

@@ -200,12 +200,21 @@ export const INSTALL_HINTS: Readonly<Record<string, string>> = {
   hyperfine: "install hyperfine (brew install hyperfine)",
 };
 
-/** The program a command line starts: its first word after `NAME=value` assignments. */
+/** First words of a command line that name no program: shell syntax, or an expansion. */
+const NOT_PROGRAMS =
+  /^(?:\$|!$|\[\[$|(?:if|then|else|elif|fi|for|while|until|do|done|case|esac|function|time)$)/;
+
+/**
+ * The program a command line starts: its first word after `NAME=value` assignments; `undefined`
+ * when that word is shell syntax (`if`, `for`, ...) or an expansion (`${...}`), which name none.
+ */
 export function programOf(command: string): string | undefined {
   const words = command.trim().split(/\s+/);
   const first = words.find((word) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(word));
   const program = first?.replace(/^[({]+/, "").replace(/^["']|["']$/g, "");
-  return program === undefined || program === "" ? undefined : program;
+  return program === undefined || program === "" || NOT_PROGRAMS.test(program)
+    ? undefined
+    : program;
 }
 
 async function executable(file: string): Promise<boolean> {

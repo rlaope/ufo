@@ -100,10 +100,6 @@ const PROBES: Readonly<Record<string, readonly string[]>> = {
   "py-spy": ["--version"],
 };
 
-/** First words of a command line that name no program: shell syntax, or an expansion. */
-const NOT_PROGRAMS =
-  /^(?:\$|!$|\[\[$|(?:if|then|else|elif|fi|for|while|until|do|done|case|esac|function|time)$)/;
-
 interface Need {
   /** The program, or alternatives in order. */
   readonly programs: readonly string[];
@@ -480,9 +476,7 @@ export async function doctor(
     ...stackNeeds(stacks),
     ...commands.flatMap(({ what, command }) => {
       const program = programOf(command);
-      return program === undefined || NOT_PROGRAMS.test(program)
-        ? []
-        : [{ programs: [program], neededBy: what }];
+      return program === undefined ? [] : [{ programs: [program], neededBy: what }];
     }),
     ...profileNeeds(config),
   ];
