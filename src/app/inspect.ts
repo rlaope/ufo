@@ -174,7 +174,7 @@ const SHELL_WORDS = new Set([
 ]);
 
 /** How to get a missing program, for the ones approved commands often start. */
-const INSTALL_HINTS: Readonly<Record<string, string>> = {
+export const INSTALL_HINTS: Readonly<Record<string, string>> = {
   node: "install Node.js (https://nodejs.org)",
   npm: "install Node.js (https://nodejs.org), which ships npm",
   npx: "install Node.js (https://nodejs.org), which ships npx",
@@ -258,7 +258,8 @@ export interface CapabilityReport {
   configError?: string | undefined;
 }
 
-async function checkProgram(
+/** Where `program` is for a command run in the repository's arm, without running it. */
+export async function checkProgram(
   program: string,
   repo: Repo,
   searchPath: string,

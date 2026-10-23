@@ -9,7 +9,7 @@ import type {
   RunView,
   StatusView,
 } from "../app/api.js";
-import type { ApproveResult } from "../app/api-cli.js";
+import type { ApproveResult, DoctorReport } from "../app/api-cli.js";
 
 // Human-readable output of each command. `--json` prints the result objects instead.
 
@@ -149,4 +149,33 @@ export function formatExtend(result: {
   wallClockMinutes: number;
 }): string {
   return `Run ${result.runId}: budget raised to ${result.maxTechniques} techniques, ${result.wallClockMinutes} min.\n`;
+}
+
+export function formatDoctor(report: DoctorReport): string {
+  const from = {
+    "ufo.yaml": "tools from ufo.yaml",
+    draft: "tools from the draft ufo init writes",
+    none: "",
+  }[report.source];
+  const stacks = report.stacks.length > 0 ? report.stacks.join(", ") : "none detected";
+  const lines = [
+    report.repoRoot === undefined
+      ? "ufo doctor: no repository"
+      : `ufo doctor: ${report.repoRoot} (stacks: ${stacks}; ${from})`,
+  ];
+  for (const found of report.found) {
+    const version = found.version === undefined ? "" : ` ${found.version}`;
+    const where = found.path === undefined ? "" : ` (${found.path})`;
+    lines.push(`  ok   ${found.tool}${version}${where}: ${found.neededBy.join("; ")}`);
+  }
+  for (const gap of report.gaps) {
+    lines.push(
+      `  gap  ${gap.tool}: ${gap.problem}`,
+      `         needed by: ${gap.neededBy.join("; ")}`,
+      `         fix: ${gap.hint}`,
+    );
+  }
+  const count = report.gaps.length;
+  lines.push(count === 0 ? "No gaps." : `${count} gap${count === 1 ? "" : "s"}.`);
+  return `${lines.join("\n")}\n`;
 }

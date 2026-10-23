@@ -38,7 +38,11 @@ The tools are `inspect_target`, `check_capabilities`, `list_techniques`, `get_te
    approved.
 
 4. **Capabilities.** Call `check_capabilities` and tell the user about each missing program and
-   its install hint. Done when every program the approved commands start is found.
+   its install hint. When something is missing, or the profiler is new to this machine, ask the
+   user to run `ufo doctor` in their terminal: it also checks what the stack and the
+   `workload.profile` block need (the JDK's `jfr`, `go`, `py-spy`, a bundle analyzer, an
+   async-profiler library) and prints an install hint for each gap. Done when every program the
+   approved commands start is found.
 
 5. **Start.** Call `start_run` with `model_id` set to your own model id, then poll the baseline job
    (`baselineJobId`). Done when the baseline job has succeeded. If `get_run` then says

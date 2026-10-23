@@ -15,7 +15,15 @@ import {
   status,
   trustProcessPath,
 } from "../app/api.js";
-import { approve, extendBudget, init, runAppWorker, WORKER_COMMAND } from "../app/api-cli.js";
+import {
+  approve,
+  doctor,
+  EXIT_GAPS,
+  extendBudget,
+  init,
+  runAppWorker,
+  WORKER_COMMAND,
+} from "../app/api-cli.js";
 import { bindDirectory, HOSTS, isHost, serveMcp } from "../mcp/index.js";
 import {
   formatSetupReport,
@@ -29,6 +37,7 @@ import {
 import {
   formatApprove,
   formatCancel,
+  formatDoctor,
   formatExtend,
   formatMeasure,
   formatReport,
@@ -100,6 +109,8 @@ Commands:
   extend-budget       Raise a run's technique cap or wall-clock budget; needs a terminal
                         --techniques <n>  techniques to add (default: the configured cap)
                         --minutes <n>     minutes to add (default: 0)
+  doctor              Check that this machine has the tools the repository's runs need, with
+                      an install hint for each one missing (exit 4 when one is)
   mcp                 Serve UFO's tools to an agent over MCP on stdin and stdout
                         --host <host>     claude-code, codex, or cursor (required)
                         --repo <path>     the repository, an absolute path (required for cursor;
@@ -120,7 +131,8 @@ Options:
   -v, --version  Print the version and exit
   -h, --help     Print this help and exit
 
-Exit codes: 0 ok, 1 refused by a policy or the human, 2 usage or config error, 3 internal error.
+Exit codes: 0 ok, 1 refused by a policy or the human, 2 usage or config error, 3 internal error,
+4 ufo doctor found gaps.
 See docs/cli.md.
 `;
 
@@ -149,6 +161,7 @@ const COMMANDS = {
     techniques: { type: "string" },
     minutes: { type: "string" },
   },
+  doctor: {},
   mcp: { host: { type: "string" }, repo: { type: "string" } },
   setup: {
     host: { type: "string", multiple: true },
@@ -186,7 +199,7 @@ async function execute(
   context: AppContext,
   io: CliIo,
   json: boolean,
-): Promise<{ result: unknown; text: string }> {
+): Promise<{ result: unknown; text: string; exitCode?: number }> {
   const runId = typeof values.run === "string" ? values.run : undefined;
   const scoped = runId === undefined ? {} : { runId };
   // With --json, stdout carries only the JSON result; reviews and progress go to stderr.
@@ -250,6 +263,14 @@ async function execute(
         ...(minutes === undefined ? {} : { minutes }),
       });
       return { result, text: formatExtend(result) };
+    }
+    case "doctor": {
+      const result = await doctor(context, { env: io.env ?? process.env });
+      return {
+        result,
+        text: formatDoctor(result),
+        exitCode: result.gaps.length > 0 ? EXIT_GAPS : EXIT_OK,
+      };
     }
     case "setup":
     case "uninstall":
@@ -351,9 +372,9 @@ export async function main(argv: readonly string[], io: CliIo): Promise<number> 
   try {
     // Before UFO runs anything: git, ps, and docker are found only outside the project.
     await trustProcessPath({ cwd: context.cwd, home: context.home, env: io.env ?? process.env });
-    const { result, text } = await execute(first, values, context, io, json);
+    const { result, text, exitCode } = await execute(first, values, context, io, json);
     io.stdout(json ? `${JSON.stringify({ ok: true, command: first, result }, null, 2)}\n` : text);
-    return EXIT_OK;
+    return exitCode ?? EXIT_OK;
   } catch (error) {
     const failure: Failure =
       error instanceof UsageError

@@ -150,11 +150,13 @@ describe("the adapter modules", () => {
       "trustProcessPath",
     ]);
     expect(Object.keys(apiCli).sort()).toEqual([
+      "EXIT_GAPS",
       "LockTimeoutError",
       "PRIVATE_DIR",
       "WORKER_COMMAND",
       "approve",
       "askTerminal",
+      "doctor",
       "ensureTrustedDir",
       "extendBudget",
       "heldMachineLock",

@@ -22,6 +22,7 @@ ufo <command> [options]
 | `cancel` | Cancels a run. Its completed observations stay in the ledger. |
 | `report` | Prints a finished run's report, or what is known so far for an unfinished run. With `--json`, `result.finished` is `true` for the report and `false` for the run's view. |
 | `extend-budget` | Raises a run's technique cap or wall-clock budget. Needs an interactive terminal. |
+| `doctor` | Checks that this machine has what the repository's runs need: git, the Node.js UFO needs, a usable `$UFO_HOME`, and the programs its stacks, `ufo.yaml`, and `workload.profile` use, each missing one with an install hint. Exit 4 when something is missing. See [`ufo doctor`](#checking-the-machine-ufo-doctor). |
 | `mcp` | Serves UFO's tools to an agent over MCP on stdin and stdout until stdin closes, bound to one repository ([mcp.md](mcp.md)). Your agent's host starts it; `ufo setup` writes its entry. |
 | `setup` | Installs this version of UFO into `$UFO_HOME/pkg` and registers that copy's MCP server and the `ufo-optimize` skill in Claude Code, Codex, and Cursor. Shows each change as a diff and asks first. See [Setup, uninstall, and update](#setup-uninstall-and-update). |
 | `update` | Installs this version beside the old one and points what `setup` added at it. |
@@ -77,6 +78,7 @@ local paths, so an agent can read arm A. The text output shows them with `~` too
 | 1 | A policy refused the request, the human declined, or the run needs `ufo resume` first. | `policy:<rule>` (see below), `approval_declined`, `opt_in_mismatch`, `config_exists`, `run_not_active`, `run_starting`, `run_finishing`, `run_in_progress`, `run_other_work_tree`, `worker_not_running`, `measurement_failed`, `ledger_mismatch`, `cancel_pending`, `arms_missing`, `interrupted`, `busy`, `unsafe_state` |
 | 2 | Usage or configuration error, or nothing to act on. | `usage`, `not_a_repo`, `config_missing`, `config_invalid`, `cards_invalid`, `no_run`, `unsafe_home` |
 | 3 | UFO itself failed. | `internal` |
+| 4 | `ufo doctor` found a gap. The report is printed as with exit 0; with `--json`, `ok` is `true` and the gaps are `result.gaps`. | |
 
 `ufo run` never leaves a run `running`. When one of its jobs (baseline, recipe, finish) fails, it
 cancels the run and exits 1 with `measurement_failed`; the worker log (`logs/worker.err.log` in the
@@ -780,6 +782,61 @@ arm since the last job is not measured.
   `worker_not_running` (exit 1), which asks for `ufo resume`; the job stays queued, or is
   requeued by the resume, and runs on the new worker. `ufo measure` closes its run instead and
   reports `measurement_failed` (exit 1): run it again.
+
+## Checking the machine: `ufo doctor`
+
+```
+ufo doctor [--json]
+```
+
+`ufo doctor` checks, in the repository of the working directory, what its runs will need, and
+names each gap with what is missing, why UFO needs it, and how to get it, from the tool's own
+documentation. It exits 0 when nothing is missing and 4 when something is (see
+[Exit codes](#exit-codes)); what it finds is never a failure of its own.
+
+- Always: `git` (`git --version`), the Node.js running UFO against `engines.node` in UFO's
+  `package.json` (`>=22`), and `$UFO_HOME`, created as every command creates it and refused for
+  the same reasons (`unsafe_home`, [Where UFO keeps state](#where-ufo-keeps-state)), then checked
+  writable. Outside a repository, the repository is a gap and nothing else is checked.
+- The detected stacks ([Stack detection](#stack-detection-and-the-draft)): `node`, the package
+  manager (`npm`, `pnpm`, `yarn`), `java` for the JVM, `mvn` and `gradle` unless the repository
+  has `./mvnw` or `./gradlew`, `go`, `python3` (else `python`), and `cargo`.
+- With a valid `ufo.yaml`: the program each command its approval covers starts, as
+  `check_capabilities` looks them up ([mcp.md](mcp.md)), shell syntax and `$` expansions left
+  out. A missing or invalid `ufo.yaml` is checked as the draft `ufo init` writes for the detected
+  stacks instead; an invalid one, or card files that cannot be read, is a gap of its own.
+- `workload.profile`: `node` for `preset: node-cpu`; `java` and the JDK's `jfr` for
+  `preset: jvm-jfr` or `format: jfr`, found as a profile job finds it (`$JAVA_HOME/bin/jfr`, else
+  next to the `java` on `PATH`; [Profiling](#profiling-workloadprofile)); `go` for
+  `format: pprof`; for `format: bundle-stats`, the analyzer a workload step names
+  (`source-map-explorer`, or `webpack-cli` for `webpack --json`) declared in `package.json`,
+  since an arm is a clone and has only what the workload's setup installs from there; `py-spy` when a workload step starts it; and an async-profiler library that an
+  `-agentpath:` in `workload.profile.env` (or `JAVA_TOOL_OPTIONS` listed in `env:`) names.
+
+Programs are looked up on the `PATH` the approved commands get (the run's captured environment:
+no entry inside the repository, its git directories, or UFO's home), without running them. Only
+`git`, `java` (`-version`), `python3` or `python`, and `py-spy` (`--version`) found there are run
+to read their version, each in its own process group, killed after 5 s: a program that fails or
+hangs is a gap with what it printed, as the `/usr/bin/java` of a Mac without a JDK does. Build
+tools (`mvn`, `gradle`, `go`) are never run, since they read the repository's own files. No
+repository command and no line of `ufo.yaml` runs, and Docker is never checked or suggested.
+
+```
+ufo doctor: ~/src/shop (stacks: jvm, maven; tools from the draft ufo init writes)
+  ok   git 2.50.1: UFO (arms, run branches, diffs)
+  ok   node v22.12.0 (~/.nvm/versions/node/v22.12.0/bin/node): UFO itself and its worker (Node.js >=22)
+  ok   UFO_HOME (~/.ufo): UFO's approvals and run state
+  ok   java openjdk version "21.0.4" 2024-07-16 (/usr/bin/java): stack jvm (pom.xml); workload.profile preset jvm-jfr
+  gap  mvn: mvn is not on the PATH UFO's commands get
+         needed by: stack maven (pom.xml)
+         fix: install Maven (https://maven.apache.org/install.html)
+  ...
+```
+
+With `--json`, `result` is `{ repoRoot, stacks, source, found, gaps }`: `source` is `ufo.yaml`,
+`draft`, or `none` (no repository); each of `found` is `{ tool, neededBy, path?, version? }` and
+each of `gaps` `{ tool, neededBy, problem, hint }`, `neededBy` naming the stack, the `ufo.yaml`
+step, or the `workload.profile` setting that needs it.
 
 ## Setup, uninstall, and update
 
