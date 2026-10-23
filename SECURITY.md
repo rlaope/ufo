@@ -40,5 +40,5 @@ These commitments apply to every release:
 - The package has no `preinstall`, `install`, or `postinstall` scripts.
 - Runtime dependencies are kept minimal, and the lockfile is committed.
 - Before a release, the runtime dependencies are audited, including the copies of other packages that a dependency bundles in its own files (`npm run audit:deps`; see [CONTRIBUTING.md](CONTRIBUTING.md#scripts)).
-- Releases are published with npm trusted publishing and provenance, from accounts with two-factor authentication. Release tags are signed.
+- Releases are published with npm trusted publishing and provenance, from accounts with two-factor authentication. Release tags are signed. The release workflow and how to verify a release's provenance are in [docs/release.md](docs/release.md).
 - UFO collects no telemetry.
