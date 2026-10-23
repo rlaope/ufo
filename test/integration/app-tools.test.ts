@@ -228,7 +228,10 @@ describe("checking capabilities", { timeout: TIMEOUT_MS }, () => {
         const shell = makeToy({ config: lightWorkload(setup) });
         try {
           const { programs } = await checkCapabilities(shell.context);
-          expect(programs.map((entry) => entry.program), setup).toEqual(["node"]);
+          expect(
+            programs.map((entry) => entry.program),
+            setup,
+          ).toEqual(["node"]);
           expect(programs[0]?.usedBy, setup).not.toContain("workload setup");
         } finally {
           await shell.cleanup();
