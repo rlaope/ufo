@@ -35,7 +35,7 @@ node dist/cli/index.js --help
 
 CI runs lint, typecheck, test, and build on every pull request. Run them locally before you push.
 
-Before a release, run `npm run audit:deps`. It fails on any advisory. For each one, update the dependency that carries it, or review it and add its id to `ACCEPTED` in `scripts/audit-bundled.mjs` with why it does not reach UFO. The bundled-copy check reads the dependencies' source maps, so a bundle without them is not seen: check the files of a new runtime dependency by hand.
+Releases follow [docs/release.md](docs/release.md): a signed version tag on `main` runs the release workflow, which publishes to npm with trusted publishing. Before a release, run `npm run audit:deps`. It fails on any advisory. For each one, update the dependency that carries it, or review it and add its id to `ACCEPTED` in `scripts/audit-bundled.mjs` with why it does not reach UFO. The bundled-copy check reads the dependencies' source maps, so a bundle without them is not seen: check the files of a new runtime dependency by hand.
 
 ## Project layout
 

@@ -14,6 +14,10 @@
 #   - commit metadata and messages (author, committer, message) and annotated tags
 #   - pull request titles and bodies, when UFO_GATE_PRS=1 and gh is installed
 #
+# With --dir <directory>, it scans only the file paths and file contents under that directory,
+# and needs no git work tree when IDENTITY_PATTERN is set. The release workflow scans the
+# extracted npm tarball this way: what npm publishes is the build, not the repository.
+#
 # Exit status: 0 no match, 1 match, 2 error (no pattern, invalid pattern, git or gh failure).
 #
 # Compatible with bash 3.2 (the macOS default): no arrays, no mapfile.
@@ -24,12 +28,19 @@ die() {
   exit 2
 }
 
-git rev-parse --show-toplevel >/dev/null 2>&1 || die "not inside a git work tree"
-cd "$(git rev-parse --show-toplevel)"
+scan_dir=""
+if [[ $# -gt 0 ]]; then
+  [[ $# -eq 2 && "$1" == "--dir" ]] || die "usage: identity-gate.sh [--dir <directory>]"
+  [[ -d "$2" ]] || die "--dir needs an existing directory"
+  scan_dir="$(cd "$2" && pwd)"
+else
+  git rev-parse --show-toplevel >/dev/null 2>&1 || die "not inside a git work tree"
+  cd "$(git rev-parse --show-toplevel)"
+fi
 
 pattern="${IDENTITY_PATTERN:-}"
-if [[ -z "$pattern" ]]; then
-  stored="$(git rev-parse --git-common-dir)/info/identity-pattern"
+if [[ -z "$pattern" ]] && common_dir="$(git rev-parse --git-common-dir 2>/dev/null)"; then
+  stored="$common_dir/info/identity-pattern"
   if [[ -f "$stored" ]]; then
     pattern="$(cat "$stored")"
   fi
@@ -79,6 +90,30 @@ withhold_matching() {
     fi
   done
 }
+
+finish() {
+  if [[ $failed -ne 0 ]]; then
+    echo "identity-gate: failed. Remove the matches above before publishing." >&2
+    exit 1
+  fi
+  echo "identity-gate: passed ($1)."
+  exit 0
+}
+
+if [[ -n "$scan_dir" ]]; then
+  cd "$scan_dir"
+  count="$(find . -mindepth 1 | grep -c -i -E -f "$pattern_file" || true)"
+  if [[ $count -gt 0 ]]; then
+    report "file paths" "$count name(s); list them with find"
+  fi
+  code=0
+  hits="$(grep -r -I -i -E -l -f "$pattern_file" .)" || code=$?
+  [[ $code -le 1 ]] || die "grep failed with status $code"
+  if [[ -n "$hits" ]]; then
+    report "file contents" "$(printf '%s\n' "$hits" | sed 's|^\./||' | withhold_matching)"
+  fi
+  finish "paths and file contents under the directory"
+fi
 
 # File paths and ref names: reported as a count, since the names are the matched text.
 names="$(
@@ -147,8 +182,4 @@ if [[ "${UFO_GATE_PRS:-}" == "1" ]]; then
   fi
 fi
 
-if [[ $failed -ne 0 ]]; then
-  echo "identity-gate: failed. Remove the matches above before publishing." >&2
-  exit 1
-fi
-echo "identity-gate: passed ($surfaces)."
+finish "$surfaces"
