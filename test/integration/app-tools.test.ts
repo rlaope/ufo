@@ -458,6 +458,19 @@ describe("filtering and ordering techniques by stack and bottleneck", {
       await expect(listTechniques(other.context, { domain: "stk", cursor })).rejects.toMatchObject({
         code: "usage",
       });
+      // M7: so does a card whose frame hints alone changed, since they decide its evidence.
+      const before = await listTechniques(other.context, { domain: "stk", limit: 1 });
+      const next = { domain: "stk", cursor: before.nextCursor ?? "" };
+      expect((await listTechniques(other.context, next)).cards).toHaveLength(3);
+      writeFileSync(
+        path.join(other.repo, "cards", "stk", "b-any-io.yaml"),
+        `${card("b-any-io", [], ["io"])}frameHints:\n  - readFileSync\n`,
+      );
+      // The page without a profile reads the same; only its cursor moved.
+      const after = await listTechniques(other.context, { domain: "stk", limit: 1 });
+      expect({ ...after, nextCursor: undefined }).toEqual({ ...before, nextCursor: undefined });
+      expect(after.nextCursor).not.toBe(before.nextCursor);
+      await expect(listTechniques(other.context, next)).rejects.toMatchObject({ code: "usage" });
     } finally {
       await other.cleanup();
     }

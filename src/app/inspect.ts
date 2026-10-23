@@ -488,7 +488,8 @@ function jsonBytes(value: unknown): number {
 /**
  * The page of `entries` from entry `offset` on: at most `limit` entries, and at most
  * `MAX_INDEX_PAGE_BYTES` of JSON with the rest of the listing, though always one entry so paging
- * goes on. `listing` names what is paged (filters, profile, and the ordered ids) for the cursor.
+ * goes on. `listing` names what is paged (filters, profile, and the ordered ids with their frame
+ * hints) for the cursor.
  */
 export function indexPage(
   entries: Omit<TechniqueListing, "total" | "nextCursor">,
@@ -679,12 +680,14 @@ export async function listTechniques(
       : frames !== undefined && listed.cards[0]?.evidence === undefined
         ? `no listed card's frame hints are among the hot frames of profile ${options.profileJobId ?? ""}`
         : undefined;
+  // Each card's frame hints too: they decide its evidence, though the plain index never shows them.
+  const hints = new Map(filtered.map((card) => [card.id, card.frameHints]));
   const listing = JSON.stringify([
     options.domain,
     options.stack,
     options.bottleneck,
     options.profileJobId,
-    listed.cards.map((entry) => entry.id),
+    listed.cards.map((entry) => [entry.id, hints.get(entry.id)]),
   ]);
   const offset =
     options.cursor === undefined ? 0 : offsetOf(options.cursor, listing, listed.cards.length);
