@@ -40,6 +40,14 @@ describe("ufo CLI", () => {
     },
   );
 
+  it("shows --package under setup and update in the usage", async () => {
+    const { stdout } = await run(["--help"]);
+    const block = (command: string, next: string) =>
+      stdout.slice(stdout.indexOf(`\n  ${command} `), stdout.indexOf(`\n  ${next} `));
+    expect(block("setup", "update")).toContain("--package <file>");
+    expect(block("update", "uninstall")).toContain("--package <file>");
+  });
+
   it.each([[["frobnicate"]], [["--version", "extra"]], [["--yes"]]])(
     "rejects unknown arguments %j with a usage error",
     async (argv) => {

@@ -118,6 +118,7 @@ Commands:
                                           working directory)
   setup               Install this version of UFO and register its MCP server and skill
                       with Claude Code, Codex, and Cursor
+                        --package <file>  install this ufo-agents tarball, not the registry's
   update              Install this version beside the old one and point the hosts at it
                         --package <file>  install this ufo-agents tarball, not the registry's
   uninstall           Remove exactly what setup added

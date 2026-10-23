@@ -135,7 +135,7 @@ describe("ufo setup", () => {
     for (const [version, why] of [
       ["0.0.0", "ufo-agents@0.0.0 is not a released version"],
       ["^1.2.3", "ufo-agents@^1.2.3 is not a released version"],
-      ["9.9.9", "the npm registry has no ufo-agents@9.9.9 (the name is not published yet)"],
+      ["9.9.9", "ufo-agents@9.9.9 is not on the npm registry"],
     ] as const) {
       if (version === "9.9.9") box.fakes.registry.delete("9.9.9");
       const error = await refusal(setup(options({ hosts: ["codex"], version })));

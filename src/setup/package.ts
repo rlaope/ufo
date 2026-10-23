@@ -120,7 +120,7 @@ export async function registrySource(
   if (response.status === 404) {
     throw new SetupError(
       "package_unavailable",
-      `the npm registry has no ${PACKAGE_NAME}@${version} (the name is not published yet); ${PUBLISH_HINT}`,
+      `${PACKAGE_NAME}@${version} is not on the npm registry; ${PUBLISH_HINT}`,
     );
   }
   if (response.status !== 200) {

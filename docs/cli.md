@@ -878,7 +878,9 @@ npm install --prefix <prefix> --ignore-scripts --omit=dev --no-audit --no-fund \
   --registry=https://registry.npmjs.org/ ufo-agents@<version>
 ```
 
-npm runs from the prefix, with every `npm_config_*` variable removed from its environment; the
+npm runs from the prefix, with every `npm_config_*` variable removed from its environment
+(`npm_config_cache` too: npm uses its default cache, `~/.npm`, even when the `npx` that ran setup
+was given another one); the
 flags beat an `.npmrc` that turns the lockfile off or makes the install a dry run. Setup first
 reads the registry's metadata for that version, then checks that npm wrote a lockfile
 (`install_failed` otherwise), that it installed `ufo-agents@<version>`, that the lockfile's

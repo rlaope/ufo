@@ -24,7 +24,8 @@
     "node": ">=22"
   },
   "bin": {
-    "ufo": "dist/cli/index.js"
+    "ufo": "dist/cli/index.js",
+    "ufo-agents": "dist/cli/index.js"
   },
   "files": [
     "dist",
